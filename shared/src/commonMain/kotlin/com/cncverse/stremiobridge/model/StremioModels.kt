@@ -4,6 +4,7 @@ package com.cncverse.stremiobridge.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Stremio Addon Protocol data classes
@@ -119,6 +120,12 @@ data class StremioStream(
     @SerialName("behaviorHints") val behaviorHints: StreamBehaviorHints? = null,
     @SerialName("clearkey")      val clearkey: String? = null,
     @SerialName("subtitles")     val subtitles: List<StremioSubtitle>? = null,
+    /**
+     * Vertical resolution in pixels (e.g. 720, 1080, 2160) as reported by the CS3 plugin,
+     * or null when the plugin reported Unknown. Internal only — never sent to Stremio;
+     * used to filter and sort streams.
+     */
+    @Transient val quality: Int? = null,
 )
 
 @Serializable

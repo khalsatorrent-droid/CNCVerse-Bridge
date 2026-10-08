@@ -273,7 +273,7 @@ object StremioServer {
                 val id   = call.parameters["id"]   ?: return@get call.respond(HttpStatusCode.BadRequest)
 
                 val streams = withContext(Dispatchers.IO) { buildStreams(type, id) }
-                call.respond(StremioStreamResponse(streams))
+                call.respond(StremioStreamResponse(streams.hideLowQualityAndSort()))
             }
 
             // ── Subtitles ────────────────────────────────────────────────────
@@ -388,6 +388,21 @@ object StremioServer {
             null
         }
     }
+
+    // ── Stream quality filtering / sorting ────────────────────────────────────
+
+    /** Streams reporting a resolution below this (in pixels of height) are hidden. */
+    private const val MIN_QUALITY = 720
+
+    /**
+     * Hides streams below [MIN_QUALITY] and sorts the rest from highest to lowest quality.
+     * Streams whose quality is unknown (plugin reported Unknown) are kept, since they may well
+     * be HD, but are placed after all streams with a known quality. The sort is stable, so the
+     * original order is preserved among streams of equal quality.
+     */
+    private fun List<StremioStream>.hideLowQualityAndSort(): List<StremioStream> =
+        filter { (it.quality ?: Int.MAX_VALUE) >= MIN_QUALITY }
+            .sortedByDescending { it.quality ?: -1 }
 
     // ── Stream builder ────────────────────────────────────────────────────────
 

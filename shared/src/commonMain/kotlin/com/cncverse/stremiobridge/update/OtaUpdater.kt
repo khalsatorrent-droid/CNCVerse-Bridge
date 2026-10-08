@@ -38,7 +38,14 @@ object OtaUpdater {
         }
     }
 
+    /**
+     * Set to true to re-enable the in-app "Update Available" dialog. Disabled in this fork so the
+     * app neither checks upstream releases nor prompts to replace the modified build.
+     */
+    private const val OTA_CHECK_ENABLED = false
+
     suspend fun checkForUpdate(): GithubRelease? = withContext(Dispatchers.Default) {
+        if (!OTA_CHECK_ENABLED) return@withContext null
         try {
             val response = httpClient.get(GITHUB_API_URL)
             if (response.status.value in 200..299) {

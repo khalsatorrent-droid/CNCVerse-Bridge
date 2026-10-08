@@ -760,7 +760,8 @@ private fun Any.reflectToStreams(pluginName: String, api: Any? = null): List<Str
         listOf(StremioStream(
             name = streamName, title = n, url = finalUrl,
             behaviorHints = if (passProxyHeaders) StreamBehaviorHints(proxyHeaders = ProxyHeaders(finalHeaders)) else null,
-            clearkey = clearkeyHex
+            clearkey = clearkeyHex,
+            quality = q?.removeSuffix("p")?.toIntOrNull()
         ))
     } catch (e: Exception) {
         ServerState.warn("reflectToStreams exception plugin=$pluginName class=${this.javaClass.name}: ${e.message}")
