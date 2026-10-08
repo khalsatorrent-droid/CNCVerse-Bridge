@@ -41,9 +41,9 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp androidApp/build/outputs/apk/release/*.apk out/CNCVerse-Bridge-mod.apk
+          cp androidApp/build/outputs/apk/release/*.apk "out/CNCverse-Bridge-Mod.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CNCVerse-Bridge-APK
-          path: out/CNCVerse-Bridge-mod.apk
+          name: CNCverse-Bridge-Mod
+          path: out/CNCverse-Bridge-Mod.apk
