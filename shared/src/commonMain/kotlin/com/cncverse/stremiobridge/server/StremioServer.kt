@@ -148,7 +148,14 @@ private data class MatchParsedId(
     val episode: Int?
 )
 
-private data class MatchTitleParts(val base: String, val season: Int?)
+private data class MatchTitleParts(
+    val base: String,
+    val season: Int?,
+    /** Part / cour number ("Part 2", "Cour 2", "2nd Part"), null when the title has none. */
+    val part: Int? = null,
+    /** Discriminating words such as "final", "ova", "movie", "special" (removed from [base]). */
+    val tags: Set<String> = emptySet()
+)
 
 private data class MatchTitleInfo(
     /** Title variants to search for, best first. */
@@ -164,7 +171,10 @@ private data class MatchTitleInfo(
     val animeLike: Boolean = false,
     /** AniList entry that we are confident is the requested season (if resolved). */
     val pinnedAniListId: Int? = null,
-    val pinnedTitles: List<String> = emptyList()
+    val pinnedTitles: List<String> = emptyList(),
+    val pinnedEpisodes: Int? = null,
+    /** Part / cour the id points at (direct ids such as Kitsu only). */
+    val part: Int? = null
 ) {
     val seasonInfo: MatchSeasonInfo? get() = season?.let { seasons[it] }
 
@@ -187,7 +197,16 @@ private class MatchScored(
     val parts: MatchTitleParts,
     val baseSim: Double,
     val score: Double,
-    val pinned: Boolean
+    val pinned: Boolean,
+    /** Name only loosely resembles the wanted title: needs episode-count proof before use. */
+    val lowConfidence: Boolean
+)
+
+private class PartMapping(
+    val members: List<MatchScored>,
+    val part: Int,
+    val localEpisode: Int,
+    val totalCount: Int
 )
 
 private val MATCH_STOPWORDS = setOf("the", "a", "an", "of", "no", "wa", "to", "season", "part", "tv")
@@ -206,29 +225,56 @@ private fun normalizeForMatch(raw: String): String {
     s = s.lowercase()
     s = s.replace("'", "").replace("\u2019", "").replace("`", "")
     s = s.replace("&", " and ")
-    s = s.replace(Regex("\\((dub|dubbed|sub|subbed|tv|uncensored)\\)"), " ")
+    s = s.replace(Regex("[\\(\\[](dub|dubbed|sub|subbed|tv|uncensored|raw)[\\)\\]]"), " ")
     s = s.replace(Regex("[^a-z0-9\\u3040-\\u30ff\\u4e00-\\u9fff]+"), " ")
     return s.trim().replace(Regex("\\s+"), " ")
 }
 
+private val MATCH_TAGS = setOf(
+    "final", "ova", "oad", "ona", "special", "specials", "recap", "recaps", "movie", "film", "summary"
+)
+
+/** Similarity at or above this is trusted by name alone; below it episode counts must agree. */
+private const val CONFIDENT_SIMILARITY = 0.72
+
 /**
- * Splits a title into its base name and a season number detected from common naming styles:
- *   "Title Season 2", "Title 2nd Season", "Title Second Season", "Title S2",
- *   "Title II" (roman numeral), "Title 2" (trailing number).
- * With [detect] = false (movies) the whole normalized title is the base and no season is read.
+ * Splits a title into its base name plus the markers that must match EXACTLY:
+ *   season  - "Season 2", "2nd Season", "Second Season", "S2", "II", trailing "2"
+ *   part    - "Part 2", "Cour 2", "2nd Part", "Part II"
+ *   tags    - "Final", "OVA", "Movie", "Special", "Recap" ...
+ * With [detect] = false (movies) the whole normalized title is the base and nothing is read.
  */
 private fun splitSeasonMarker(raw: String, detect: Boolean = true): MatchTitleParts {
     var t = normalizeForMatch(raw)
     if (!detect) return MatchTitleParts(t, null)
     var season: Int? = null
+    var part: Int? = null
 
-    val patterns = listOf(
+    // Part / cour first, so "season 2 part 2" is read as season 2 + part 2.
+    val partPatterns = listOf(
+        Regex("\\b(?:part|cour) (\\d{1,2})\\b"),
+        Regex("\\b(\\d{1,2})(?:st|nd|rd|th) (?:part|cour)\\b"),
+        Regex("\\b(first|second|third|fourth) (?:part|cour)\\b"),
+        Regex("\\b(?:part|cour) (ii|iii|iv)\\b")
+    )
+    for (p in partPatterns) {
+        val m = p.find(t) ?: continue
+        val g = m.groupValues[1]
+        val n = g.toIntOrNull() ?: MATCH_ORDINAL_WORDS[g] ?: MATCH_ROMAN[g]
+        if (n != null) {
+            part = n
+            t = t.replaceRange(m.range, " ")
+            break
+        }
+    }
+
+    val seasonPatterns = listOf(
         Regex("\\b(\\d{1,2})(?:st|nd|rd|th) season\\b"),
         Regex("\\bseason (\\d{1,2})\\b"),
         Regex("\\b(first|second|third|fourth|fifth|sixth) season\\b"),
         Regex("\\bs(\\d{1,2})\$")
     )
-    for (p in patterns) {
+    for (p in seasonPatterns) {
         val m = p.find(t) ?: continue
         val g = m.groupValues[1]
         val n = g.toIntOrNull() ?: MATCH_ORDINAL_WORDS[g]
@@ -239,6 +285,7 @@ private fun splitSeasonMarker(raw: String, detect: Boolean = true): MatchTitlePa
         }
     }
 
+    t = t.replace(Regex("\\s+"), " ").trim()
     if (season == null) {
         val roman = Regex("^(.+) (ii|iii|iv|vi|vii|viii|ix)\$").find(t)
         if (roman != null) {
@@ -254,17 +301,17 @@ private fun splitSeasonMarker(raw: String, detect: Boolean = true): MatchTitlePa
         }
     }
 
-    t = t.replace(Regex("\\b(part|cour) \\d+\\b"), " ").replace(Regex("\\s+"), " ").trim()
-    return MatchTitleParts(t, season)
+    val words = t.split(' ').filter { it.isNotBlank() }
+    val tags = words.filter { it in MATCH_TAGS }.toSet()
+    if (tags.isNotEmpty()) t = words.filter { it !in MATCH_TAGS }.joinToString(" ")
+    t = t.replace(Regex("\\s+"), " ").trim()
+    return MatchTitleParts(t, season, part, tags)
 }
 
 private fun matchTokens(s: String): Set<String> =
     s.split(' ').filter { it.isNotBlank() && it !in MATCH_STOPWORDS }.toSet()
 
-/** 0.0 .. 1.0 similarity between two already-normalized base titles. */
-private fun similarityScore(a: String, b: String): Double {
-    if (a.isBlank() || b.isBlank()) return 0.0
-    if (a == b) return 1.0
+private fun tokenSimilarity(a: String, b: String): Double {
     val ta = matchTokens(a)
     val tb = matchTokens(b)
     if (ta.isEmpty() || tb.isEmpty()) return 0.0
@@ -272,7 +319,49 @@ private fun similarityScore(a: String, b: String): Double {
     val inter = ta.intersect(tb).size.toDouble()
     val jaccard = inter / ta.union(tb).size.toDouble()
     val containment = inter / minOf(ta.size, tb.size).toDouble()
-    return (0.6 * jaccard + 0.4 * containment).coerceAtMost(0.97)
+    var score = (0.6 * jaccard + 0.4 * containment).coerceAtMost(0.97)
+    val smaller = if (ta.size <= tb.size) ta else tb
+    val larger = if (ta.size <= tb.size) tb else ta
+    // "Title" vs "Title: Subtitle" (needs 2+ shared words so one-word titles stay strict)
+    if (smaller.size >= 2 && larger.containsAll(smaller)) score = maxOf(score, 0.8)
+    return score
+}
+
+/** Folds common romaji spelling variants together (ou/oo/o, uu/u, wo/o ...). */
+private fun phoneticKey(s: String): String =
+    s.replace("ou", "o").replace("oo", "o").replace("uu", "u").replace("aa", "a").replace("wo", "o")
+
+private fun bigramDice(a: String, b: String): Double {
+    val x = a.replace(" ", "")
+    val y = b.replace(" ", "")
+    if (x.length < 2 || y.length < 2) return 0.0
+    val counts = HashMap<String, Int>()
+    for (i in 0 until x.length - 1) {
+        val g = x.substring(i, i + 2)
+        counts[g] = (counts[g] ?: 0) + 1
+    }
+    var inter = 0
+    for (i in 0 until y.length - 1) {
+        val g = y.substring(i, i + 2)
+        val c = counts[g] ?: 0
+        if (c > 0) {
+            inter++
+            counts[g] = c - 1
+        }
+    }
+    return 2.0 * inter / ((x.length - 1) + (y.length - 1)).toDouble()
+}
+
+/** 0.0 .. 1.0 similarity between two already-normalized base titles (typo / romaji tolerant). */
+private fun similarityScore(a: String, b: String): Double {
+    if (a.isBlank() || b.isBlank()) return 0.0
+    if (a == b) return 1.0
+    val pa = phoneticKey(a)
+    val pb = phoneticKey(b)
+    if (pa == pb) return 0.99
+    val token = maxOf(tokenSimilarity(a, b), tokenSimilarity(pa, pb))
+    val dice = bigramDice(pa, pb) * 0.95
+    return maxOf(token, dice)
 }
 
 private fun isMostlyLatin(s: String): Boolean {
@@ -407,6 +496,7 @@ private suspend fun fetchKitsuInfo(parsed: MatchParsedId, stremioType: String): 
         isMovie = isMovie,
         direct = true,
         season = seasonHint,
+        part = titles.mapNotNull { splitSeasonMarker(it, !isMovie).part }.firstOrNull(),
         episode = null,
         seasons = emptyMap(),
         animeLike = true,
@@ -486,13 +576,15 @@ private suspend fun fetchBaseInfo(parsed: MatchParsedId, stremioType: String): M
 
 /**
  * Picks the AniList entry that corresponds to the requested TMDB season / movie, using title,
- * season marker, release year, episode count and format. Returns null unless clearly the best.
+ * season marker, part marker, release year, episode count and format. Returns null unless
+ * clearly the best.
  */
 private fun pickAniListEntry(entries: List<MatchAniEntry>, info: MatchTitleInfo): MatchAniEntry? {
     val detect = !info.isMovie
     val queryBases = info.titles.map { splitSeasonMarker(it, detect).base }
     val want: Int? = if (info.isMovie) null else (info.season ?: 1)
     val minSim = if (info.isMovie) MIN_MOVIE_SIMILARITY else 0.6
+    val allowedTags: Set<String> = if (info.isMovie) emptySet() else allowedTagsFor(info)
 
     val ranked = ArrayList<Pair<MatchAniEntry, Double>>()
     for (e in entries) {
@@ -520,6 +612,10 @@ private fun pickAniListEntry(entries: List<MatchAniEntry>, info: MatchTitleInfo)
             } else {
                 if (w in marks) 30.0 else if (marks.isEmpty()) -5.0 else -30.0
             }
+            // Prefer the first part of a split season; later parts are reached through the plugin.
+            if (parts.mapNotNull { it.part }.any { it >= 2 }) score -= 15.0
+            if (!allowedTags.containsAll(parts.flatMap { it.tags }.toSet())) score -= 30.0
+
             val expected = info.seasonInfo?.episodeCount
             val eps = e.episodes
             if (eps != null && expected != null && expected > 0) {
@@ -553,7 +649,11 @@ private suspend fun applyAniListPin(info: MatchTitleInfo): MatchTitleInfo {
                 "AniList match for S${info.season ?: 0}: id=${pick.id} titles=${pick.titles.take(2)} " +
                     "year=${pick.year} eps=${pick.episodes}"
             )
-            return info.copy(pinnedAniListId = pick.id, pinnedTitles = pick.titles)
+            return info.copy(
+                pinnedAniListId = pick.id,
+                pinnedTitles = pick.titles,
+                pinnedEpisodes = pick.episodes
+            )
         }
     }
     ServerState.info("AniList: no confident match for '${info.titles.first()}' season ${info.season}")
@@ -580,27 +680,53 @@ private suspend fun resolveTitleInfo(parsed: MatchParsedId, stremioType: String)
 private fun buildQueries(info: MatchTitleInfo): List<String> {
     val out = LinkedHashSet<String>()
     // Exact names of the correct season (from AniList) first: usually a hit on the first query.
-    info.pinnedTitles.take(2).forEach { out.add(it) }
+    info.pinnedTitles.take(3).forEach { out.add(it) }
     info.titles.take(4).forEach { out.add(it) }
     val s = info.season
     if (!info.isMovie && !info.direct && s != null && s > 1) {
+        for (primary in info.titles.take(2)) {
+            out.add("$primary season $s")
+            out.add("$primary ${ordinalOf(s)} season")
+        }
         val primary = info.titles.first()
-        out.add("$primary season $s")
-        out.add("$primary ${ordinalOf(s)} season")
         info.seasonInfo?.name?.takeIf { isNonGenericSeasonName(it) }?.let { out.add("$primary $it") }
+    }
+    return out.toList().take(10)
+}
+
+/** Extra searches used when a season turned out to be split into parts / cours. */
+private fun buildPartQueries(info: MatchTitleInfo): List<String> {
+    val out = LinkedHashSet<String>()
+    val s = info.season ?: 1
+    for (b in (info.pinnedTitles.take(1) + info.titles.take(2))) {
+        out.add("$b part 2")
+        if (s > 1) out.add("$b season $s part 2")
+        out.add("$b cour 2")
+        if (s > 1) out.add("$b ${ordinalOf(s)} season part 2")
     }
     return out.toList().take(8)
 }
 
+/** Tag words ("final", "ova", "movie" ...) that the wanted title itself contains. */
+private fun allowedTagsFor(info: MatchTitleInfo): Set<String> {
+    val out = HashSet<String>()
+    for (t in info.titles) out.addAll(splitSeasonMarker(t, true).tags)
+    for (t in info.pinnedTitles) out.addAll(splitSeasonMarker(t, true).tags)
+    info.seasonInfo?.name?.let { out.addAll(splitSeasonMarker(it, true).tags) }
+    return out
+}
+
 private fun scoreResults(results: Collection<SearchResult>, info: MatchTitleInfo): List<MatchScored> {
     val detect = !info.isMovie
-    val queryParts = (info.titles).map { splitSeasonMarker(it, detect) }
+    val queryParts = info.titles.map { splitSeasonMarker(it, detect) }
     val pinnedParts = info.pinnedTitles.map { splitSeasonMarker(it, detect) }
     val pinnedNorm = info.pinnedTitles.map { normalizeForMatch(it) }.filter { it.isNotBlank() }.toSet()
     val seasonName = info.seasonInfo?.name?.takeIf { isNonGenericSeasonName(it) }?.let { normalizeForMatch(it) }
     val want: Int? = if (info.isMovie) null else (info.season ?: 1)
     val minSim = if (info.isMovie) MIN_MOVIE_SIMILARITY else MIN_SERIES_SIMILARITY
     val targetYear = info.targetYear
+    val allowedTags: Set<String> = if (info.isMovie) emptySet() else allowedTagsFor(info)
+    val wantPart: Int? = if (info.direct && !info.isMovie) (info.part ?: 1) else null
 
     val out = ArrayList<MatchScored>()
     for (r in results) {
@@ -616,6 +742,13 @@ private fun scoreResults(results: Collection<SearchResult>, info: MatchTitleInfo
         for (q in queryParts) sim = maxOf(sim, similarityScore(cand.base, q.base))
         for (q in pinnedParts) sim = maxOf(sim, similarityScore(cand.base, q.base))
         if (!pinned && sim < minSim) continue
+
+        if (!pinned && !info.isMovie) {
+            // "Final", "OVA", "Movie", "Recap" ... entries are never the regular season.
+            if (!allowedTags.containsAll(cand.tags)) continue
+            // Ids that point at one exact entry (Kitsu): the part number must be identical.
+            if (wantPart != null && (cand.part ?: 1) != wantPart) continue
+        }
 
         var score = sim * 100.0
         if (pinned) {
@@ -637,7 +770,7 @@ private fun scoreResults(results: Collection<SearchResult>, info: MatchTitleInfo
         if (ry != null && targetYear != null) {
             score += if (ry == targetYear) 10.0 else if (abs(ry - targetYear) <= 1) 0.0 else -10.0
         }
-        out.add(MatchScored(r, cand, sim, score, pinned))
+        out.add(MatchScored(r, cand, sim, score, pinned, !pinned && sim < CONFIDENT_SIMILARITY))
     }
     return out.sortedByDescending { it.score }
 }
@@ -660,8 +793,16 @@ private fun isSeasonCompatible(
     val sn = info.seasonInfo?.name?.takeIf { isNonGenericSeasonName(it) }?.let { normalizeForMatch(it) }
     if (sn != null && sn.isNotBlank() && normalizeForMatch(c.result.name).contains(sn)) return true
     val expected = info.seasonInfo?.episodeCount
-    return c.parts.base !in queryBases && expected != null && expected > 0 &&
-        abs(entryEpisodeCount - expected) <= 1
+    val distinctFromBase = c.parts.base !in queryBases || c.parts.tags.isNotEmpty()
+    return distinctFromBase && expected != null && expected > 0 && abs(entryEpisodeCount - expected) <= 1
+}
+
+/** Loosely-named entries are only used when their episode count agrees with what we expect. */
+private fun lowConfidenceOk(c: MatchScored, info: MatchTitleInfo, entryEpisodeCount: Int, grouped: Boolean): Boolean {
+    if (!c.lowConfidence) return true
+    val seasonCount = info.seasonInfo?.episodeCount?.takeIf { it > 0 }
+    val expected = (if (grouped) seasonCount else (info.pinnedEpisodes ?: seasonCount)) ?: return false
+    return abs(entryEpisodeCount - expected) <= 1
 }
 
 private fun variantLabel(name: String?, dataUrl: String): String? {
@@ -675,18 +816,31 @@ private fun variantLabel(name: String?, dataUrl: String): String? {
     }
 }
 
+/** Some sites list dub / sub as separate entries: "Title (Dub)", "Title [Sub]". */
+private fun entryNameLabel(name: String): String? {
+    val n = name.lowercase()
+    return when {
+        Regex("[\\(\\[](dub|dubbed)[\\)\\]]").containsMatchIn(n) || n.endsWith(" dub") -> "DUB"
+        Regex("[\\(\\[](sub|subbed)[\\)\\]]").containsMatchIn(n) -> "SUB"
+        else -> null
+    }
+}
+
 private fun toVariants(eps: List<MediaInfoEpisode>): List<Pair<String, String?>> =
     eps.map { it.dataUrl to variantLabel(it.name, it.dataUrl) }.distinctBy { it.first }
 
 /**
  * Chooses which episode data url(s) to play inside an opened entry. Returns every variant
  * (e.g. sub AND dub) of the wanted episode, or an empty list when this entry is not a match.
+ * [episodeOverride] / [entryCountOverride] are used when the season is split into parts.
  */
 private fun pickDataUrls(
     mi: MediaInfo,
     cand: MatchScored,
     info: MatchTitleInfo,
-    queryBases: Set<String>
+    queryBases: Set<String>,
+    episodeOverride: Int? = null,
+    entryCountOverride: Int? = null
 ): List<Pair<String, String?>> {
     val eps = mi.episodes.orEmpty()
 
@@ -699,24 +853,32 @@ private fun pickDataUrls(
         return toVariants(if (first.isNotEmpty()) first else eps.take(2))
     }
 
-    val n = info.episode ?: return emptyList()
+    val n = episodeOverride ?: info.episode ?: return emptyList()
     val want = info.season ?: 1
+    val grouped = entryCountOverride != null
 
     // The entry holds several seasons (classic TV source): match season + episode exactly.
     val reportedSeasons = eps.mapNotNull { it.season }.toSet()
     if (reportedSeasons.size > 1) {
+        if (cand.lowConfidence) return emptyList()
         return toVariants(eps.filter { it.season == want && it.episode == n })
     }
 
     val byNumber = eps.filter { it.episode == n }
     if (byNumber.isNotEmpty()) {
-        if (reportedSeasons.size == 1 && reportedSeasons.first() == want && want > 1) return toVariants(byNumber)
-        val entryEpisodeCount = eps.mapNotNull { it.episode }.maxOrNull() ?: 0
-        if (isSeasonCompatible(cand, info, queryBases, entryEpisodeCount)) return toVariants(byNumber)
+        val entryCount = entryCountOverride ?: (eps.mapNotNull { it.episode }.maxOrNull() ?: 0)
+        if (isSeasonCompatible(cand, info, queryBases, entryCount) &&
+            lowConfidenceOk(cand, info, entryCount, grouped)
+        ) {
+            return toVariants(byNumber)
+        }
+        if (reportedSeasons.size == 1 && reportedSeasons.first() == want && want > 1 && !cand.lowConfidence) {
+            return toVariants(byNumber)
+        }
     }
 
     // Long running show kept as one entry with absolute numbering (e.g. TMDB S3E5 = ep 61).
-    if (want > 1 && !info.direct) {
+    if (want > 1 && !info.direct && !grouped && !cand.lowConfidence) {
         val absNumber = info.absoluteEpisode
         if (absNumber != null && absNumber != n && (cand.parts.season == null || cand.parts.season == 1)) {
             val a = eps.filter { it.episode == absNumber }
@@ -726,37 +888,98 @@ private fun pickDataUrls(
     return emptyList()
 }
 
-private suspend fun cachedSearch(api: MainApiWrapper, query: String): List<SearchResult> {
+/** Entries that are the same series + season + tags, i.e. its parts and its dub/sub duplicates. */
+private fun sameSeriesKey(c: MatchScored): String =
+    matchTokens(c.parts.base).sorted().joinToString(" ") +
+        "|" + (c.parts.season ?: 1) + "|" + c.parts.tags.sorted().joinToString(",")
+
+/**
+ * A season split into parts ("2nd Season", "2nd Season Part 2"): works out which part holds the
+ * wanted episode and its number inside that part, from the real episode counts of each part.
+ * Handles sites that restart numbering at 1 in every part and sites that continue (14, 15 ...).
+ */
+private suspend fun mapAcrossParts(
+    api: MainApiWrapper,
+    group: List<MatchScored>,
+    info: MatchTitleInfo,
+    trace: MutableList<String>?
+): PartMapping? {
+    val n = info.episode ?: return null
+    val byPart = group.groupBy { it.parts.part ?: 1 }.toSortedMap()
+    var offset = 0
+    var hitPart: Int? = null
+    var hitLocal = 0
+    for ((part, members) in byPart) {
+        var mi: MediaInfo? = null
+        for (m in members) {
+            mi = cachedLoad(api, m.result.url, trace)
+            if (mi != null) break
+        }
+        val nums = mi?.episodes.orEmpty().mapNotNull { it.episode }
+        val lo = nums.minOrNull()
+        val hi = nums.maxOrNull()
+        if (lo == null || hi == null) return null
+        val continuing = part > 1 && lo > 1 && lo == offset + 1
+        val covers = if (continuing) lo..hi else (offset + lo)..(offset + hi)
+        if (hitPart == null && n in covers) {
+            hitPart = part
+            hitLocal = if (continuing) n else n - offset
+        }
+        offset = if (continuing) hi else offset + hi
+    }
+    val part = hitPart ?: return null
+    return PartMapping(byPart[part].orEmpty(), part, hitLocal, offset)
+}
+
+private suspend fun cachedSearch(
+    api: MainApiWrapper,
+    query: String,
+    trace: MutableList<String>? = null
+): List<SearchResult> {
     val key = "${api.internalName}|${normalizeForMatch(query)}"
     searchCache.get(key)?.let { return it }
     val results = try {
         api.search(query)
     } catch (e: CancellationException) {
         throw e
-    } catch (e: Exception) {
-        ServerState.warn("[${api.name}] search failed for '$query': ${e.message}")
+    } catch (e: Throwable) {
+        // Throwable on purpose: plugins built against another CloudStream version can throw
+        // NoSuchMethodError / NoClassDefFoundError, which are Errors and not Exceptions.
+        val msg = "[${api.name}] search failed for '$query': ${e::class.simpleName}: ${e.message}"
+        ServerState.warn(msg)
+        trace?.add(msg)
         emptyList()
     }
     if (results.isNotEmpty()) searchCache.put(key, results)
     return results
 }
 
-private suspend fun cachedLoad(api: MainApiWrapper, url: String): MediaInfo? {
+private suspend fun cachedLoad(
+    api: MainApiWrapper,
+    url: String,
+    trace: MutableList<String>? = null
+): MediaInfo? {
     val key = "${api.internalName}|$url"
     loadCache.get(key)?.let { return it }
     val info = try {
         api.load(url)
     } catch (e: CancellationException) {
         throw e
-    } catch (e: Exception) {
-        ServerState.warn("[${api.name}] load failed for $url: ${e.message}")
+    } catch (e: Throwable) {
+        val msg = "[${api.name}] load failed for $url: ${e::class.simpleName}: ${e.message}"
+        ServerState.warn(msg)
+        trace?.add(msg)
         null
     }
     if (info != null) loadCache.put(key, info)
     return info
 }
 
-private suspend fun loadLinksSafe(api: MainApiWrapper, dataUrl: String): List<StremioStream> {
+private suspend fun loadLinksSafe(
+    api: MainApiWrapper,
+    dataUrl: String,
+    trace: MutableList<String>? = null
+): List<StremioStream> {
     val key = "${api.internalName}|$dataUrl"
     linksCache.get(key)?.let { return it }
     val lock = linkLocks.getOrPut(api.internalName) { Mutex() }
@@ -766,8 +989,10 @@ private suspend fun loadLinksSafe(api: MainApiWrapper, dataUrl: String): List<St
             api.loadLinks(dataUrl)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            ServerState.warn("[${api.name}] loadLinks failed: ${e.message}")
+        } catch (e: Throwable) {
+            val msg = "[${api.name}] loadLinks failed: ${e::class.simpleName}: ${e.message}"
+            ServerState.warn(msg)
+            trace?.add(msg)
             emptyList()
         }
         if (links.isNotEmpty()) linksCache.put(key, links)
@@ -776,68 +1001,148 @@ private suspend fun loadLinksSafe(api: MainApiWrapper, dataUrl: String): List<St
 }
 
 /** Full lookup for one plugin: search -> rank -> open best entries -> pick episode -> links. */
-private suspend fun streamsFromPlugin(api: MainApiWrapper, info: MatchTitleInfo): List<StremioStream> {
+private suspend fun streamsFromPlugin(
+    api: MainApiWrapper,
+    info: MatchTitleInfo,
+    trace: MutableList<String>? = null
+): List<StremioStream> {
+    fun log(msg: String) {
+        ServerState.info(msg)
+        trace?.add(msg)
+    }
+
     val collected = mutableListOf<StremioStream>()
     try {
-        withTimeoutOrNull(PLUGIN_TIMEOUT_MS) {
+        val finished = withTimeoutOrNull(PLUGIN_TIMEOUT_MS) {
             val detect = !info.isMovie
             val queryBases = (info.titles + info.pinnedTitles).map { splitSeasonMarker(it, detect).base }.toSet()
 
             val pool = LinkedHashMap<String, SearchResult>()
             var ranked: List<MatchScored> = emptyList()
-            for (q in buildQueries(info)) {
-                val res = cachedSearch(api, q)
-                ServerState.info("[${api.name}] '$q' -> ${res.size} result(s)")
-                for (r in res) pool.putIfAbsent(r.url, r)
-                ranked = scoreResults(pool.values, info)
-                val top = ranked.firstOrNull()
-                if (top != null && top.score >= EARLY_STOP_SCORE) break
+
+            suspend fun runQueries(queries: List<String>, stopEarly: Boolean) {
+                for (q in queries) {
+                    val res = cachedSearch(api, q, trace)
+                    log("[${api.name}] search '$q' -> ${res.size} result(s)")
+                    for (r in res) pool.putIfAbsent(r.url, r)
+                    ranked = scoreResults(pool.values, info)
+                    val top = ranked.firstOrNull()
+                    if (stopEarly && top != null && top.score >= EARLY_STOP_SCORE) break
+                }
             }
+
+            runQueries(buildQueries(info), true)
 
             if (ranked.isEmpty()) {
-                ServerState.info("[${api.name}] no acceptable match for '${info.titles.first()}'")
-                return@withTimeoutOrNull
+                val why = if (pool.isEmpty()) {
+                    "the plugin returned no search results at all"
+                } else {
+                    "names it returned: " + pool.values.take(8).joinToString(" | ") { it.name }
+                }
+                log("[${api.name}] no acceptable match for '${info.titles.first()}' - $why")
+                return@withTimeoutOrNull true
             }
 
-            val topScore = ranked.first().score
-            for (cand in ranked.take(MAX_CANDIDATES)) {
-                if (cand.score < topScore - 45.0) break
-                val mi = cachedLoad(api, cand.result.url)
-                if (mi == null) {
-                    ServerState.warn("[${api.name}] could not open '${cand.result.name}'")
-                    continue
+            val tried = HashSet<String>()
+
+            suspend fun attempt(): Boolean {
+                val summary = ranked.take(5).joinToString(" ; ") { c ->
+                    val flags = (if (c.pinned) " pinned" else "") +
+                        (c.parts.season?.let { s -> " S$s" } ?: "") +
+                        (c.parts.part?.let { p -> " P$p" } ?: "") +
+                        (if (c.parts.tags.isNotEmpty()) " ${c.parts.tags}" else "") +
+                        (if (c.lowConfidence) " loose-name" else "")
+                    "'${c.result.name}' score=${c.score.toInt()}$flags"
                 }
-                val picks = pickDataUrls(mi, cand, info, queryBases)
-                if (picks.isEmpty()) {
-                    ServerState.info(
-                        "[${api.name}] '${cand.result.name}' (score ${cand.score.toInt()}) rejected: " +
-                            "wrong season or episode ${info.episode} missing"
-                    )
-                    continue
-                }
-                ServerState.info(
-                    "[${api.name}] using '${cand.result.name}' (score ${cand.score.toInt()}" +
-                        "${if (cand.pinned) ", AniList-confirmed" else ""}) with ${picks.size} variant(s)"
-                )
-                for ((dataUrl, label) in picks) {
-                    val links = loadLinksSafe(api, dataUrl)
-                    ServerState.info("[${api.name}] ${label ?: "default"}: ${links.size} stream(s)")
-                    for (s in links) {
-                        val newName = buildString {
-                            append(cand.result.name)
-                            if (label != null) append(" [").append(label).append("]")
-                            if (!s.name.isNullOrBlank()) append("\n").append(s.name)
+                log("[${api.name}] ranked: $summary")
+
+                val topScore = ranked.firstOrNull()?.score ?: return false
+                for (cand in ranked.take(MAX_CANDIDATES + 4)) {
+                    if (cand.score < topScore - 45.0) break
+                    val key = sameSeriesKey(cand)
+                    if (!tried.add(key)) continue
+                    val group = ranked.filter { sameSeriesKey(it) == key }
+                    val partNumbers = group.map { it.parts.part ?: 1 }.distinct().sorted()
+                    val selections = ArrayList<Pair<MatchScored, List<Pair<String, String?>>>>()
+
+                    if (info.isMovie || info.direct || partNumbers.size == 1) {
+                        if (!info.isMovie && !info.direct && partNumbers[0] != 1) {
+                            log(
+                                "[${api.name}] '${cand.result.name}': only part ${partNumbers[0]} is listed, " +
+                                    "cannot place episode ${info.episode} without the earlier part(s)"
+                            )
+                            continue
                         }
-                        collected.add(s.copy(name = newName))
+                        for (m in group) {
+                            val mi = cachedLoad(api, m.result.url, trace)
+                            if (mi == null) {
+                                log("[${api.name}] could not open '${m.result.name}'")
+                                continue
+                            }
+                            val picks = pickDataUrls(mi, m, info, queryBases)
+                            if (picks.isNotEmpty()) {
+                                selections.add(m to picks)
+                            } else {
+                                log(
+                                    "[${api.name}] '${m.result.name}' rejected: wrong season/part, loose name " +
+                                        "or episode ${info.episode} missing (${mi.episodes?.size ?: 0} episode item(s))"
+                                )
+                            }
+                        }
+                    } else {
+                        val mapping = mapAcrossParts(api, group, info, trace)
+                        if (mapping == null) {
+                            log("[${api.name}] '${cand.result.name}': parts $partNumbers do not cover episode ${info.episode}")
+                            continue
+                        }
+                        log(
+                            "[${api.name}] season split into parts $partNumbers (${mapping.totalCount} episodes): " +
+                                "episode ${info.episode} -> part ${mapping.part} episode ${mapping.localEpisode}"
+                        )
+                        for (m in mapping.members) {
+                            val mi = cachedLoad(api, m.result.url, trace) ?: continue
+                            val picks = pickDataUrls(mi, m, info, queryBases, mapping.localEpisode, mapping.totalCount)
+                            if (picks.isNotEmpty()) selections.add(m to picks)
+                        }
                     }
+                    if (selections.isEmpty()) continue
+
+                    for ((m, picks) in selections) {
+                        log("[${api.name}] using '${m.result.name}' with ${picks.size} variant(s)")
+                        for ((dataUrl, label) in picks) {
+                            val finalLabel = label ?: entryNameLabel(m.result.name)
+                            val links = loadLinksSafe(api, dataUrl, trace)
+                            log("[${api.name}] ${finalLabel ?: "default"}: ${links.size} stream(s)")
+                            for (s in links) {
+                                val newName = buildString {
+                                    append(m.result.name)
+                                    if (finalLabel != null) append(" [").append(finalLabel).append("]")
+                                    if (!s.name.isNullOrBlank()) append("\n").append(s.name)
+                                }
+                                collected.add(s.copy(name = newName))
+                            }
+                        }
+                    }
+                    return true
                 }
-                break
+                return false
             }
+
+            var done = attempt()
+            if (!done && !info.isMovie && !info.direct) {
+                // The wanted part may simply not have shown up in the first searches.
+                log("[${api.name}] no usable entry yet - searching for later parts / cours")
+                runQueries(buildPartQueries(info), false)
+                tried.clear()
+                done = attempt()
+            }
+            true
         }
+        if (finished == null) log("[${api.name}] timed out after ${PLUGIN_TIMEOUT_MS / 1000}s")
     } catch (e: CancellationException) {
         throw e
-    } catch (e: Exception) {
-        ServerState.warn("Search/load error in ${api.name}: ${e.message}")
+    } catch (e: Throwable) {
+        log("[${api.name}] lookup error: ${e::class.simpleName}: ${e.message}")
     }
     return collected
 }
@@ -1064,6 +1369,37 @@ object StremioServer {
                 call.respond(StremioStreamResponse(streams.hideLowQualityAndSort()))
             }
 
+            // ── Debug (plain-text diagnostics, open in a browser) ───────
+            get("/debug/search") {
+                val plugin = call.request.queryParameters["plugin"]
+                val q = call.request.queryParameters["q"]
+                if (q.isNullOrBlank()) {
+                    call.respondText("Usage: /debug/search?plugin=AnimePahe&q=jujutsu kaisen", ContentType.Text.Plain)
+                    return@get
+                }
+                val text = withContext(Dispatchers.IO) { buildDebugSearch(plugin, q) }
+                call.respondText(text, ContentType.Text.Plain)
+            }
+
+            get("/debug/load") {
+                val plugin = call.request.queryParameters["plugin"]
+                val url = call.request.queryParameters["url"]
+                if (url.isNullOrBlank()) {
+                    call.respondText("Usage: /debug/load?plugin=AnimePahe&url=<url from /debug/search>", ContentType.Text.Plain)
+                    return@get
+                }
+                val text = withContext(Dispatchers.IO) { buildDebugLoad(plugin, url) }
+                call.respondText(text, ContentType.Text.Plain)
+            }
+
+            get("/debug/stream/{type}/{id}.json") {
+                val type = call.parameters["type"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val id = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val plugin = call.request.queryParameters["plugin"]
+                val text = withContext(Dispatchers.IO) { buildDebugStream(type, id, plugin) }
+                call.respondText(text, ContentType.Text.Plain)
+            }
+
             // ── Subtitles ────────────────────────────────────────────────
             get("/subtitles/{type}/{id}.json") {
                 val type = call.parameters["type"] ?: return@get call.respond(HttpStatusCode.BadRequest)
@@ -1073,6 +1409,106 @@ object StremioServer {
                 call.respond(StremioSubtitleResponse(subtitles))
             }
         }
+    }
+
+    // ── Debug report builders ─────────────────────────────────────────────────
+
+    private fun debugApis(pluginFilter: String?): List<MainApiWrapper> =
+        loadedApis.filter {
+            pluginFilter.isNullOrBlank() ||
+                it.name.contains(pluginFilter, ignoreCase = true) ||
+                it.internalName.contains(pluginFilter, ignoreCase = true)
+        }
+
+    private fun noPluginMessage(pluginFilter: String?): String =
+        "No loaded plugin matches '$pluginFilter'.\nLoaded plugins: " +
+            loadedApis.joinToString(", ") { it.name }
+
+    private suspend fun buildDebugSearch(pluginFilter: String?, query: String): String {
+        val apis = debugApis(pluginFilter)
+        if (apis.isEmpty()) return noPluginMessage(pluginFilter)
+        val sb = StringBuilder()
+        for (api in apis) {
+            sb.appendLine("=== ${api.name} (${api.internalName}) - search '$query' ===")
+            try {
+                val res = api.search(query)
+                sb.appendLine("${res.size} result(s)")
+                res.take(15).forEach {
+                    sb.appendLine("- ${it.name} | year=${it.year} | type=${it.type} | ${it.url.take(140)}")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                sb.appendLine("ERROR: ${e::class.simpleName}: ${e.message}")
+            }
+            sb.appendLine()
+        }
+        return sb.toString()
+    }
+
+    private suspend fun buildDebugLoad(pluginFilter: String?, url: String): String {
+        val apis = debugApis(pluginFilter)
+        if (apis.isEmpty()) return noPluginMessage(pluginFilter)
+        val sb = StringBuilder()
+        for (api in apis) {
+            sb.appendLine("=== ${api.name} (${api.internalName}) - load ===")
+            try {
+                val mi = api.load(url)
+                if (mi == null) {
+                    sb.appendLine("load() returned null")
+                } else {
+                    sb.appendLine("name=${mi.name} | type=${mi.type} | year=${mi.year}")
+                    sb.appendLine("dataUrl=${mi.dataUrl.take(140)}")
+                    val eps = mi.episodes.orEmpty()
+                    sb.appendLine("${eps.size} episode item(s)")
+                    eps.take(10).forEach {
+                        sb.appendLine("- S${it.season} E${it.episode} | ${it.name} | ${it.dataUrl.take(100)}")
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                sb.appendLine("ERROR: ${e::class.simpleName}: ${e.message}")
+            }
+            sb.appendLine()
+        }
+        return sb.toString()
+    }
+
+    private suspend fun buildDebugStream(type: String, id: String, pluginFilter: String?): String {
+        val sb = StringBuilder()
+        val parsed = parseStremioIdParts(id)
+        sb.appendLine("Request: id=$id type=$type -> kind=${parsed.kind} base=${parsed.baseId} season=${parsed.season} episode=${parsed.episode}")
+        val resolved = try {
+            resolveTitleInfo(parsed, type)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            sb.appendLine("Resolve error: ${e::class.simpleName}: ${e.message}")
+            null
+        }
+        if (resolved == null) {
+            sb.appendLine("Could not resolve this id (TMDB / Kitsu lookup failed).")
+            return sb.toString()
+        }
+        sb.appendLine("Resolved titles: ${resolved.titles}")
+        sb.appendLine("year=${resolved.year} movie=${resolved.isMovie} season=${resolved.season} episode=${resolved.episode} animeLike=${resolved.animeLike}")
+        sb.appendLine("AniList id=${resolved.pinnedAniListId} titles=${resolved.pinnedTitles}")
+
+        val apis = debugApis(pluginFilter)
+        if (apis.isEmpty()) {
+            sb.appendLine(noPluginMessage(pluginFilter))
+            return sb.toString()
+        }
+        for (api in apis) {
+            sb.appendLine()
+            sb.appendLine("=== ${api.name} (${api.internalName}) ===")
+            val trace = mutableListOf<String>()
+            val streams = streamsFromPlugin(api, resolved, trace)
+            trace.forEach { sb.appendLine(it) }
+            sb.appendLine("RESULT: ${streams.size} stream(s)")
+        }
+        return sb.toString()
     }
 
     // ── Manifest builder ──────────────────────────────────────────────────────
@@ -1245,7 +1681,7 @@ object StremioServer {
             allStreams
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             ServerState.warn("Stream resolve error for $id: ${e.stackTraceToString()}")
             emptyList()
         }
