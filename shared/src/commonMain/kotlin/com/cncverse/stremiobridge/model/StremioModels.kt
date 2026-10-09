@@ -113,6 +113,7 @@ data class StremioStreamResponse(
 @Serializable
 data class StremioStream(
     @SerialName("title")         val title: String? = null,
+    @SerialName("description")   val description: String? = null,
     @SerialName("name")          val name: String? = null,
     @SerialName("url")           val url: String? = null,
     @SerialName("ytId")          val ytId: String? = null,

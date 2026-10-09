@@ -226,8 +226,24 @@ private fun normalizeForMatch(raw: String): String {
     s = s.replace("'", "").replace("\u2019", "").replace("`", "")
     s = s.replace("&", " and ")
     s = s.replace(Regex("[\\(\\[](dub|dubbed|sub|subbed|tv|uncensored|raw)[\\)\\]]"), " ")
+    // "Son of Sardaar (2012)" must still match "Son of Sardaar": drop a bracketed release year.
+    s = s.replace(Regex("[\\(\\[]\\s*(?:19|20)\\d{2}\\s*[\\)\\]]"), " ")
     s = s.replace(Regex("[^a-z0-9\\u3040-\\u30ff\\u4e00-\\u9fff]+"), " ")
-    return s.trim().replace(Regex("\\s+"), " ")
+    s = s.trim().replace(Regex("\\s+"), " ")
+    // ... and a bare trailing year ("son of sardaar 2012"), unless the year is the whole title.
+    val noYear = s.replace(Regex(" (?:19|20)\\d{2}$"), "")
+    return if (noYear.isNotBlank()) noYear else s
+}
+
+/** Release year written in a result name: "Title (2012)", "Title [2012]" or "Title 2012". */
+private fun yearFromName(raw: String): Int? =
+    Regex("[\\(\\[ ]((?:19|20)\\d{2})[\\)\\] ]?$").find(raw.trim())?.groupValues?.get(1)?.toIntOrNull()
+        ?: Regex("[\\(\\[]((?:19|20)\\d{2})[\\)\\]]").find(raw)?.groupValues?.get(1)?.toIntOrNull()
+
+/** Sequel number at the end of a normalized movie title ("son of sardaar 2" -> 2), else null. */
+private fun sequelNumber(normalized: String): Int? {
+    val last = normalized.substringAfterLast(' ', "")
+    return last.toIntOrNull()?.takeIf { it in 2..9 } ?: when (last) { "ii" -> 2; "iii" -> 3; "iv" -> 4; else -> null }
 }
 
 private val MATCH_TAGS = setOf(
@@ -766,9 +782,18 @@ private fun scoreResults(results: Collection<SearchResult>, info: MatchTitleInfo
             if (seasonName != null && candNorm.contains(seasonName)) score += 30.0
         }
 
-        val ry = r.year
+        val ry = r.year ?: yearFromName(r.name)
         if (ry != null && targetYear != null) {
-            score += if (ry == targetYear) 10.0 else if (abs(ry - targetYear) <= 1) 0.0 else -10.0
+            score += if (ry == targetYear) 10.0
+            else if (abs(ry - targetYear) <= 1) 0.0
+            else if (info.isMovie) -40.0 // same title, different year = different film (remake / sequel)
+            else -10.0
+        }
+        if (info.isMovie && !pinned) {
+            // "Son of Sardaar" (2012) must not resolve to "Son of Sardaar 2" (2025) and vice versa.
+            val candSeq = sequelNumber(candNorm)
+            val wantSeq = queryParts.map { sequelNumber(it.base) }
+            if (candSeq !in wantSeq) score -= 40.0
         }
         out.add(MatchScored(r, cand, sim, score, pinned, !pinned && sim < CONFIDENT_SIMILARITY))
     }
@@ -1000,6 +1025,14 @@ private suspend fun loadLinksSafe(
     }
 }
 
+/** "S01E03" for series (or "E05" for absolute-numbered anime ids), null for movies. */
+private fun episodeTag(info: MatchTitleInfo): String? {
+    if (info.isMovie) return null
+    val ep = info.episode ?: return null
+    val e = ep.toString().padStart(2, '0')
+    return if (info.direct || info.season == null) "E$e" else "S${info.season.toString().padStart(2, '0')}E$e"
+}
+
 /** Full lookup for one plugin: search -> rank -> open best entries -> pick episode -> links. */
 private suspend fun streamsFromPlugin(
     api: MainApiWrapper,
@@ -1114,12 +1147,16 @@ private suspend fun streamsFromPlugin(
                             val links = loadLinksSafe(api, dataUrl, trace)
                             log("[${api.name}] ${finalLabel ?: "default"}: ${links.size} stream(s)")
                             for (s in links) {
-                                val newName = buildString {
-                                    append(m.result.name)
-                                    if (finalLabel != null) append(" [").append(finalLabel).append("]")
-                                    if (!s.name.isNullOrBlank()) append("\n").append(s.name)
-                                }
-                                collected.add(s.copy(name = newName))
+                                collected.add(
+                                    StreamCards.build(
+                                        s = s,
+                                        source = api.name,
+                                        wantedTitle = info.titles.firstOrNull(),
+                                        episodeTag = episodeTag(info),
+                                        foundName = m.result.name,
+                                        variant = finalLabel
+                                    )
+                                )
                             }
                         }
                     }
@@ -1628,6 +1665,10 @@ object StremioServer {
     private fun List<StremioStream>.hideLowQualityAndSort(): List<StremioStream> =
         filter { (it.quality ?: Int.MAX_VALUE) >= MIN_QUALITY }
             .sortedByDescending { it.quality ?: -1 }
+            // Duplicates: the same link returned by several plugins / variants, or rows that would
+            // look identical in Stremio. The first one (best quality, since the list is sorted) wins.
+            .distinctBy { it.url?.trim() ?: "id:${System.identityHashCode(it)}" }
+            .distinctBy { "${it.name}\n${it.title}" }
 
     // ── Stream builder ────────────────────────────────────────────────────────
 
@@ -1638,7 +1679,7 @@ object StremioServer {
             val api = loadedApis.find { it.internalName == internalName } ?: return emptyList()
             if (disabledPlugins.contains(api.internalName)) return emptyList()
             return try {
-                api.loadLinks(dataUrl)
+                api.loadLinks(dataUrl).map { StreamCards.build(it, api.name, null, null, null, null) }
             } catch (e: Throwable) {
                 ServerState.warn("Stream error for $internalName: ${e.message}")
                 emptyList()
