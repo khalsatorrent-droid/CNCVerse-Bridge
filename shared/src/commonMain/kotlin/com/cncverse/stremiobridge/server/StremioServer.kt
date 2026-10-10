@@ -858,8 +858,11 @@ object StremioServer {
             arrangeStreams(if (p.filterNonSeekable) SeekProbe.dropNonSeekable(kept) else kept, p), p
         )
 
+        // Drop results whose link is exactly the same as an earlier (better ranked) one; different links are never merged
+        val unique = filtered.distinctBy<StremioStream, Any> { it.url ?: it.externalUrl ?: it.infoHash?.let { h -> "magnet:$h" } ?: it.ytId?.let { y -> "yt:$y" } ?: it }
+
         val formatted = com.cncverse.stremiobridge.format.StreamFormatter.applyFor(
-            filtered,
+            unique,
             com.cncverse.stremiobridge.format.StreamFormatter.contextFromId(type, id),
             null,
         )

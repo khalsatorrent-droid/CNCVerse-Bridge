@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3
+
+- Streams whose link is exactly the same as another result are listed once (the best ranked one is kept). Links that differ in any way are never merged.
+
 ## 1.2.2
 
 - Six repositories are added by default: CNC, phisher98, SaurabhKaperwan (CSX), KSHITIJ8473 (raghav), RVRBEAST76 (allforu) and Faisal0786 (Desi). A fresh install starts with all of them; an existing install gets the missing ones added once (a repository you remove afterwards stays removed).
