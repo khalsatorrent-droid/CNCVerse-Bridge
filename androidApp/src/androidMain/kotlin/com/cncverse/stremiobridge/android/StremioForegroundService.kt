@@ -44,7 +44,45 @@ class StremioForegroundService : Service() {
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    private var cpuLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
     override fun onBind(intent: Intent): IBinder = binder
+
+    /** Keeps the CPU and Wi-Fi awake while the bridge runs, so the system does not put it to sleep. */
+    private fun acquireLocks() {
+        runCatching {
+            if (cpuLock?.isHeld != true) {
+                cpuLock = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
+                    .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "CNCVerseBridge:server")
+                    .apply { setReferenceCounted(false); acquire() }
+            }
+        }
+        runCatching {
+            if (wifiLock?.isHeld != true) {
+                @Suppress("DEPRECATION")
+                wifiLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager)
+                    .createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "CNCVerseBridge:wifi")
+                    .apply { setReferenceCounted(false); acquire() }
+            }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching { cpuLock?.takeIf { it.isHeld }?.release() }
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        cpuLock = null; wifiLock = null
+    }
+
+    /** Swiping the app away must not stop the server: make sure it keeps running (or comes back). */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (ServerState.status.value is ServerStatus.Stopped) return
+        runCatching {
+            val i = Intent(applicationContext, StremioForegroundService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(i) else startService(i)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -53,6 +91,7 @@ class StremioForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand")
+        acquireLocks()
         if (ServerState.status.value is ServerStatus.Running && StremioServer.isRunning) {
             Log.i(TAG, "Server is already running, skipping restart.")
             val ipAddress = getLocalIpAddress() ?: "localhost"
@@ -87,6 +126,7 @@ class StremioForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseLocks()
         stopServer()
         serviceScope.cancel()
         Log.i(TAG, "Service destroyed")

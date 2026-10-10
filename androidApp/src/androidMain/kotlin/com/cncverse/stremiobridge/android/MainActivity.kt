@@ -206,7 +206,24 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         if (ServerState.status.value !is ServerStatus.Stopped) BridgeRuntime.stopBridge()
     }
 
+    /** Asks once to be exempt from battery optimisation, the main reason Android closes the app in the background. */
+    private fun askBatteryExemption() {
+        runCatching {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (pm.isIgnoringBatteryOptimizations(packageName)) return
+            val prefs = getSharedPreferences("bridge_prefs", Context.MODE_PRIVATE)
+            if (prefs.getBoolean("battery_asked", false)) return
+            prefs.edit().putBoolean("battery_asked", true).apply()
+            @Suppress("BatteryLife")
+            startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(android.net.Uri.parse("package:$packageName"))
+            )
+        }
+    }
+
     private fun startBridgeService() {
+        askBatteryExemption()
         com.cncverse.stremiobridge.plugin.PluginUIContext.currentActivity = this
         val intent = Intent(this, StremioForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
