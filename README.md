@@ -15,8 +15,7 @@ CNCVerse Bridge is available for Android and Desktop (Windows/Linux).
 
 Go to the **[Releases](../../releases)** page to download:
 - **Android:** Download the `.apk` file.
-- **Desktop:** Download the `.msi`/`.exe` for Windows.
-- **Server:** Download the `.deb` for Linux (Debian/Ubuntu and derivatives).
+- **Desktop:** Download the `.msi`/`.exe` for Windows or the `.deb` for Linux (Debian/Ubuntu and derivatives).
 
 ---
 
@@ -80,6 +79,17 @@ The app downloads `cloudflared` on first use.
 - **Settings** — Cloudflare Tunnel, streams (resolutions, CAM, size limits, non-seekable files, subtitles, sorting, extension priority), catalogs (hide all or pick which ones; genres come from each home page, refreshed every 30 min), stream formatter (on by default, presets and preview), stream cache
 
 ---
+
+## New in 1.2.0
+
+- **Anime** - kitsu / MAL / AniList / AniDB ids are matched against every title the show is known by (English, romaji, synonyms) with fuzzy matching, season handling and flexible episode numbering, so extensions such as AniPM and Anidap find more shows and the right episode. Settings -> Streams: *Anime audio* (subbed / dubbed first, or hide the other).
+- **Quality** - adaptive HLS links get their real resolution from the playlist (no more "Auto" at the bottom), optional one-entry-per-rendition listing, a resolution cap ("Best quality for this device": links above it are listed last), and an option to hide unknown quality.
+- **Backup & import** - Settings -> Backup & import saves every setting (filters, formatter, cache, media server, repositories, installed / disabled extensions, extension settings) to one JSON file and restores it, also on another device.
+- **Media server** - Settings -> Media server. Links that need a Referer / cookies are downloaded by this device with those headers, kept on disk (hard limit 2 GB) and served to the player from there, with seeking while the download runs. HLS playlists and segments are cached and fetched ahead.
+
+## Building the APK on GitHub
+
+Upload the project to a GitHub repository (branch `main`). The *Build APK* workflow (`.github/workflows/build-apk.yml`) builds an installable APK; get it from the run's *Artifacts* or from the *latest* release. To sign with your own key, add the repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; without them the sideload key in `ci/` is used.
 
 ## Building from source
 
