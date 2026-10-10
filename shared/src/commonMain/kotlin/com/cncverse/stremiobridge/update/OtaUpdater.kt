@@ -38,7 +38,11 @@ object OtaUpdater {
         }
     }
 
+    /** Update dialogs are switched off: the app never reports a newer version. Set to true to bring them back. */
+    private const val UPDATE_CHECK_ENABLED = false
+
     suspend fun checkForUpdate(): GithubRelease? = withContext(Dispatchers.Default) {
+        if (!UPDATE_CHECK_ENABLED) return@withContext null
         try {
             val response = httpClient.get(GITHUB_API_URL)
             if (response.status.value in 200..299) {
