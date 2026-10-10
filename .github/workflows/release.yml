@@ -148,7 +148,12 @@ jobs:
           else
             # The tag already exists: no --target (pinning a commit that changes workflow files
             # needs the workflows permission, which the job token never has → HTTP 403)
-            gh release create "$TAG" dist/* --title "CNCVerse Bridge ${TAG}" --notes-file notes.md --verify-tag
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" dist/* --title "CNCVerse Bridge ${TAG}" --notes-file notes.md --verify-tag
+            else
+              # Started by hand without a tag: create the tag on the default branch
+              gh release create "$TAG" dist/* --title "CNCVerse Bridge ${TAG}" --notes-file notes.md --target "${{ github.event.repository.default_branch }}"
+            fi
           fi
       - name: Announce on Discord and Telegram
         env:
