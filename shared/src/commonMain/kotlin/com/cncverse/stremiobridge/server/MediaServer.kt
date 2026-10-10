@@ -164,24 +164,43 @@ object MediaServer {
 
     private fun capBytes(): Long = prefs.maxCacheMb.coerceIn(256, HARD_MAX_MB) * 1024L * 1024L
 
-    /** True when the cache folder is within its limit (after deleting old entries if it was not). */
-    private fun withinCap(): Boolean {
-        val dir = root ?: return false
-        if (dirSize(dir) <= capBytes()) return true
-        trim()
-        return dirSize(dir) <= capBytes()
-    }
-
-    /** Room for [bytes] more in the cache (old entries are deleted to make it). */
-    private fun roomFor(bytes: Long): Boolean {
-        val dir = root ?: return false
-        if (dirSize(dir) + bytes <= capBytes()) return true
-        trim()
-        return dirSize(dir) + bytes <= capBytes()
-    }
-
     private fun dirSize(f: File): Long =
         if (f.isFile) f.length() else (f.listFiles()?.sumOf { dirSize(it) } ?: 0L)
+
+    private fun lastUsed(d: File): Long = files[d.name]?.lastAccess?.takeIf { it > 0 } ?: d.lastModified()
+
+    private val evictLock = Any()
+
+    /**
+     * Keeps the cache folder under its limit by deleting previously cached items, least recently used
+     * first, until [extra] more bytes fit. The entry [keepId] (the one being written) is never deleted
+     * as a whole; if it is still too big, its oldest HLS segments go. [extra] > 0 means that entry is
+     * about to be (re)allocated at that size, so its current size is not counted.
+     * Returns true when [extra] bytes fit afterwards.
+     */
+    private fun makeRoom(extra: Long, keepId: String?): Boolean = synchronized(evictLock) {
+        val dir = root ?: return false
+        val cap = capBytes()
+        var total = dirSize(dir)
+        if (extra > 0 && keepId != null) total -= dirSize(File(dir, keepId))
+        if (total + extra <= cap) return true
+        val victims = dir.listFiles()?.filter { it.isDirectory && it.name != keepId }?.sortedBy { lastUsed(it) } ?: emptyList()
+        for (d in victims) {
+            if (total + extra <= cap) break
+            val sz = dirSize(d)
+            files.remove(d.name)?.stop = true
+            d.deleteRecursively()
+            total -= sz
+        }
+        if (total + extra > cap && keepId != null && extra <= 0) {
+            val segs = File(dir, "$keepId/hls").listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() } ?: emptyList()
+            for (f in segs) {
+                if (total <= cap) break
+                total -= f.length(); f.delete()
+            }
+        }
+        total + extra <= cap
+    }
 
     /** Deletes expired entries, then the least recently used ones while the folder is over its limit. */
     private fun trim() {
@@ -190,20 +209,9 @@ object MediaServer {
         val ttl = prefs.keepHours * 3_600_000L
         val busyMs = 3 * 60_000L
         val entries = dir.listFiles()?.filter { it.isDirectory } ?: return
-        fun lastUsed(d: File): Long = files[d.name]?.lastAccess?.takeIf { it > 0 } ?: d.lastModified()
-        val live = entries.filter { now - lastUsed(it) <= busyMs }.toSet()
-        entries.filter { it !in live && now - lastUsed(it) > ttl }.forEach { it.deleteRecursively(); files.remove(it.name) }
-        val max = capBytes()
-        var remaining = dir.listFiles()?.filter { it.isDirectory }?.toMutableList() ?: return
-        var total = remaining.sumOf { dirSize(it) }
-        remaining = remaining.sortedBy { lastUsed(it) }.toMutableList()
-        for (d in remaining) {
-            if (total <= max) break
-            if (d in live) continue
-            val s = dirSize(d)
-            d.deleteRecursively(); files.remove(d.name)
-            total -= s
-        }
+        entries.filter { now - lastUsed(it) > busyMs && now - lastUsed(it) > ttl }
+            .forEach { files.remove(it.name)?.stop = true; it.deleteRecursively() }
+        makeRoom(0, null)
     }
 
     // ── Rewriting streams ─────────────────────────────────────────────────────
@@ -460,7 +468,7 @@ object MediaServer {
                         }
                         r.header("Content-Type")?.substringBefore(';')?.trim()?.takeIf { it.isNotEmpty() }?.let { e.mime = it }
                         // Bigger than the whole cache, or no room even after deleting old entries: relay live instead
-                        val tooBig = e.total > capBytes() || (e.total > 0 && !roomFor(e.total))
+                        val tooBig = e.total > capBytes() || (e.total > 0 && !makeRoom(e.total, e.id))
                         if (e.total <= 0 || tooBig) {
                             // Unknown length (live / chunked) or bigger than the whole cache: relay it live instead
                             e.passthrough = true
@@ -497,7 +505,7 @@ object MediaServer {
                         if (sinceSave > 32L * 1024 * 1024) {
                             sinceSave = 0; saveMeta(e)
                             // Hard limit: never let the folder pass the cap
-                            if (!withinCap()) throw IOException("the media cache is full (limit ${prefs.maxCacheMb} MB)")
+                            if (!makeRoom(0, e.id)) throw IOException("the media cache is full (limit ${prefs.maxCacheMb} MB)")
                         }
                         if (e.have.contiguousEnd(off) > off) break // ran into data that is already on disk
                     }
@@ -765,7 +773,7 @@ object MediaServer {
             tmp.writeBytes(bytes)
             mime?.let { runCatching { File(f.parentFile, f.name + ".ct").writeText(it) } }
             if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
-            if (segWrites.incrementAndGet() % 20L == 0L) withinCap()
+            if (segWrites.incrementAndGet() % 20L == 0L) makeRoom(0, id)
         }
         segLocks.remove("$id|$url")
         return f
