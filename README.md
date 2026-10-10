@@ -80,6 +80,8 @@ The app downloads `cloudflared` on first use.
 
 ---
 
+> **Disclaimer:** this project is vibe coded (written with AI assistance) and provided as is, with no warranty. The developer takes no responsibility for any damage, data loss or other consequences of using it.
+
 ## New in 1.2.0
 
 - **Anime** - kitsu / MAL / AniList / AniDB ids are matched against every title the show is known by (English, romaji, synonyms) with fuzzy matching, season handling and flexible episode numbering, so extensions such as AniPM and Anidap find more shows and the right episode. Settings -> Streams: *Anime audio* (subbed / dubbed first, or hide the other).

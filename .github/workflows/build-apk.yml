@@ -62,4 +62,4 @@ jobs:
         run: |
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest out/CNCVerse-Bridge.apk --title "Latest build" \
-            --notes "Automatic build of ${GITHUB_SHA::7}" --target "$GITHUB_SHA" || echo "::warning::release upload skipped"
+            --notes "Automatic build of ${GITHUB_SHA::7}. Disclaimer: this app is vibe coded and provided as is; the developer takes no responsibility for its use." --target "$GITHUB_SHA" || echo "::warning::release upload skipped"

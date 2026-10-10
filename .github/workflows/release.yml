@@ -130,6 +130,8 @@ jobs:
             git log --no-merges --pretty='- %s (%h)' "$range"
             [ -n "$prev" ] && { echo; echo "**Full diff:** https://github.com/${{ github.repository }}/compare/${prev}...${TAG}"; }
             echo
+            echo "> **Disclaimer:** this app is vibe coded (written with AI assistance) and provided as is, with no warranty. The developer takes no responsibility for any damage, data loss or other consequences of using it. Use it at your own risk."
+            echo
             echo "## Downloads"
             echo "- **Android:** \`CNCVerse-Bridge-${TAG}.apk\`"
             echo "- **Windows:** \`CNCVerse-Bridge-${TAG}.msi\` (or \`CNCVerse-Bridge-${TAG}-setup.exe\`)"
