@@ -213,6 +213,21 @@ object StremioServer {
         val showSupport: Boolean = true,
         /** Hide direct-download files whose server cannot seek (no byte ranges). Relay/proxy links are never hidden. */
         val filterNonSeekable: Boolean = false,
+        /**
+         * Resolution cap, e.g. "1080p": streams above it are listed after everything within the cap
+         * (a TV or phone that cannot decode 4K gets playable links first). "" = no cap.
+         */
+        val maxResolution: String = "",
+        /** Read adaptive HLS playlists to find their real resolution instead of listing them as "Auto". */
+        val probeHls: Boolean = true,
+        /** Offer each rendition of an adaptive HLS playlist as its own stream (1080p / 720p / ...). */
+        val splitHls: Boolean = false,
+        /** Drop streams whose resolution cannot be found at all. */
+        val hideUnknownQuality: Boolean = false,
+        /** Anime audio preference: "all" | "sub" | "dub" - the preferred kind is listed first. */
+        val animeAudio: String = "all",
+        /** With [animeAudio] sub/dub: hide the other kind completely. */
+        val animeAudioOnly: Boolean = false,
     )
 
     @Volatile var streamPrefs: StreamPrefs = StreamPrefs()
@@ -237,6 +252,8 @@ object StremioServer {
             minSizeGb = min,
             maxSizeGb = max,
             maxStreamsPerResolution = p.maxStreamsPerResolution.coerceIn(0, 100),
+            maxResolution = p.maxResolution.takeIf { it in SELECTABLE_RESOLUTIONS } ?: "",
+            animeAudio = p.animeAudio.takeIf { it in setOf("all", "sub", "dub") } ?: "all",
             providerOrder = p.providerOrder.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
         )
         streamPrefs = cleaned
@@ -353,8 +370,23 @@ object StremioServer {
             ServerState.disableCatalogsGlobally = catalogsOffMarker?.exists() == true
             com.cncverse.stremiobridge.format.StreamFormatter.init(cacheDir)
             com.cncverse.stremiobridge.cache.StreamCacheManager.init(cacheDir)
+            MediaServer.init(cacheDir)
             configLoadedFrom = cacheDir
         }
+    }
+
+    /** Re-reads every saved setting (after a backup import). */
+    fun reloadConfig(cacheDir: String) {
+        synchronized(this) {
+            streamPrefs = StreamPrefs()
+            disabledPlugins.clear()
+            enabledSources.clear()
+            configLoadedFrom = null
+        }
+        loadConfig(cacheDir)
+        com.cncverse.stremiobridge.cache.StreamCacheManager.reloadConfigFromDisk()
+        homePageCatalogCache.clear()
+        encodedCatalogs.clear()
     }
 
     suspend fun start(port: Int = 8080, cacheDir: String? = null): Int {
@@ -388,6 +420,7 @@ object StremioServer {
         stopPeriodicRefreshJob()
         com.cncverse.stremiobridge.tunnel.CloudflaredManager.stopTunnel()
         com.cncverse.stremiobridge.cache.StreamCacheManager.shutdown()
+        MediaServer.shutdown()
         engine?.stop(0, 500)
         engine = null
         ServerState.info("Stremio server stopped")
@@ -667,6 +700,12 @@ object StremioServer {
                 LocalRelay.handle(call, port, call.parameters.getAll("path").orEmpty().joinToString("/"), call.request.queryString())
             }
 
+            // ── Media server: files and HLS cached on this device, then served to the player ──
+            get("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
+            head("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
+            get("/media/{id}/pl/{tok}") { MediaServer.servePlaylist(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+            get("/media/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+
             // ── Addon ────────────────────────────────────────────────────────
             // /u/{id}/… are older per-profile addon URLs; profiles are gone, so they
             // serve the same addon (installs made with them keep working).
@@ -808,12 +847,16 @@ object StremioServer {
         val streams = withContext(pluginDispatcher) { buildStreams(type, id) }
             // Archive downloads (".zip" season packs) can never play in any player
             .filter { !SeekProbe.isArchiveUrl(it.url) }
-        val sorted = sortStreamsByQuality(streams)
-
         // Filters and ordering from the app's stream settings
         val p = streamPrefs
+        // Adaptive HLS links report no quality: read their playlist for the real resolution
+        val probed = if (p.probeHls || p.splitHls) QualityProbe.enrich(streams, p.splitHls) else streams
+        val sorted = sortStreamsByQuality(probed)
+
         val kept = filterStreamsByProfile(sorted, p)
-        val filtered = arrangeStreams(if (p.filterNonSeekable) SeekProbe.dropNonSeekable(kept) else kept, p)
+        val filtered = applyAnimeAudio(
+            arrangeStreams(if (p.filterNonSeekable) SeekProbe.dropNonSeekable(kept) else kept, p), p
+        )
 
         val formatted = com.cncverse.stremiobridge.format.StreamFormatter.applyFor(
             filtered,
@@ -824,12 +867,41 @@ object StremioServer {
         val out = (if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted)
             .map { withStreamBase(it) }
             .map { LocalRelay.rewriteStream(it) }
+            // Media server: links that need a Referer / Cookie are fetched by this bridge and cached here
+            .map { MediaServer.rewrite(it, mediaBase()) }
             .let { list ->
                 // "Support the project" entry on top, only above real results (can be hidden in the app)
                 if (p.showSupport && list.isNotEmpty()) listOf(SUPPORT_STREAM) + list else list
             }
             .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = subs.map { it.copy(lang = com.cncverse.stremiobridge.format.SubtitleLangs.normalize(it.lang)) }) } ?: s }
         respond(StremioStreamResponse(out))
+    }
+
+    /** Where clients reach this bridge (for the links the media server hands out). */
+    private fun mediaBase(): String =
+        ServerState.streamBaseUrl ?: ServerState.publicBaseUrl.ifBlank { "http://127.0.0.1:${ServerState.serverPort}" }
+
+    private val SUB_TAG = Regex("\\[sub(?:bed)?\\]", RegexOption.IGNORE_CASE)
+    private val DUB_TAG = Regex("\\[dub(?:bed)?\\]", RegexOption.IGNORE_CASE)
+
+    /** "sub" / "dub" when the extension labelled the link (the bridge tags anime variants "[Sub]" / "[Dub]"). */
+    private fun audioKind(s: StremioStream): String? {
+        val text = s.title.orEmpty() + " " + s.name.orEmpty() + " " + s.info?.linkName.orEmpty()
+        return when {
+            DUB_TAG.containsMatchIn(text) -> "dub"
+            SUB_TAG.containsMatchIn(text) -> "sub"
+            else -> null
+        }
+    }
+
+    /** Anime: the preferred audio (sub or dub) first; optionally the other kind is hidden. */
+    fun applyAnimeAudio(streams: List<StremioStream>, p: StreamPrefs): List<StremioStream> {
+        if (p.animeAudio == "all") return streams
+        val preferred = streams.filter { audioKind(it) == p.animeAudio }
+        if (preferred.isEmpty()) return streams // nothing of that kind: never leave the list empty
+        val unlabelled = streams.filter { audioKind(it) == null }
+        val other = streams.filter { val k = audioKind(it); k != null && k != p.animeAudio }
+        return if (p.animeAudioOnly) preferred + unlabelled else preferred + unlabelled + other
     }
 
     private val SUPPORT_STREAM = StremioStream(
@@ -1577,8 +1649,8 @@ object StremioServer {
     // ── Quality sorting ───────────────────────────────────────────────────────
 
     /** Sort rank from the stream's own resolution (never the release/page title). */
-    private fun streamQualityRank(stream: StremioStream): Int =
-        when (detectStreamResolution(stream)) {
+    private fun tierRank(res: String?): Int =
+        when (res) {
             "2160p" -> 5
             "1080p" -> 4
             "720p" -> 3
@@ -1586,6 +1658,16 @@ object StremioServer {
             "360p" -> 1
             else -> 0
         }
+
+    /**
+     * Higher is listed earlier. With a resolution cap (Settings -> Streams) everything above the cap
+     * ranks below unknown quality, closest-to-the-cap first, so the first links always fit the device.
+     */
+    private fun streamQualityRank(stream: StremioStream): Int {
+        val tier = tierRank(detectStreamResolution(stream))
+        val cap = tierRank(streamPrefs.maxResolution.takeIf { it.isNotEmpty() })
+        return if (cap > 0 && tier > cap) -(tier - cap) else tier * 10
+    }
 
     private fun sortStreamsByQuality(streams: List<StremioStream>): List<StremioStream> =
         streams.sortedByDescending { streamQualityRank(it) }
@@ -1651,6 +1733,11 @@ object StremioServer {
         // 1. Exclude CAM / Screener rips
         if (profile.excludeCam) {
             result = result.filter { !isCamStream(it) }
+        }
+
+        // 1b. Streams whose resolution cannot be found at all
+        if (profile.hideUnknownQuality) {
+            result = result.filter { detectStreamResolution(it) != "other" }
         }
 
         // 2. Filter allowed resolutions if user chose specific ones
@@ -1864,7 +1951,9 @@ object StremioServer {
 
         return com.cncverse.stremiobridge.cache.StreamCacheManager.getOrFetchResult(aggCacheKey, null) {
             try {
-                val resolved = resolveExternal(type, ext)
+                // Anime ids: every title the show is known by (English, romaji, synonyms) for the matching
+                val animeInfo = if (ext.scheme in ExternalIds.ANIME_SCHEMES) AnimeResolver.resolve(ext) else null
+                val resolved = resolveExternal(type, ext) ?: animeInfo?.let { it.titles.first() to it.year }
                 if (resolved == null) {
                     ServerState.warn("Media resolve failed: no title/year found for $id")
                     return@getOrFetchResult com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult(emptyList())
@@ -1894,7 +1983,7 @@ object StremioServer {
                         sem.withPermit {
                             val res = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                                 try {
-                                    val streams = buildGenericStreamsForApi(api, type, id, title, year)
+                                    val streams = buildGenericStreamsForApi(api, type, id, title, year, animeInfo)
                                     accumulated.addAll(streams)
                                 } catch (e: Throwable) {
                                     // Cancelled by the bridge (request gone / 45 s stop): not the provider's failure
@@ -1966,14 +2055,15 @@ object StremioServer {
         type: String,
         id: String,
         title: String,
-        year: Int?
+        year: Int?,
+        anime: AnimeInfo? = null,
     ): List<StremioStream> {
         if (id.startsWith("probe_")) {
-            return doBuildGenericStreamsForApi(api, type, id, title, year)
+            return doBuildGenericStreamsForApi(api, type, id, title, year, anime)
         }
         val providerCacheKey = "stream:provider:${api.internalName}:$type:$id"
         return com.cncverse.stremiobridge.cache.StreamCacheManager.getOrFetch(providerCacheKey, api.internalName) {
-            doBuildGenericStreamsForApi(api, type, id, title, year)
+            doBuildGenericStreamsForApi(api, type, id, title, year, anime)
         }
     }
 
@@ -2023,7 +2113,8 @@ object StremioServer {
         type: String,
         id: String,
         title: String,
-        year: Int?
+        year: Int?,
+        anime: AnimeInfo? = null,
     ): List<StremioStream> {
         ServerState.debug("[${api.name}] Searching for '$title'")
         val cacheKey = api.internalName
@@ -2039,11 +2130,26 @@ object StremioServer {
         }
         ServerState.debug("[${api.name}] Found ${searchResults.size} results")
 
-        val requestedSeason = if (type == "series" && id.contains(":")) {
-            id.split(":").getOrNull(1)?.toIntOrNull()
-        } else null
+        val requestedSeason = if (type == "series" && id.contains(":")) ExternalIds.parse(id)?.season else null
 
-        val bestMatch = if (requestedSeason != null) {
+        val bestMatch = if (anime != null) {
+            // Anime: fuzzy match against every known title; extensions index the same show under another spelling
+            var found = AnimeMatcher.pickBest(searchResults, anime)
+            if (found == null) {
+                for (term in AnimeMatcher.searchTerms(anime).filter { !it.equals(title, true) }) {
+                    val more = try {
+                        SearchLoadCache.getSearch(cacheKey, term)
+                            ?: api.search(term).also { SearchLoadCache.putSearch(cacheKey, term, it) }
+                    } catch (e: Throwable) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        emptyList()
+                    }
+                    found = AnimeMatcher.pickBest(more, anime)
+                    if (found != null) break
+                }
+            }
+            found
+        } else if (requestedSeason != null) {
             // Sites often list each season separately ("The Boys Season 2", sometimes with that
             // season's year), which strict title+year matching rejects. Accept those only when the
             // result is exactly "<title> season N" / "<title> sN" at the start — so "Season 1"
@@ -2083,7 +2189,23 @@ object StremioServer {
         }
 
         var dataUrlToLoad = mediaInfo.dataUrl
-        if (type == "series" && id.contains(":")) {
+        if (anime != null) {
+            val parsed = ExternalIds.parse(id)
+            val epNo = parsed?.episode
+            val epList = mediaInfo.episodes
+            if (!epList.isNullOrEmpty()) {
+                // A later-season entry (kitsu "Season 2") numbers its own episodes from 1; a franchise page lists seasons
+                val wantSeason = anime.seasonHint?.takeIf { it > 1 } ?: parsed?.season
+                val ep = if (epNo != null) AnimeEpisodes.pick(epList, wantSeason, epNo) else epList.first()
+                if (ep == null) {
+                    ServerState.debug("[STREAM_EMPTY] [${api.name}] Episode $epNo not found")
+                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode $epNo not found")
+                    return emptyList()
+                }
+                dataUrlToLoad = ep.dataUrl
+                ServerState.debug("[${api.name}] Anime episode $epNo -> '${ep.name}'")
+            }
+        } else if (type == "series" && id.contains(":")) {
             val parsed  = ExternalIds.parse(id)
             val season  = parsed?.season
             val episode = parsed?.episode

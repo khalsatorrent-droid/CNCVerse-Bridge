@@ -48,6 +48,8 @@ fun SettingsScreen() {
             CatalogsCard()
             FormatterCard()
             StreamCacheCard()
+            MediaServerCard()
+            BackupCard()
 
             // About Section
             AmoledCard {

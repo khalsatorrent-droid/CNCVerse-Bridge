@@ -55,6 +55,53 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         else Toast.makeText(this, "Notification permission needed for foreground service", Toast.LENGTH_LONG).show()
     }
 
+    // Settings backup: the system file picker (hooks used by Settings -> Backup & import)
+    private var pendingSave: Pair<String, (String?) -> Unit>? = null
+    private var pendingOpen: ((String?) -> Unit)? = null
+
+    private val createDocLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val pending = pendingSave
+        pendingSave = null
+        if (pending != null) {
+            if (uri == null) {
+                pending.second(null)
+            } else {
+                activityScope.launch(Dispatchers.IO) {
+                    val msg = try {
+                        contentResolver.openOutputStream(uri, "wt")?.use { it.write(pending.first.toByteArray()) }
+                        "Backup saved"
+                    } catch (e: Exception) {
+                        "Could not save the file: ${e.message}"
+                    }
+                    pending.second(msg)
+                }
+            }
+        }
+    }
+
+    private val openDocLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val pending = pendingOpen
+        pendingOpen = null
+        if (pending != null) {
+            if (uri == null) {
+                pending(null)
+            } else {
+                activityScope.launch(Dispatchers.IO) {
+                    val text = try {
+                        contentResolver.openInputStream(uri)?.use { String(it.readBytes()) }
+                    } catch (e: Exception) {
+                        null
+                    }
+                    pending(text)
+                }
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         com.cncverse.stremiobridge.plugin.PluginUIContext.currentActivity = this
@@ -69,6 +116,15 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        com.cncverse.stremiobridge.settings.FileTransferHost.saveText = { name, content, done ->
+            pendingSave = content to done
+            createDocLauncher.launch(name)
+        }
+        com.cncverse.stremiobridge.settings.FileTransferHost.openText = { done ->
+            pendingOpen = done
+            openDocLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+        }
 
         // Edge-to-edge display for true AMOLED experience
         WindowCompat.setDecorFitsSystemWindows(window, false)

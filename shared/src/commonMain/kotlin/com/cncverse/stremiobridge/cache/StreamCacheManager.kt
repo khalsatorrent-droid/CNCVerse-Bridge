@@ -454,6 +454,12 @@ object StreamCacheManager {
         }
     }
 
+    /** Re-reads the saved cache settings (after a backup import); cached links stay as they are. */
+    fun reloadConfigFromDisk() {
+        config = StreamCacheConfig()
+        loadConfig()
+    }
+
     fun updateConfig(newConfig: StreamCacheConfig) {
         config = newConfig
         val file = configFile ?: return

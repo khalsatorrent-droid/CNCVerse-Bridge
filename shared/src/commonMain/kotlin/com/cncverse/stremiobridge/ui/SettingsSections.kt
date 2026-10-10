@@ -21,7 +21,13 @@ import com.cncverse.stremiobridge.cache.StreamCacheManager
 import com.cncverse.stremiobridge.format.StreamFormatter
 import com.cncverse.stremiobridge.format.StreamFormatterConfig
 import com.cncverse.stremiobridge.format.TemplateException
+import com.cncverse.stremiobridge.server.MediaServer
+import com.cncverse.stremiobridge.server.MediaServerPrefs
 import com.cncverse.stremiobridge.server.StremioServer
+import com.cncverse.stremiobridge.settings.FileTransferHost
+import com.cncverse.stremiobridge.settings.SettingsBackup
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import com.cncverse.stremiobridge.state.ServerState
 import com.cncverse.stremiobridge.state.ServerStatus
 import com.cncverse.stremiobridge.tunnel.CloudflaredManager
@@ -319,6 +325,57 @@ fun StreamsCard() {
         SwitchRow("Hide subtitles", "Streams go out without subtitle tracks", p.hideSubtitles) { update(p.copy(hideSubtitles = it)) }
         SwitchRow("Show \"support the project\" entry", "One donate link on top of stream lists", p.showSupport) { update(p.copy(showSupport = it)) }
 
+        // ── Quality allotment ──
+        Spacer(Modifier.height(10.dp))
+        Text("Best quality for this device", color = TextSecondary, fontSize = 11.sp)
+        Text("Links above the limit are listed after the ones that fit", color = TextMuted, fontSize = 10.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("" to "No limit", "2160p" to "Up to 4K", "1080p" to "Up to 1080p", "720p" to "Up to 720p", "480p" to "Up to 480p").forEach { (value, label) ->
+                FilterChip(
+                    selected = p.maxResolution == value,
+                    onClick = { update(p.copy(maxResolution = value)) },
+                    label = { Text(label, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+        SwitchRow("Detect the quality of adaptive streams", "Reads HLS playlists to find the real resolution instead of listing them as Auto", p.probeHls) {
+            update(p.copy(probeHls = it))
+        }
+        SwitchRow("List every quality separately", "One entry per rendition (1080p, 720p, ...) plus the adaptive one", p.splitHls) {
+            update(p.copy(splitHls = it))
+        }
+        SwitchRow("Hide streams with unknown quality", "Links whose resolution cannot be found at all", p.hideUnknownQuality) {
+            update(p.copy(hideUnknownQuality = it))
+        }
+
+        // ── Anime ──
+        Spacer(Modifier.height(10.dp))
+        Text("Anime audio", color = TextSecondary, fontSize = 11.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("all" to "No preference", "sub" to "Subbed first", "dub" to "Dubbed first").forEach { (value, label) ->
+                FilterChip(
+                    selected = p.animeAudio == value,
+                    onClick = { update(p.copy(animeAudio = value)) },
+                    label = { Text(label, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+        SwitchRow(
+            title = "Hide the other audio",
+            description = "Only with Subbed / Dubbed first: the other kind is not listed",
+            checked = p.animeAudioOnly,
+            enabled = p.animeAudio != "all",
+            onCheckedChange = { update(p.copy(animeAudioOnly = it)) },
+        )
+
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -457,5 +514,193 @@ fun CatalogsCard() {
                 }
             }
         }
+    }
+}
+
+// ── Media server ──────────────────────────────────────────────────────────────
+
+private fun fmtBytes(b: Long): String = when {
+    b >= 1L shl 30 -> String.format(java.util.Locale.ROOT, "%.1f GB", b / (1024.0 * 1024 * 1024))
+    b >= 1L shl 20 -> String.format(java.util.Locale.ROOT, "%.0f MB", b / (1024.0 * 1024))
+    else -> "${b / 1024} KB"
+}
+
+/** Caches links that need cookies / a referrer on this device and serves them to the player from here. */
+@Composable
+fun MediaServerCard() {
+    var p by remember { mutableStateOf(MediaServer.prefs) }
+    var tick by remember { mutableStateOf(0) }
+    val stats = remember(tick) { MediaServer.stats() }
+    var readAhead by remember { mutableStateOf(p.readAheadMb.toString()) }
+    var prefetch by remember { mutableStateOf(p.prefetchSegments.toString()) }
+    var maxMb by remember { mutableStateOf(p.maxCacheMb.toString()) }
+    var keep by remember { mutableStateOf(p.keepHours.toString()) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    AmoledCard(Modifier.fillMaxWidth()) {
+        SectionTitle(
+            "Media server",
+            "Some links only play with a Referer or cookies that your player cannot send. With this on, this device downloads " +
+                "the video (or HLS segments) itself with those headers, keeps it on disk, and serves your player from there - seeking works while it downloads.",
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatTile("${stats.entries}", "Cached", TextPrimary, Modifier.weight(1f))
+            StatTile(fmtBytes(stats.bytes), "On disk", Violet300, Modifier.weight(1f))
+            StatTile("${stats.activeDownloads}", "Downloading", Green400, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
+        SwitchRow("Use the media server", "Off: links go to your player exactly as the extension gave them", p.enabled) {
+            p = p.copy(enabled = it); message = null
+        }
+        Text("Which links", color = TextSecondary, fontSize = 11.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("headers" to "Only links that need headers", "all" to "Every link").forEach { (value, label) ->
+                FilterChip(
+                    selected = p.mode == value,
+                    onClick = { p = p.copy(mode = value); message = null },
+                    label = { Text(label, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+        SwitchRow("Video files (mp4, mkv...)", "Download first, then play from this device", p.cacheFiles) { p = p.copy(cacheFiles = it); message = null }
+        SwitchRow("HLS streams (m3u8)", "Cache playlists and segments, fetch ahead of the player", p.cacheHls) { p = p.copy(cacheHls = it); message = null }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = readAhead, onValueChange = { v -> readAhead = v.filter { it.isDigit() }.take(6); message = null },
+                label = { Text("Read-ahead MB") }, supportingText = { Text("0 = whole file", fontSize = 10.sp) }, singleLine = true,
+                modifier = Modifier.weight(1f), colors = amoledFieldColors(),
+            )
+            OutlinedTextField(
+                value = prefetch, onValueChange = { v -> prefetch = v.filter { it.isDigit() }.take(2); message = null },
+                label = { Text("HLS prefetch") }, supportingText = { Text("segments", fontSize = 10.sp) }, singleLine = true,
+                modifier = Modifier.weight(1f), colors = amoledFieldColors(),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = maxMb, onValueChange = { v -> maxMb = v.filter { it.isDigit() }.take(7); message = null },
+                label = { Text("Max cache MB") }, supportingText = { Text("up to 2048 (2 GB)", fontSize = 10.sp) }, singleLine = true,
+                modifier = Modifier.weight(1f), colors = amoledFieldColors(),
+            )
+            OutlinedTextField(
+                value = keep, onValueChange = { v -> keep = v.filter { it.isDigit() }.take(5); message = null },
+                label = { Text("Keep hours") }, singleLine = true,
+                modifier = Modifier.weight(1f), colors = amoledFieldColors(),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionButton("Save", primary = true) {
+                MediaServer.updatePrefs(
+                    p.copy(
+                        readAheadMb = readAhead.toIntOrNull() ?: p.readAheadMb,
+                        prefetchSegments = prefetch.toIntOrNull() ?: p.prefetchSegments,
+                        maxCacheMb = maxMb.toIntOrNull() ?: p.maxCacheMb,
+                        keepHours = keep.toIntOrNull() ?: p.keepHours,
+                    )
+                )
+                p = MediaServer.prefs
+                message = "Saved - applies to the next stream request"; tick++
+            }
+            ActionButton("Refresh") { tick++ }
+            ActionButton("Clear cache", danger = true) { message = "Deleted ${MediaServer.clearCache()} cached item(s)"; tick++ }
+        }
+        message?.let { Text(it, color = Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
+    }
+}
+
+// ── Backup & import ───────────────────────────────────────────────────────────
+
+/** Saves every setting to one file and restores it on this or another device. */
+@Composable
+fun BackupCard() {
+    val clipboard = LocalClipboardManager.current
+    var includeSecrets by remember { mutableStateOf(true) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var showPaste by remember { mutableStateOf(false) }
+    var pasted by remember { mutableStateOf("") }
+
+    fun runImport(text: String) {
+        val r = SettingsBackup.import(text)
+        if (r.ok) {
+            message = r.message; error = null
+            if (r.pluginsToInstall.isNotEmpty()) {
+                launchBackground {
+                    val n = SettingsBackup.reinstall(r.pluginsToInstall)
+                    message = r.message + " Reinstalled $n of ${r.pluginsToInstall.size}."
+                }
+            }
+        } else {
+            error = r.message; message = null
+        }
+    }
+
+    AmoledCard(Modifier.fillMaxWidth()) {
+        SectionTitle(
+            "Backup & import",
+            "One file with your stream filters, quality and anime options, catalogs, formatter, cache and media-server settings, " +
+                "repositories, installed and disabled extensions, and extension settings.",
+        )
+        SwitchRow(
+            "Include logins and tokens",
+            "Tunnel token, licence and other extension logins. Keep such a file private.",
+            includeSecrets,
+        ) { includeSecrets = it }
+        Spacer(Modifier.height(6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionButton("Save to file", primary = true) {
+                val text = SettingsBackup.export(includeSecrets)
+                val name = SettingsBackup.suggestedFileName()
+                val host = FileTransferHost.saveText
+                if (host != null) {
+                    host(name, text) { result ->
+                        if (result != null) { message = result; error = null } else { message = null; error = "Save cancelled" }
+                    }
+                } else {
+                    try {
+                        val f = java.io.File(System.getProperty("user.home") ?: ".", name)
+                        f.writeText(text)
+                        message = "Saved to ${f.absolutePath}"; error = null
+                    } catch (e: Exception) {
+                        error = "Could not save: ${e.message}"; message = null
+                    }
+                }
+            }
+            ActionButton("Import from file") {
+                val host = FileTransferHost.openText
+                if (host != null) {
+                    host { text -> if (text != null) runImport(text) else { message = null; error = "Import cancelled" } }
+                } else {
+                    showPaste = true
+                }
+            }
+            ActionButton("Copy backup") {
+                clipboard.setText(AnnotatedString(SettingsBackup.export(includeSecrets)))
+                message = "Backup copied to the clipboard"; error = null
+            }
+            ActionButton(if (showPaste) "Hide paste box" else "Paste to import") { showPaste = !showPaste }
+        }
+        if (showPaste) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = pasted, onValueChange = { pasted = it },
+                label = { Text("Paste the backup text") },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp),
+                colors = amoledFieldColors(),
+            )
+            Spacer(Modifier.height(6.dp))
+            ActionButton("Import pasted backup", primary = true, enabled = pasted.isNotBlank()) {
+                runImport(pasted); pasted = ""
+            }
+        }
+        message?.let { Text(it, color = Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
+        error?.let { Text(it, color = Red400, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
     }
 }
