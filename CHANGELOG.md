@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2
+
+- Six repositories are added by default: CNC, phisher98, SaurabhKaperwan (CSX), KSHITIJ8473 (raghav), RVRBEAST76 (allforu) and Faisal0786 (Desi). A fresh install starts with all of them; an existing install gets the missing ones added once (a repository you remove afterwards stays removed).
+- Releases and the README now carry a notice that the app is vibe coded and provided as is, with no responsibility taken by the developer.
+
 ## 1.2.1
 
 - The app no longer shows update dialogs (update checks are switched off).

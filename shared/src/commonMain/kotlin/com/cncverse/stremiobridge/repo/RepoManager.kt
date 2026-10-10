@@ -10,6 +10,7 @@ import kotlinx.coroutines.sync.withLock
  * Repo URLs are persisted via [loadRepoUrls] / [saveRepoUrls].
  */
 object RepoManager {
+    private const val BUNDLED_MARK = "bundled_repos_v1"
 
     /**
      * Load saved repos from persistence and seed the default repo if none exist.
@@ -18,8 +19,15 @@ object RepoManager {
     fun loadSavedRepos() {
         var urls = loadRepoUrls().toMutableList()
         if (urls.isEmpty()) {
-            urls = mutableListOf(DEFAULT_REPO_URL)
+            urls = BUNDLED_REPO_URLS.toMutableList()
             saveRepoUrls(urls)
+            runCatching { setExtensionSetting(BUNDLED_MARK, "1") }
+        } else if (runCatching { getExtensionSetting(BUNDLED_MARK) }.getOrNull() == null) {
+            // Existing install: add the bundled repositories once (removing one later keeps it removed)
+            val before = urls.size
+            BUNDLED_REPO_URLS.forEach { if (it !in urls) urls.add(it) }
+            if (urls.size != before) saveRepoUrls(urls)
+            runCatching { setExtensionSetting(BUNDLED_MARK, "1") }
         }
         val cached = runCatching { loadCachedRepoEntries() }.getOrDefault(emptyList()).associateBy { it.url }
         val entries = urls.map { url ->

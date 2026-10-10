@@ -24,3 +24,13 @@ expect fun saveCachedAvailablePlugins(plugins: List<com.cncverse.stremiobridge.s
 
 const val DEFAULT_REPO_URL =
     "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json"
+
+/** Repositories every install starts with, next to the default one. */
+val BUNDLED_REPO_URLS: List<String> = listOf(
+    DEFAULT_REPO_URL,
+    "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+    "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+    "https://raw.githubusercontent.com/KSHITIJ8473/raghav/builds/repo.json",
+    "https://raw.githubusercontent.com/RVRBEAST76/allforu-repo/builds/repo.json",
+    "https://raw.githubusercontent.com/Faisal0786/Desi/main/repo.json",
+)
