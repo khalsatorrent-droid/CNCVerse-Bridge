@@ -15,6 +15,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondOutputStream
+import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondText
 import io.ktor.utils.io.*
 import kotlinx.coroutines.CoroutineScope
@@ -47,20 +48,26 @@ import javax.crypto.spec.SecretKeySpec
 data class MediaServerPrefs(
     /** Master switch. Off = streams go out exactly as the extension produced them. */
     val enabled: Boolean = false,
-    /** "headers": only streams that need a Referer / Cookie / custom header. "all": every http(s) stream. */
-    val mode: String = "headers",
+    /**
+     * "headers": only streams that need a Referer / Cookie / custom header.
+     * "hls": those plus every HLS stream (smooth playback of slow hosts).
+     * "all": every http(s) stream.
+     */
+    val mode: String = "hls",
     /** Download direct video files (mp4/mkv/...) to this device first, then serve them from disk. */
     val cacheFiles: Boolean = true,
     /** Cache HLS playlists and segments on this device. */
     val cacheHls: Boolean = true,
     /** HLS segments fetched ahead of the player. */
-    val prefetchSegments: Int = 8,
+    val prefetchSegments: Int = 30,
     /** How far (MB) past the playing position a file download may run (0 = download the whole file). */
     val readAheadMb: Int = 1024,
     /** Upper limit of the cache folder, in MB (never more than 2048). Oldest entries are deleted first. */
     val maxCacheMb: Int = 2048,
     /** Entries not used for this many hours are deleted. */
     val keepHours: Int = 24,
+    /** Settings generation (older files get the newer defaults once). */
+    val ver: Int = 2,
 )
 
 @Serializable
@@ -104,7 +111,7 @@ object MediaServer {
     private val served = AtomicLong(0)
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val prefetchLimit = Semaphore(4)
+    private val prefetchLimit = Semaphore(8)
 
     private val sources = ConcurrentHashMap<String, MediaSource>()
     private val files = ConcurrentHashMap<String, FileEntry>()
@@ -115,7 +122,11 @@ object MediaServer {
         val base = File(cacheDir)
         prefsFile = File(base, "media_server.json")
         prefs = (runCatching { prefsFile?.takeIf { it.exists() }?.let { json.decodeFromString<MediaServerPrefs>(it.readText()) } }
-            .getOrNull() ?: MediaServerPrefs()).let { it.copy(maxCacheMb = it.maxCacheMb.coerceIn(256, HARD_MAX_MB)) }
+            .getOrNull() ?: MediaServerPrefs()).let {
+            var q = it.copy(maxCacheMb = it.maxCacheMb.coerceIn(256, HARD_MAX_MB))
+            if (q.ver < 2) q = q.copy(ver = 2, mode = if (q.mode == "headers") "hls" else q.mode, prefetchSegments = maxOf(q.prefetchSegments, 30))
+            q
+        }
         val dir = File(base, "media_cache")
         dir.mkdirs()
         root = dir
@@ -130,8 +141,8 @@ object MediaServer {
 
     fun updatePrefs(p: MediaServerPrefs) {
         val clean = p.copy(
-            mode = if (p.mode == "all") "all" else "headers",
-            prefetchSegments = p.prefetchSegments.coerceIn(0, 40),
+            mode = if (p.mode in setOf("headers", "hls", "all")) p.mode else "hls",
+            prefetchSegments = p.prefetchSegments.coerceIn(0, 60),
             readAheadMb = p.readAheadMb.coerceIn(0, 100_000),
             maxCacheMb = p.maxCacheMb.coerceIn(256, HARD_MAX_MB),
             keepHours = p.keepHours.coerceIn(1, 24 * 365),
@@ -232,8 +243,9 @@ object MediaServer {
         if (host in ServerState.ownHosts || host == "127.0.0.1" || host == "localhost") return s
         if (url.substringBefore('?').endsWith(".mpd", true) || url.contains(".mpd?", true)) return s // own DASH proxy
         val headers = s.behaviorHints?.proxyHeaders?.request.orEmpty()
-        if (p.mode == "headers" && headers.isEmpty()) return s
         val hls = looksLikeHls(url, s.info?.linkType)
+        if (p.mode == "headers" && headers.isEmpty()) return s
+        if (p.mode == "hls" && headers.isEmpty() && !hls) return s
         if (hls && !p.cacheHls) return s
         if (!hls && !p.cacheFiles) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
@@ -386,6 +398,7 @@ object MediaServer {
         @Volatile var mime = "application/octet-stream"
         @Volatile var ready = false
         @Volatile var passthrough = false
+        @Volatile var isPlaylist = false
         @Volatile var error: String? = null
         @Volatile var focus = -1L
         @Volatile var stop = false
@@ -467,6 +480,13 @@ object MediaServer {
                             e.total = r.body?.contentLength() ?: -1L
                         }
                         r.header("Content-Type")?.substringBefore(';')?.trim()?.takeIf { it.isNotEmpty() }?.let { e.mime = it }
+                        // The link is really an HLS playlist: hand over to the playlist route
+                        if (e.mime.contains("mpegurl", true)) {
+                            e.isPlaylist = true
+                            e.ready = true
+                            e.stop = true
+                            return@use
+                        }
                         // Bigger than the whole cache, or no room even after deleting old entries: relay live instead
                         val tooBig = e.total > capBytes() || (e.total > 0 && !makeRoom(e.total, e.id))
                         if (e.total <= 0 || tooBig) {
@@ -564,6 +584,7 @@ object MediaServer {
         ensureWorker(e)
         withTimeoutOrNull(45_000) { while (!e.ready) delay(50) }
         if (!e.ready) return call.respondText("The source did not answer in time", status = HttpStatusCode.GatewayTimeout)
+        if (e.isPlaylist) return call.respondRedirect("../pl/${token(id, e.src.url)}.m3u8")
         if (e.passthrough) return passthrough(call, e)
         if (e.total <= 0) {
             return call.respondText("Source error: ${e.error ?: "unknown"}", status = HttpStatusCode.BadGateway)
@@ -661,12 +682,28 @@ object MediaServer {
     private fun segFile(id: String, url: String): File =
         File(File(root!!, "$id/hls").also { it.mkdirs() }, sha256(url).take(32))
 
+    /** Downloads one playlist / segment, trying up to three times (hosts that hiccup must not stall the player). */
     private fun fetchRemote(id: String, src: MediaSource, url: String): Pair<ByteArray, String?> {
         val client = clientFor(id, src)
-        client.newCall(requestFor(src, url)).execute().use { r ->
-            if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
-            return (r.body?.bytes() ?: ByteArray(0)) to r.header("Content-Type")?.substringBefore(';')?.trim()
+        var last: Exception? = null
+        for (attempt in 1..3) {
+            try {
+                client.newCall(requestFor(src, url)).execute().use { r ->
+                    if (!r.isSuccessful) {
+                        if (r.code in 400..499 && r.code != 408 && r.code != 429) throw IOException("HTTP ${r.code}")
+                        throw IllegalStateException("HTTP ${r.code}")
+                    }
+                    return (r.body?.bytes() ?: ByteArray(0)) to r.header("Content-Type")?.substringBefore(';')?.trim()
+                }
+            } catch (e: IOException) {
+                if (e.message?.startsWith("HTTP 4") == true) throw e
+                last = e
+            } catch (e: IllegalStateException) {
+                last = IOException(e.message)
+            }
+            if (attempt < 3) Thread.sleep(250L * attempt)
         }
+        throw last ?: IOException("download failed")
     }
 
     private val URI_ATTR = Regex("URI=\"([^\"]*)\"")
@@ -734,10 +771,39 @@ object MediaServer {
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
             // Start fetching the first segments right away
             if (raw.contains("#EXTINF")) prefetch(id, src, key, 0)
+            if (raw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, url, raw)
             rewritten
         }
         call.response.header(HttpHeaders.CacheControl, "no-store")
         call.respondText(text, ContentType.parse("application/vnd.apple.mpegurl"))
+    }
+
+    /** A master playlist was opened: load its rendition playlists now, so the player's next request is instant. */
+    private fun warmVariants(id: String, src: MediaSource, masterUrl: String, raw: String) {
+        val lines = raw.lines().map { it.trim() }
+        val urls = ArrayList<String>()
+        for ((i, l) in lines.withIndex()) {
+            if (l.startsWith("#EXT-X-STREAM-INF")) {
+                var j = i + 1
+                while (j < lines.size && (lines[j].isEmpty() || lines[j].startsWith("#"))) j++
+                if (j < lines.size) urls += resolve(masterUrl, lines[j])
+            }
+        }
+        for (u in urls.distinct().take(6)) {
+            val key = "$id|$u"
+            if (playlistCache.containsKey(key)) continue
+            scope.launch {
+                prefetchLimit.withPermit {
+                    runCatching {
+                        val text = String(fetchRemote(id, src, u).first)
+                        if (text.trimStart().startsWith("#EXTM3U")) {
+                            val rewritten = rewritePlaylist(id, u, text, key)
+                            playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /** Finished (VOD) playlists keep for ten minutes, live ones for two seconds. */
@@ -791,6 +857,15 @@ object MediaServer {
         }
         segPos["$id|$url"]?.let { (pk, i) -> prefetch(id, src, pk, i + 1) }
         val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+        // Some hosts hand out playlists under names without ".m3u8": recognise them by content and rewrite them too
+        if (bytes.size in 8..2_000_000 && bytes[0] == '#'.code.toByte() && String(bytes, 0, 7) == "#EXTM3U") {
+            val key = "$id|$url"
+            val rewritten = rewritePlaylist(id, url, String(bytes), key)
+            playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
+            if (rewritten.contains("#EXTINF")) prefetch(id, src, key, 0)
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            return call.respondText(rewritten, ContentType.parse("application/vnd.apple.mpegurl"))
+        }
         val mime = runCatching { File(file.parentFile, file.name + ".ct").takeIf { it.exists() }?.readText() }.getOrNull()
             ?: guessSegmentType(url)
         val ct = runCatching { ContentType.parse(mime) }.getOrDefault(ContentType.Application.OctetStream)

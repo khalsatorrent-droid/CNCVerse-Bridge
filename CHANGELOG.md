@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+
+- **AnimePahe and other extensions with saved settings:** plain-text settings (domain, user agent, Cloudflare cookie, provider lists) were handed to extensions in a form they could not read, so AnimePahe found nothing and logged JSON errors. They now read correctly.
+- **Media server:** new default mode "Those + all HLS", more segments fetched ahead (30), 8 downloads in parallel, retries on failed downloads, playlists behind plain links (no ".m3u8") are recognised, and the renditions of a master playlist are loaded as soon as it is opened. Aimed at hard-sub / slow-host streams that kept buffering.
+- **Results shown once:** by default the full list is shown after all extensions have answered (up to 45 s) instead of an early partial list. Setting: Streams -> "Show results once, after all extensions answered".
+- **Next episode in advance:** after an episode's links are loaded, the next episode's links are loaded in the background. Setting: Streams -> "Load the next episode in advance".
+- **Sorting:** links of equal quality no longer change places between loads (ties are broken by provider, name and link); adaptive streams get a longer time to have their quality detected so they are not ranked last at random.
+- **Anime names:** for kitsu / MAL / AniList / AniDB ids the titles of AniList, Kitsu and MyAnimeList are all collected; for tt / tmdb / tvdb ids of anime the title is looked up on AniList and all its other names are tried too.
+- **Log warnings:** fixed "No virtual method authUser()", "Failed resolution of AniListApi$CoverImage" and "No base context in WebViewResolver".
+
 ## 1.2.3
 
 - Streams whose link is exactly the same as another result are listed once (the best ranked one is kept). Links that differ in any way are never merged.

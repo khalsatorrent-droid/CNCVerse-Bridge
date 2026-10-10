@@ -46,9 +46,12 @@ object AnimeResolver {
     private fun JsonObject.strList(key: String): List<String> =
         (this[key] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { s -> s.isNotEmpty() } }.orEmpty()
 
-    private fun aniList(field: String, id: Int): AnimeInfo? {
-        val query = "query{Media($field:$id,type:ANIME){title{english romaji native}synonyms seasonYear startDate{year}episodes format}}"
-        val body = JsonObject(mapOf("query" to JsonPrimitive(query))).toString()
+    private class Hit(val info: AnimeInfo, val anilistId: Int?, val malId: Int?)
+
+    /** One AniList Media lookup: [decl] declares the variable "v" (Int or String), [arg] is the Media(...) argument. */
+    private fun aniListHit(decl: String, arg: String, value: JsonPrimitive): Hit? {
+        val query = "query(\$v:$decl){Media($arg,type:ANIME){id idMal title{english romaji native}synonyms seasonYear startDate{year}episodes format}}"
+        val body = JsonObject(mapOf("query" to JsonPrimitive(query), "variables" to JsonObject(mapOf("v" to value)))).toString()
         val text = runCatching {
             client.newCall(
                 okhttp3.Request.Builder().url("https://graphql.anilist.co")
@@ -59,17 +62,77 @@ object AnimeResolver {
         }.getOrNull() ?: return null
         val media = (json.parseToJsonElement(text).jsonObject["data"] as? JsonObject)?.get("Media") as? JsonObject ?: return null
         val t = media["title"] as? JsonObject
-        val titles = listOfNotNull(t?.str("english"), t?.str("romaji")) + media.strList("synonyms").take(4) + listOfNotNull(t?.str("native"))
+        val titles = listOfNotNull(t?.str("english"), t?.str("romaji")) + media.strList("synonyms").take(6) + listOfNotNull(t?.str("native"))
         if (titles.isEmpty()) return null
         val year = (media["seasonYear"] as? JsonPrimitive)?.intOrNull
             ?: ((media["startDate"] as? JsonObject)?.get("year") as? JsonPrimitive)?.intOrNull
-        return AnimeInfo(
+        val info = AnimeInfo(
             titles = titles.distinct(),
             year = year,
             episodeCount = (media["episodes"] as? JsonPrimitive)?.intOrNull,
             format = media.str("format"),
             seasonHint = AnimeMatcher.seasonNumber(AnimeMatcher.normalize(titles.first())),
         )
+        return Hit(info, (media["id"] as? JsonPrimitive)?.intOrNull, (media["idMal"] as? JsonPrimitive)?.intOrNull)
+    }
+
+    private fun aniListById(field: String, id: Int): Hit? = aniListHit("Int", "$field:\$v", JsonPrimitive(id))
+
+    private fun aniListSearch(term: String): Hit? = aniListHit("String", "search:\$v", JsonPrimitive(term))
+
+    private fun aniList(field: String, id: Int): AnimeInfo? = aniListById(field, id)?.info
+
+    /** MyAnimeList titles through Jikan (English, default, synonyms). */
+    private fun jikanTitles(mal: Int): List<String> {
+        val d = get("https://api.jikan.moe/v4/anime/$mal")?.get("data") as? JsonObject ?: return emptyList()
+        val listed = (d["titles"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.str("title") }.orEmpty()
+        return (listOfNotNull(d.str("title_english"), d.str("title")) + listed + d.strList("title_synonyms")).distinct()
+    }
+
+    /** AniList hit + Kitsu + MyAnimeList: every name any of them knows the show by. */
+    private fun enrich(hit: Hit): AnimeInfo {
+        var info = hit.info
+        val extra = ArrayList<String>()
+        hit.anilistId?.let { al ->
+            runCatching { get("https://arm.haglund.dev/api/v2/ids?source=anilist&id=$al")?.str("kitsu") }.getOrNull()
+                ?.let { k -> runCatching { kitsu(k) }.getOrNull()?.let { extra += it.titles } }
+        }
+        hit.malId?.let { mal -> runCatching { jikanTitles(mal) }.getOrNull()?.let { extra += it } }
+        if (extra.isNotEmpty()) {
+            val seen = info.titles.map { AnimeMatcher.normalize(it) }.toMutableSet()
+            val add = extra.filter { it.isNotBlank() && seen.add(AnimeMatcher.normalize(it)) }
+            info = info.copy(titles = info.titles + add.take(8))
+        }
+        return info
+    }
+
+    /**
+     * Anime behind a tt / tmdb / tvdb id: the title is looked up on AniList (strictly: the name must match,
+     * non-anime titles find nothing) and all alternative names are collected. Null when it is not an anime.
+     */
+    suspend fun fromTitle(title: String, year: Int?): AnimeInfo? {
+        val key = "title:" + title.lowercase() + ":" + year
+        cache[key]?.let { return it }
+        val info = withContext(Dispatchers.IO) {
+            try {
+                val hit = aniListSearch(title) ?: return@withContext null
+                val nt = AnimeMatcher.normalize(title)
+                val ok = hit.info.titles.any { AnimeMatcher.dice(AnimeMatcher.normalize(it), nt) >= 0.85 }
+                if (!ok) null else enrich(hit).let { found ->
+                    // The id's own title stays first: that is what the extensions were already searched with
+                    found.copy(titles = (listOf(title) + found.titles).distinct(), seasonHint = null)
+                }
+            } catch (e: Exception) {
+                ServerState.warn("Anime title lookup '$title' failed: ${e.message?.take(80)}")
+                null
+            }
+        }
+        if (info != null) {
+            if (cache.size > 2_000) cache.clear()
+            cache[key] = info
+            ServerState.debug("Anime by title '$title' -> ${info.titles.take(4)}")
+        }
+        return info
     }
 
     private fun kitsu(id: String): AnimeInfo? {
@@ -98,8 +161,8 @@ object AnimeResolver {
         val info = withContext(Dispatchers.IO) {
             try {
                 when (ext.scheme) {
-                    "anilist" -> ext.key.toIntOrNull()?.let { aniList("id", it) }
-                    "mal" -> ext.key.toIntOrNull()?.let { aniList("idMal", it) }
+                    "anilist" -> ext.key.toIntOrNull()?.let { aniListById("id", it) }?.let { enrich(it) }
+                    "mal" -> ext.key.toIntOrNull()?.let { aniListById("idMal", it) }?.let { enrich(it) }
                     "kitsu" -> {
                         val fromKitsu = kitsu(ext.key)
                         // AniList adds romaji and synonyms Kitsu does not list: merge them in
@@ -110,7 +173,7 @@ object AnimeResolver {
                             else -> fromKitsu.copy(titles = (fromKitsu.titles + al.titles).distinct(), year = fromKitsu.year ?: al.year)
                         }
                     }
-                    "anidb" -> mapToAniList("anidb", ext.key)?.let { aniList("id", it) }
+                    "anidb" -> mapToAniList("anidb", ext.key)?.let { aniListById("id", it) }?.let { enrich(it) }
                     else -> null
                 }
             } catch (e: Exception) {

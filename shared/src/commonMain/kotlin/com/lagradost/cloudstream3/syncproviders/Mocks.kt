@@ -6,7 +6,11 @@ open class AuthAPI
 open class SyncAPI : AuthAPI() {
     open class LibraryMetadata
 }
-open class AuthRepo(open val api: AuthAPI)
+/** The signed-in account of a sync service. The bridge has no accounts, so [AuthRepo.authUser] is always null. */
+open class AuthUser
+open class AuthRepo(open val api: AuthAPI) {
+    open fun authUser(): AuthUser? = null
+}
 open class SyncRepo(override val api: SyncAPI) : AuthRepo(api)
 open class AccountManager {
     companion object {

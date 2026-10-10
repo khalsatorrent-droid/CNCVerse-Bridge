@@ -342,6 +342,12 @@ fun StreamsCard() {
                 )
             }
         }
+        SwitchRow("Show results once, after all extensions answered", "Waits for every extension (up to 45 s) and shows the full list at once instead of an early partial list", p.waitForAll) {
+            update(p.copy(waitForAll = it))
+        }
+        SwitchRow("Load the next episode in advance", "While you watch, the links of the next episode are loaded in the background", p.prefetchNext) {
+            update(p.copy(prefetchNext = it))
+        }
         SwitchRow("Detect the quality of adaptive streams", "Reads HLS playlists to find the real resolution instead of listing them as Auto", p.probeHls) {
             update(p.copy(probeHls = it))
         }
@@ -554,7 +560,7 @@ fun MediaServerCard() {
         }
         Text("Which links", color = TextSecondary, fontSize = 11.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("headers" to "Only links that need headers", "all" to "Every link").forEach { (value, label) ->
+            listOf("headers" to "Only links that need headers", "hls" to "Those + all HLS", "all" to "Every link").forEach { (value, label) ->
                 FilterChip(
                     selected = p.mode == value,
                     onClick = { p = p.copy(mode = value); message = null },

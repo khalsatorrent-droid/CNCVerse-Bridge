@@ -220,6 +220,10 @@ object StremioServer {
         val maxResolution: String = "",
         /** Read adaptive HLS playlists to find their real resolution instead of listing them as "Auto". */
         val probeHls: Boolean = true,
+        /** Show the results once, when every extension has answered (up to 45 s) instead of after a few seconds. */
+        val waitForAll: Boolean = true,
+        /** After an episode's links are loaded, load the next episode's links in the background. */
+        val prefetchNext: Boolean = true,
         /** Offer each rendition of an adaptive HLS playlist as its own stream (1080p / 720p / ...). */
         val splitHls: Boolean = false,
         /** Drop streams whose resolution cannot be found at all. */
@@ -850,7 +854,7 @@ object StremioServer {
         // Filters and ordering from the app's stream settings
         val p = streamPrefs
         // Adaptive HLS links report no quality: read their playlist for the real resolution
-        val probed = if (p.probeHls || p.splitHls) QualityProbe.enrich(streams, p.splitHls) else streams
+        val probed = if (p.probeHls || p.splitHls) QualityProbe.enrich(streams, p.splitHls, 6_000L) else streams
         val sorted = sortStreamsByQuality(probed)
 
         val kept = filterStreamsByProfile(sorted, p)
@@ -878,6 +882,33 @@ object StremioServer {
             }
             .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = subs.map { it.copy(lang = com.cncverse.stremiobridge.format.SubtitleLangs.normalize(it.lang)) }) } ?: s }
         respond(StremioStreamResponse(out))
+        if (p.prefetchNext) prefetchNextEpisode(type, id)
+    }
+
+    private val prefetchedNext = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** The id of the episode after [id] ("tt1:1:5" -> "tt1:1:6", "kitsu:7:12" -> "kitsu:7:13"), or null for movies / unknown shapes. */
+    private fun nextEpisodeId(type: String, id: String): String? {
+        if (type != "series" && type != "anime") return null
+        val parts = id.split(':')
+        if (parts.size < 3) return null
+        val ep = parts.last().toIntOrNull() ?: return null
+        if (ep < 0) return null
+        return parts.dropLast(1).joinToString(":") + ":" + (ep + 1)
+    }
+
+    /** Loads the next episode's links in the background so pressing "next" is instant (results land in the stream cache). */
+    private fun prefetchNextEpisode(type: String, id: String) {
+        val next = nextEpisodeId(type, id) ?: return
+        if (prefetchedNext.size > 500) prefetchedNext.clear()
+        if (!prefetchedNext.add(next)) return
+        streamSearchScope.launch {
+            delay(1_500)
+            runCatching {
+                ServerState.info("[Streams] Preparing the next episode in the background: $next")
+                withContext(pluginDispatcher) { buildStreams(type, next) }
+            }.onFailure { kotlinx.coroutines.currentCoroutineContext().ensureActive() }
+        }
     }
 
     /** Where clients reach this bridge (for the links the media server hands out). */
@@ -1672,8 +1703,23 @@ object StremioServer {
         return if (cap > 0 && tier > cap) -(tier - cap) else tier * 10
     }
 
-    private fun sortStreamsByQuality(streams: List<StremioStream>): List<StremioStream> =
-        streams.sortedByDescending { streamQualityRank(it) }
+    /**
+     * Best quality first. Ties are broken the same way on every load (provider, then name, then link) -
+     * they used to keep the order in which providers happened to answer, so equal-quality links changed
+     * places from one request to the next.
+     */
+    private fun sortStreamsByQuality(streams: List<StremioStream>): List<StremioStream> {
+        class K(val s: StremioStream, val rank: Int, val provider: String, val label: String, val link: String)
+        val keyed = streams.map {
+            K(
+                it, streamQualityRank(it),
+                (it.info?.providerName ?: com.cncverse.stremiobridge.format.StreamVariables.addonOf(it)).orEmpty().lowercase(),
+                (it.info?.linkName ?: it.title ?: it.name).orEmpty().lowercase(),
+                it.url ?: it.infoHash ?: "",
+            )
+        }
+        return keyed.sortedWith(compareByDescending<K> { it.rank }.thenBy { it.provider }.thenBy { it.label }.thenBy { it.link }).map { it.s }
+    }
 
     /** Detects standard resolution tier: 2160p, 1080p, 720p, 480p, 360p, or other. */
     fun detectStreamResolution(stream: StremioStream): String =
@@ -1963,6 +2009,10 @@ object StremioServer {
                 }
                 val (title, year) = resolved
                 ServerState.debug("Media resolve success: title='$title', year=$year")
+                // tt / tmdb / tvdb ids of anime: collect every alternative name (AniList, Kitsu, MyAnimeList) too
+                val animeNames = animeInfo ?: if ((type == "series" || type == "anime") && ext.scheme in setOf("imdb", "tmdb", "tvdb")) {
+                    AnimeResolver.fromTitle(title, year)
+                } else null
 
                 // Exclude live-TV-only extensions from generic TMDB VOD searches —
                 // they don't carry on-demand movie/series content.
@@ -1986,7 +2036,7 @@ object StremioServer {
                         sem.withPermit {
                             val res = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                                 try {
-                                    val streams = buildGenericStreamsForApi(api, type, id, title, year, animeInfo)
+                                    val streams = buildGenericStreamsForApi(api, type, id, title, year, animeNames)
                                     accumulated.addAll(streams)
                                 } catch (e: Throwable) {
                                     // Cancelled by the bridge (request gone / 45 s stop): not the provider's failure
@@ -2006,9 +2056,10 @@ object StremioServer {
 
                 // Answer when everything is done, or once STREAM_SOFT_DEADLINE_MS has passed and
                 // there is something to show; with nothing yet, wait up to STREAM_DEADLINE_MS.
+                val waitAll = streamPrefs.waitForAll
                 withTimeoutOrNull(STREAM_DEADLINE_MS) {
                     while (jobs.any { it.isActive }) {
-                        if (accumulated.isNotEmpty() && System.currentTimeMillis() - started >= STREAM_SOFT_DEADLINE_MS) break
+                        if (!waitAll && accumulated.isNotEmpty() && System.currentTimeMillis() - started >= STREAM_SOFT_DEADLINE_MS) break
                         delay(200)
                     }
                 }

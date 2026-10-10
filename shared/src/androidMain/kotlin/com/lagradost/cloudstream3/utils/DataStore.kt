@@ -5,7 +5,22 @@ import com.lagradost.cloudstream3.CloudStreamApp
 
 object DataStore {
     fun Context.getSharedPrefs(): android.content.SharedPreferences {
-        return getSharedPreferences("cnc_ext_settings", Context.MODE_PRIVATE)
+        return JsonSafePrefs(getSharedPreferences("cnc_ext_settings", Context.MODE_PRIVATE))
+    }
+
+    /**
+     * Extensions read their settings with the real Cloudstream `getKey`, which JSON-decodes the stored text.
+     * Values the bridge saved as plain text ("https://animepahe.pw", a user agent, a cookie, "p_a,p_b") are not
+     * valid JSON and made every such read fail, which is why AnimePahe found nothing. Plain text is handed out
+     * as a JSON string instead; valid JSON (numbers, booleans, objects) is left untouched.
+     */
+    class JsonSafePrefs(private val base: android.content.SharedPreferences) : android.content.SharedPreferences by base {
+        override fun getString(key: String?, defValue: String?): String? {
+            val v = base.getString(key, null) ?: return defValue
+            if (v.isEmpty()) return v
+            val ok = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(v) }.isSuccess
+            return if (ok) v else kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.serializer<String>(), v)
+        }
     }
 
     fun getFolderName(folder: String, path: String): String {
