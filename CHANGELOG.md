@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- The app no longer shows update dialogs (update checks are switched off).
+- Android: wake locks, a one-time battery-optimisation exemption request and a restart after swiping the app away, so the system stops closing the server.
+- Release workflow signs with the sideload key when no signing secrets exist, and can create its own tag when started by hand.
+
 ## 1.2.0
 
 ### Anime
