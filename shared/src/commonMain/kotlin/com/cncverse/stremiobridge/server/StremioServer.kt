@@ -2132,7 +2132,7 @@ object StremioServer {
 
         val requestedSeason = if (type == "series" && id.contains(":")) ExternalIds.parse(id)?.season else null
 
-        val bestMatch = if (anime != null) {
+        val bestMatch = (if (anime != null) {
             // Anime: fuzzy match against every known title; extensions index the same show under another spelling
             var found = AnimeMatcher.pickBest(searchResults, anime)
             if (found == null) {
@@ -2160,7 +2160,7 @@ object StremioServer {
                 ?: pickBestMatch(searchResults, title, year)
         } else {
             pickBestMatch(searchResults, title, year)
-        } ?: run {
+        }) ?: run {
             ServerState.debug("[${api.name}] No result matches '$title'" + (year?.let { " ($it)" } ?: ""))
             StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No result matches '$title'")
             return emptyList()
