@@ -574,7 +574,7 @@ object MediaServer {
 
     /** Segment size and number of extra connections that download ahead of the player in parallel. */
     private const val SEG = 2L * 1024 * 1024
-    private const val BOOSTERS = 16
+    private const val BOOSTERS = 7
 
     private fun startBoosters(e: FileEntry) {
         if (!e.boosters.compareAndSet(0, BOOSTERS)) return
