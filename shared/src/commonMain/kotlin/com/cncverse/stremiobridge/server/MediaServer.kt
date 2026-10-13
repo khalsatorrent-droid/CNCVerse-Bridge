@@ -129,6 +129,8 @@ object MediaServer {
             if (q.ver < 3) q = q.copy(ver = 3, readAheadMb = if (q.readAheadMb >= 1024 || q.readAheadMb == 0) 256 else q.readAheadMb)
             // v4: aggressive read-ahead (1 GB) - a value that was still the old default (256 MB or less) is raised once
             if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 1024 else q.readAheadMb)
+            // v4: aggressive defaults - 1 GB read-ahead (a value still at the old default or lower is raised once), 8 connections
+            if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 1024 else q.readAheadMb)
             q
         }
         val dir = File(base, "media_cache")
@@ -151,6 +153,7 @@ object MediaServer {
             mode = if (p.mode in setOf("headers", "hls", "all")) p.mode else "hls",
             prefetchSegments = p.prefetchSegments.coerceIn(0, 60),
             readAheadMb = p.readAheadMb.coerceIn(0, 100_000),
+            connections = p.connections.coerceIn(1, 20),
             maxCacheMb = p.maxCacheMb.coerceIn(256, HARD_MAX_MB),
             keepHours = p.keepHours.coerceIn(1, 24 * 365),
         )
@@ -576,11 +579,11 @@ object MediaServer {
 
     /** Segment size and number of extra connections that download ahead of the player in parallel. */
     private const val SEG = 2L * 1024 * 1024
-    private const val BOOSTERS = 7
 
     private fun startBoosters(e: FileEntry) {
-        if (!e.boosters.compareAndSet(0, BOOSTERS)) return
-        repeat(BOOSTERS) { n ->
+        val extra = (prefs.connections - 1).coerceIn(0, 19)
+        if (extra == 0 || !e.boosters.compareAndSet(0, extra)) return
+        repeat(extra) { n ->
             val t = Thread({ boost(e) }, "media-dl-b$n-" + e.id.take(6))
             t.isDaemon = true
             t.start()

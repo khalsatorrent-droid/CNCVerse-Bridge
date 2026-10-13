@@ -571,6 +571,7 @@ fun MediaServerCard() {
     var tick by remember { mutableStateOf(0) }
     val stats = remember(tick) { MediaServer.stats() }
     var readAhead by remember { mutableStateOf(p.readAheadMb.toString()) }
+    var connections by remember { mutableStateOf(p.connections.toString()) }
     var prefetch by remember { mutableStateOf(p.prefetchSegments.toString()) }
     var maxMb by remember { mutableStateOf(p.maxCacheMb.toString()) }
     var keep by remember { mutableStateOf(p.keepHours.toString()) }
@@ -633,12 +634,19 @@ fun MediaServerCard() {
                 modifier = Modifier.weight(1f), colors = amoledFieldColors(),
             )
         }
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = connections, onValueChange = { v -> connections = v.filter { it.isDigit() }.take(2); message = null },
+            label = { Text("Connections per file") }, supportingText = { Text("1-20, default 8; Pixeldrain bypass sites suggest 8 or 16. Too many can get you throttled.", fontSize = 10.sp) },
+            singleLine = true, modifier = Modifier.fillMaxWidth(), colors = amoledFieldColors(),
+        )
         Spacer(Modifier.height(8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ActionButton("Save", primary = true) {
                 MediaServer.updatePrefs(
                     p.copy(
                         readAheadMb = readAhead.toIntOrNull() ?: p.readAheadMb,
+                        connections = connections.toIntOrNull() ?: p.connections,
                         prefetchSegments = prefetch.toIntOrNull() ?: p.prefetchSegments,
                         maxCacheMb = maxMb.toIntOrNull() ?: p.maxCacheMb,
                         keepHours = keep.toIntOrNull() ?: p.keepHours,
