@@ -15,6 +15,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class CloudflareKiller : Interceptor {
+    private val sites = com.cncverse.stremiobridge.network.CfSites
+
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
         val host = request.url.host
@@ -27,12 +29,24 @@ class CloudflareKiller : Interceptor {
         }
         var response = chain.proceed(request)
 
+        // A site that was queued / expired and now answers without a challenge: the check is gone
+        if (saved == null && !isChallenged(response) && response.code in 200..399) {
+            sites.get(host)?.takeIf { it.status == "NEEDS" || it.status == "EXPIRED" }?.let {
+                ServerState.info("Cloudflare: $host no longer shows a challenge")
+                sites.noteClear(host)
+            }
+        }
+        // A site with a working clearance is looked at without it now and then, to notice a challenge that went away
+        if (saved != null && !isChallenged(response) && sites.probeDue(host)) {
+            Thread({ if (sites.probe(host) == true) ServerState.info("Cloudflare: $host no longer shows a challenge") }, "cf-probe").apply { isDaemon = true }.start()
+        }
+
         val challenged = (response.code == 503 || response.code == 403 || response.code == 429) &&
             (response.header("Server")?.let { it.contains("cloudflare", true) || it.contains("ddos-guard", true) } == true ||
                 response.header("cf-mitigated")?.contains("challenge", true) == true)
         if (challenged) {
-            // The saved clearance did not work (expired / other UA): drop it and solve again, one solver per site at a time
-            if (saved != null) com.cncverse.stremiobridge.network.CfCookieStore.forget(host)
+            // The saved clearance did not work (expired / other UA / other IP): drop it and solve again
+            if (saved != null) { com.cncverse.stremiobridge.network.CfCookieStore.forget(host); sites.noteExpired(host) }
 
             // Step 1: many "challenges" are only a block of requests that do not look like a browser. Same request
             // with the full header set of a Chrome page load (what Raghav's TheMoviesFlix does) often passes at once.
@@ -40,19 +54,33 @@ class CloudflareKiller : Interceptor {
                 val browserReq = browserLike(request)
                 response.close()
                 response = chain.proceed(browserReq)
-                if (!isChallenged(response)) return response
+                if (!isChallenged(response)) { sites.noteHeadersOk(host); return response }
                 request = browserReq
             }
+            sites.noteChallenge(host)
 
-            ServerState.info("Cloudflare challenge on $host - solving it in a browser")
-            val result = synchronized(lockFor(host)) {
+            // The user cancelled this site's check a moment ago (or nobody was there): it stays in the queue
+            // (Settings -> Cloudflare checks) and background searches do not wait for it again
+            if ((sites.get(host)?.skipUntil ?: 0L) > System.currentTimeMillis()) {
+                ServerState.debug("Cloudflare: $host is queued for a check - skipped for now")
+                return response
+            }
+            ServerState.info("Cloudflare challenge on $host - solving it in a browser (${sites.pending().size} site(s) waiting)")
+            // One check on screen at a time; a request that cannot get its turn in 30 s leaves the site in the queue
+            if (!solverLock.tryLock(30, TimeUnit.SECONDS)) {
+                ServerState.warn("Cloudflare: $host is waiting for its turn (queued)")
+                return response
+            }
+            val result = try {
                 // Another request may have solved it while this one waited
                 com.cncverse.stremiobridge.network.CfCookieStore.get(host)?.takeIf { it.cookie != saved?.cookie }?.let { CfResult(it.cookie, it.userAgent, null) }
-                    ?: bypassCloudflare(request.url.toString())
-            }
+                    ?: bypassCloudflare(request.url.toString(), interactive = false)
+            } finally { solverLock.unlock() }
+            if (result == null) sites.noteNotSolved(host)
             if (result != null) {
                 if (result.cookie.isNotBlank()) {
                     com.cncverse.stremiobridge.network.CfCookieStore.put(host, result.cookie, result.userAgent)
+                    sites.noteSolved(host, result.cookie)
                     val newRequest = request.newBuilder()
                         .header("Cookie", result.cookie)
                         .header("User-Agent", result.userAgent)
@@ -111,20 +139,43 @@ class CloudflareKiller : Interceptor {
         Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null) as? Context
     } catch (e: Exception) { null }
 
-    private companion object {
-        val locks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    companion object {
+        private val locks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+        /** Only one check is shown at a time; the others wait in the queue. */
+        private val solverLock = java.util.concurrent.locks.ReentrantLock()
+
+        init {
+            // Settings -> Cloudflare checks: "Solve now" / "Solve all" for sites queued earlier
+            com.cncverse.stremiobridge.network.CfSites.solver = { host, done ->
+                Thread({
+                    var ok = false
+                    solverLock.lock()
+                    try {
+                        val r = CloudflareKiller().bypassCloudflare("https://$host/", interactive = true)
+                        if (r != null && r.cookie.isNotBlank()) {
+                            com.cncverse.stremiobridge.network.CfCookieStore.put(host, r.cookie, r.userAgent)
+                            com.cncverse.stremiobridge.network.CfSites.noteSolved(host, r.cookie)
+                            ok = true
+                        } else if (r != null) {
+                            // the browser got in without a cookie: the check is gone
+                            com.cncverse.stremiobridge.network.CfSites.noteClear(host)
+                            ok = true
+                        } else com.cncverse.stremiobridge.network.CfSites.noteNotSolved(host)
+                    } finally { solverLock.unlock() }
+                    done(ok)
+                }, "cf-solve").apply { isDaemon = true }.start()
+            }
+        }
     }
 
     data class CfResult(val cookie: String, val userAgent: String, val html: String?)
-
-    private val lastAsked = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
      * Solves the challenge in a real WebView (like Raghav's extensions do). First invisibly for ~15 s (JS
      * challenges pass by themselves); if the site wants a tap (Turnstile), the same WebView is shown in a
      * dialog over the app so the user can finish it. The cookies are returned with this WebView's User-Agent.
      */
-    private fun bypassCloudflare(url: String): CfResult? {
+    private fun bypassCloudflare(url: String, interactive: Boolean): CfResult? {
         val appCtx = appContext() ?: return null
         val host = try { java.net.URI(url).host ?: url } catch (_: Exception) { url }
         val latch = CountDownLatch(1)
@@ -132,7 +183,7 @@ class CloudflareKiller : Interceptor {
         val main = Handler(Looper.getMainLooper())
         val started = System.currentTimeMillis()
         val maxMs = 110_000L
-        val headlessMs = 15_000L
+        val headlessMs = if (interactive) 0L else 15_000L
 
         main.post {
             var dialog: android.app.Dialog? = null
@@ -166,21 +217,19 @@ class CloudflareKiller : Interceptor {
                     return c?.takeIf { it.contains("cf_clearance") }
                 }
 
-                fun showDialog() {
+                /** True when the check is on screen; false when the app is not in front (the site stays queued). */
+                fun showDialog(): Boolean {
                     val act = com.lagradost.cloudstream3.CommonActivity.activity
-                    if (act == null || act.isFinishing || act.isDestroyed) return
-                    // Do not nag: one prompt per site every 5 minutes
-                    val now = System.currentTimeMillis()
-                    if (now - (lastAsked[host] ?: 0L) < 5 * 60_000L) return
-                    lastAsked[host] = now
-                    runCatching {
+                    if (act == null || act.isFinishing || act.isDestroyed) return false
+                    return runCatching {
                         (wv.parent as? android.view.ViewGroup)?.removeView(wv)
                         val dp = act.resources.displayMetrics.density
                         val box = android.widget.LinearLayout(act).apply {
                             orientation = android.widget.LinearLayout.VERTICAL
                             setBackgroundColor(android.graphics.Color.parseColor("#111111"))
                             val title = android.widget.TextView(act).apply {
-                                text = "Complete the check for $host - tap the box if one appears"
+                                val waiting = com.cncverse.stremiobridge.network.CfSites.pending().count { it.host != host }
+                                text = "Complete the check for $host - tap the box if one appears" + if (waiting > 0) "  ($waiting more site(s) waiting)" else ""
                                 setTextColor(android.graphics.Color.WHITE)
                                 textSize = 14f
                                 setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
@@ -200,7 +249,8 @@ class CloudflareKiller : Interceptor {
                             show()
                         }
                         ServerState.info("Cloudflare: showing the check for $host so it can be completed")
-                    }.onFailure { ServerState.warn("Cloudflare dialog failed: ${it.message}") }
+                        true
+                    }.getOrElse { ServerState.warn("Cloudflare dialog failed: ${it.message}"); false }
                 }
 
                 var shown = false
@@ -230,7 +280,8 @@ class CloudflareKiller : Interceptor {
                         } else okPolls = 0
                         if (!shown && System.currentTimeMillis() - started > headlessMs) {
                             shown = true
-                            showDialog()
+                            // App in the background: nobody can tap the box - give up, the site stays queued for Settings
+                            if (!showDialog()) { finish(); return@evaluateJavascript }
                         }
                         main.postDelayed({ poll() }, 1000)
                     }

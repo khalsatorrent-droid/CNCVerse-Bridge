@@ -19,10 +19,13 @@ object CfCookieStore {
     private val map = ConcurrentHashMap<String, CfClearance>()
     @Volatile private var file: File? = null
 
-    /** Clearance is trusted this long; a challenge answered again simply replaces it. */
-    private const val TTL_MS = 6L * 60 * 60 * 1000
+    /**
+     * A saved clearance is used until the site refuses it (its real lifetime is set by the site: 30 minutes to a year),
+     * but not past this - the cookie is also tied to the IP address, which changes. A refusal is noted in [CfSites].
+     */
+    private const val TTL_MS = 7L * 24 * 60 * 60 * 1000
 
-    fun initIfNeeded(dir: String) { if (file == null) init(dir) }
+    fun initIfNeeded(dir: String) { if (file == null) init(dir); CfSites.init(dir) }
 
     fun init(dir: String) {
         file = File(dir, "cf_cookies.json")
