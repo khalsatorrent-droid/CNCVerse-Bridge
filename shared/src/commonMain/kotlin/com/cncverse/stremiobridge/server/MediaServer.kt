@@ -512,7 +512,7 @@ object MediaServer {
         val store = ChunkStore(File(dir, "pieces2"))
         /** Bytes before this offset were watched and deleted (never counted as missing). */
         @Volatile var floor = 0L
-        /** Parallel download threads running for this file, and the 16 MB segments they are busy with. */
+        /** Parallel download threads running for this file, and the segments they are busy with. */
         val boosters = java.util.concurrent.atomic.AtomicInteger(0)
         val claimed: MutableSet<Long> = ConcurrentHashMap.newKeySet()
         val metaFile = File(dir, "meta.json")
