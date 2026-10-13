@@ -459,7 +459,7 @@ object MediaServer {
     /** Pieces kept behind the playing position before they are deleted. */
     private const val KEEP_BEHIND = 128L * 1024 * 1024
 
-    /** A downloaded file is stored as 128 MB pieces (chunks/0, chunks/1, ...) so pieces already watched can be deleted. */
+    /** A downloaded file is stored as 2 MB pieces (chunks/0, chunks/1, ...) so pieces already watched can be deleted. */
     private class ChunkStore(val dir: File) {
         companion object { const val CHUNK = 2L * 1024 * 1024 }
         fun exists(): Boolean = dir.isDirectory
@@ -512,7 +512,7 @@ object MediaServer {
         val store = ChunkStore(File(dir, "pieces2"))
         /** Bytes before this offset were watched and deleted (never counted as missing). */
         @Volatile var floor = 0L
-        /** Parallel download threads running for this file, and the 16 MB segments they are busy with. */
+        /** Parallel download threads running for this file, and the segments they are busy with. */
         val boosters = java.util.concurrent.atomic.AtomicInteger(0)
         val claimed: MutableSet<Long> = ConcurrentHashMap.newKeySet()
         val metaFile = File(dir, "meta.json")
@@ -577,8 +577,13 @@ object MediaServer {
         }
     }
 
-    /** Segment size and number of extra connections that download ahead of the player in parallel. */
-    private const val SEG = 2L * 1024 * 1024
+    /**
+     * Size of one request an extra connection makes. Every request costs a round trip and the server's start-up time, so
+     * 2 MB pieces left much of each connection idle (about a quarter of the time at 5 MB/s and 150 ms latency); 8 MB cuts that
+     * to a few percent while eight connections still share the window evenly. A whole number of [ChunkStore.CHUNK]s, so
+     * segments never share a piece file (the on-disk piece size stays 2 MB: changing it would orphan files already cached).
+     */
+    private const val SEG = 8L * 1024 * 1024
 
     private fun startBoosters(e: FileEntry) {
         val extra = (prefs.connections - 1).coerceIn(0, 19)
@@ -591,9 +596,9 @@ object MediaServer {
     }
 
     /**
-     * An extra download connection: takes the next missing 16 MB segment inside the read-ahead window
+     * An extra download connection: takes the next missing 8 MB segment inside the read-ahead window
      * (from the playing position on) that no other connection is busy with. With the main connection that
-     * makes four downloads at once for a source that can seek.
+     * makes up to [MediaServerPrefs.connections] downloads at once for a source that can seek.
      */
     private fun boost(e: FileEntry) {
         var wr: ChunkStore.Rw? = null

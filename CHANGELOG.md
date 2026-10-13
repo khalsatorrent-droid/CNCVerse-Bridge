@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Faster media server downloads:** the extra connections now fetch 8 MB at a time instead of 2 MB (each request costs a round trip, so small pieces left connections idle part of the time). Together with the changes since 1.5.16: up to 8 parallel connections per file (new "Connections" setting, 1-20; Pixeldrain bypass sites suggest 4-20 / 8 or 16 for download managers), 2 MB pieces on disk so watched parts are freed sooner, and a 1 GB read-ahead window by default.
+
 ## 1.5.14
 
 - **Fixed link id is unique to each install:** new ids are "cb" + 10 random characters from a secure random source (was cb + 6), so two devices can never end up with the same fixed link; existing ids stay as they are.
