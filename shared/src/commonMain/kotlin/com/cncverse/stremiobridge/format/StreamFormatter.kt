@@ -270,7 +270,12 @@ private fun formatBytes(bytes: Double, binary: Boolean): String {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Request-level context: what the user asked for. */
-data class StreamRequestContext(val season: Int? = null, val episode: Int? = null)
+data class StreamRequestContext(
+    val season: Int? = null,
+    val episode: Int? = null,
+    /** False for movies and ordinary series: their links get no Sub / Dub / Hardsub label. Previews default to true. */
+    val anime: Boolean = true,
+)
 
 object StreamVariables {
 
@@ -568,8 +573,8 @@ object StreamVariables {
             "stream.season" to season?.toLong(),
             "stream.episode" to episode?.toLong(),
             "stream.host" to hostOf(stream),
-            "stream.audiokind" to audioKindOf(stream),
-            "stream.subtype" to subTypeOf(stream),
+            "stream.audiokind" to audioKindOf(stream)?.takeIf { StreamFormatter.showsAudioLabels(stream, ctx) },
+            "stream.subtype" to subTypeOf(stream)?.takeIf { StreamFormatter.showsAudioLabels(stream, ctx) },
             // Server/extractor the extension reports (e.g. "FslServer", "HubCloud");
             // empty when it just repeats the extension name, so templates can use ::exists
             "stream.source" to source,
@@ -936,11 +941,22 @@ object StreamFormatter {
 
     /** Season/episode from a Stremio stream id like "tt0903747:1:3" or "tmdb:1396:1:3". */
     fun contextFromId(type: String, id: String): StreamRequestContext {
-        if (type != "series" && type != "anime") return StreamRequestContext()
+        val ext = com.cncverse.stremiobridge.server.ExternalIds.parse(id)
+        val anime = type == "anime" || (ext != null && ext.scheme in com.cncverse.stremiobridge.server.ExternalIds.ANIME_SCHEMES)
+        if (type != "series" && type != "anime") return StreamRequestContext(anime = anime)
         // Every id form (tt…, tmdb:, tvdb:, kitsu:ID:EP…) - "kitsu:7442:2" is episode 2, not season 7442
-        val ext = com.cncverse.stremiobridge.server.ExternalIds.parse(id) ?: return StreamRequestContext()
-        return if (ext.episode != null) StreamRequestContext(season = ext.season, episode = ext.episode) else StreamRequestContext()
+        if (ext == null) return StreamRequestContext(anime = anime)
+        return if (ext.episode != null) StreamRequestContext(season = ext.season, episode = ext.episode, anime = anime) else StreamRequestContext(anime = anime)
     }
+
+    private val ANIME_ADDON = Regex("anime|allwish|gogo|wish|kitsu|hianime|zoro|kai|gotaku|animepahe", RegexOption.IGNORE_CASE)
+    private val BRIDGE_AUDIO_TAG = Regex("\\[(?:sub|dub)(?:bbed)?\\]", RegexOption.IGNORE_CASE)
+
+    /** True when Sub / Dub / Hardsub labels make sense for [stream]: an anime request, an anime-only extension, or a variant the bridge itself tagged. */
+    fun showsAudioLabels(stream: StremioStream, ctx: StreamRequestContext): Boolean =
+        ctx.anime ||
+            (stream.info?.addonName ?: stream.info?.providerName).orEmpty().let { ANIME_ADDON.containsMatchIn(it) } ||
+            BRIDGE_AUDIO_TAG.containsMatchIn(listOfNotNull(stream.info?.linkName, stream.title, stream.name).joinToString(" "))
 
     /** Sample streams for the admin preview. */
     fun samples(): List<Pair<StremioStream, StreamRequestContext>> = listOf(

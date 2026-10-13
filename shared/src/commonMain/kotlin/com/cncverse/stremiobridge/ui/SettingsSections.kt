@@ -332,7 +332,10 @@ fun StreamsCard() {
             }
         }
         SwitchRow("Hide CAM / TeleSync", "Drops cinema recordings and screeners", p.excludeCam) { update(p.copy(excludeCam = it)) }
-        SwitchRow("Hide non-seekable / non-playable files", "Direct files whose server can't seek, and archives", p.filterNonSeekable) {
+        SwitchRow("Hide links that need headers", "Only while the media server is off: links that play only with a Referer / cookie your player cannot send", p.hideHeaderLinks) {
+            update(p.copy(hideHeaderLinks = it))
+        }
+        SwitchRow("Hide non-seekable / non-playable files", "Direct files whose server can't seek, download-only links (Google Drive) and archives", p.filterNonSeekable) {
             update(p.copy(filterNonSeekable = it))
         }
         SwitchRow("Hide subtitles", "Streams go out without subtitle tracks", p.hideSubtitles) { update(p.copy(hideSubtitles = it)) }
@@ -612,7 +615,7 @@ fun MediaServerCard() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = readAhead, onValueChange = { v -> readAhead = v.filter { it.isDigit() }.take(6); message = null },
-                label = { Text("Read-ahead MB") }, supportingText = { Text("kept ahead of playback; 0 = whole file", fontSize = 10.sp) }, singleLine = true,
+                label = { Text("Read-ahead MB") }, supportingText = { Text("kept ahead of playback, up to 2048 (2 GB); 0 = whole file", fontSize = 10.sp) }, singleLine = true,
                 modifier = Modifier.weight(1f), colors = amoledFieldColors(),
             )
             OutlinedTextField(
@@ -625,7 +628,7 @@ fun MediaServerCard() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = maxMb, onValueChange = { v -> maxMb = v.filter { it.isDigit() }.take(7); message = null },
-                label = { Text("Max cache MB") }, supportingText = { Text("up to 2048 (2 GB)", fontSize = 10.sp) }, singleLine = true,
+                label = { Text("Max cache MB") }, supportingText = { Text("up to 5120 (5 GB)", fontSize = 10.sp) }, singleLine = true,
                 modifier = Modifier.weight(1f), colors = amoledFieldColors(),
             )
             OutlinedTextField(

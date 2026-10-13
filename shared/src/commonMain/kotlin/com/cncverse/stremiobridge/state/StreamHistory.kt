@@ -25,10 +25,13 @@ data class HistoryEntry(
     val providers: List<String> = emptyList(),
     /** Exactly as the client received them: name, a " | " and the description (new lines shown as " / ") */
     val lines: List<String> = emptyList(),
+    /** The link of each line in [lines] (same order), "" when a line has none. Only kept for the newest entries. */
+    val urls: List<String> = emptyList(),
 )
 
 object StreamHistory {
     private const val MAX = 150
+    private const val KEEP_LINKS = 40
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _entries = MutableStateFlow<List<HistoryEntry>>(emptyList())
     val entries: StateFlow<List<HistoryEntry>> = _entries
@@ -54,7 +57,9 @@ object StreamHistory {
 
     @Synchronized
     fun add(e: HistoryEntry) {
-        _entries.value = (listOf(e) + _entries.value).take(MAX)
+        // Links are long (some are over a kilobyte): only the newest entries keep them, so the file stays small
+        val older = _entries.value.mapIndexed { i, old -> if (i + 1 >= KEEP_LINKS && old.urls.isNotEmpty()) old.copy(urls = emptyList()) else old }
+        _entries.value = (listOf(e) + older).take(MAX)
         runCatching { file?.writeText(json.encodeToString(_entries.value)) }
     }
 

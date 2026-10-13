@@ -101,7 +101,9 @@ data class MediaServerStats(val entries: Int, val bytes: Long, val activeDownloa
 object MediaServer {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     /** The cache folder never grows past this, whatever the settings file says. */
-    const val HARD_MAX_MB = 2048
+    const val HARD_MAX_MB = 5120
+    /** Largest read-ahead window the settings accept (0 is no longer "the whole file"). */
+    const val MAX_READ_AHEAD_MB = 2048
     private const val UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -131,8 +133,8 @@ object MediaServer {
             if (q.ver < 3) q = q.copy(ver = 3, readAheadMb = if (q.readAheadMb >= 1024 || q.readAheadMb == 0) 256 else q.readAheadMb)
             // v4: aggressive read-ahead (512 MB) - a value that was still the old default (256 MB or less) is raised once
             if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 512 else q.readAheadMb)
-            // v5: 128 MB is the default again (with 8 parallel connections it keeps the window full without filling the disk)
-            if (q.ver < 5) q = q.copy(ver = 5, readAheadMb = if (q.readAheadMb == 1024) 128 else q.readAheadMb)
+            // v5: the 1 GB read-ahead of 1.5.16/1.5.17 goes back to the 512 MB default
+            if (q.ver < 5) q = q.copy(ver = 5, readAheadMb = if (q.readAheadMb == 1024) 512 else q.readAheadMb)
             q
         }
         val dir = File(base, "media_cache")
@@ -154,7 +156,7 @@ object MediaServer {
         val clean = p.copy(
             mode = if (p.mode in setOf("headers", "hls", "all")) p.mode else "hls",
             prefetchSegments = p.prefetchSegments.coerceIn(0, 60),
-            readAheadMb = p.readAheadMb.coerceIn(0, 100_000),
+            readAheadMb = p.readAheadMb.coerceIn(0, MAX_READ_AHEAD_MB),
             connections = p.connections.coerceIn(1, 20),
             maxCacheMb = p.maxCacheMb.coerceIn(256, HARD_MAX_MB),
             keepHours = p.keepHours.coerceIn(1, 24 * 365),
@@ -532,6 +534,13 @@ object MediaServer {
         @Volatile var lastAccess = System.currentTimeMillis()
         @Volatile var lastSaved = 0L
         @Volatile var lastRead = 0L
+        /**
+         * Players read a file over several connections at once (a TV player: the video at the playing position, another at
+         * the end of the file for the index, sometimes a third). Each response being written is a reader: [id] -> [position,
+         * time of its last activity]. The playing position is the lowest of the recently active ones - a single "last read"
+         * value jumped between connections, so the data behind the real position was deleted and downloaded again, over and over.
+         */
+        val readers = ConcurrentHashMap<Long, LongArray>()
         @Volatile var writePos = 0L
         @Volatile var worker: Thread? = null
         val lock = Any()
@@ -616,7 +625,7 @@ object MediaServer {
                 }
                 if (!e.ranges || e.total <= 0 || e.isPlaylist) break
                 val ahead = prefs.readAheadMb * 1024L * 1024L
-                val from = maxOf(e.lastRead, e.floor)
+                val from = maxOf(playPos(e), e.floor)
                 val to = if (ahead > 0) minOf(e.total, from + ahead) else e.total
                 var did = false
                 var i = from / SEG
@@ -674,10 +683,21 @@ object MediaServer {
     private fun parseStart(contentRange: String?): Long? =
         contentRange?.substringAfter("bytes ", "")?.substringBefore('-')?.trim()?.toLongOrNull()
 
+    private val readerSeq = java.util.concurrent.atomic.AtomicLong()
+
+    /** The position being played: the lowest position among the readers active in the last minute, else the last one read. */
+    private fun playPos(e: FileEntry): Long {
+        val now = System.currentTimeMillis()
+        var low = Long.MAX_VALUE
+        for (r in e.readers.values) if (now - r[1] < 60_000L && r[0] < low) low = r[0]
+        return if (low == Long.MAX_VALUE) e.lastRead else low
+    }
+
     /** Deletes the 2 MB pieces that lie more than KEEP_BEHIND behind the playing position (only for sources that can seek). */
     private fun trimBehind(e: FileEntry) {
-        if (!e.ranges || e.total < 0 || e.lastRead <= 0) return
-        val keepFrom = e.lastRead - KEEP_BEHIND
+        val pp = playPos(e)
+        if (!e.ranges || e.total < 0 || pp <= 0) return
+        val keepFrom = pp - KEEP_BEHIND
         val firstKept = keepFrom / ChunkStore.CHUNK
         if (keepFrom <= 0 || firstKept <= e.floor / ChunkStore.CHUNK) return
         e.store.deleteBefore(firstKept)
@@ -767,7 +787,7 @@ object MediaServer {
                         // Do not run far past what is being watched
                         val ahead = prefs.readAheadMb * 1024L * 1024L
                         // An origin that cannot seek is downloaded completely, at full speed: stopping would mean starting over
-                        if (ahead > 0 && e.ranges && off - e.lastRead > ahead) {
+                        if (ahead > 0 && e.ranges && off - playPos(e) > ahead) {
                             if (System.currentTimeMillis() - e.lastAccess > 180_000) { e.stop = true; break }
                             Thread.sleep(400)
                             continue
@@ -874,6 +894,9 @@ object MediaServer {
         if (e.ranges && e.have.contiguousEnd(start) == start) e.focus = start
         call.respondBytesWriter(ct, httpStatus, len) {
             val reader = e.store.rw(false)
+            val me = readerSeq.incrementAndGet()
+            val slot = longArrayOf(start, System.currentTimeMillis())
+            e.readers[me] = slot
             try {
                 var pos = start
                 val buf = ByteArray(256 * 1024)
@@ -881,6 +904,7 @@ object MediaServer {
                 while (pos <= end) {
                     e.lastAccess = System.currentTimeMillis()
                     e.lastRead = pos
+                    slot[0] = pos; slot[1] = e.lastAccess
                     val avail = e.have.contiguousEnd(pos)
                     if (avail <= pos) {
                         // Not on disk yet: make sure the downloader is heading here, then wait
@@ -902,6 +926,7 @@ object MediaServer {
                 // Player closed the connection (seek / stop) or the source failed: end this response
                 if (t is kotlinx.coroutines.CancellationException) throw t
             } finally {
+                e.readers.remove(me)
                 runCatching { reader.close() }
             }
         }

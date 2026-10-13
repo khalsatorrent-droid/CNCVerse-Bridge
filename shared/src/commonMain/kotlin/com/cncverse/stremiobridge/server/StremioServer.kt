@@ -217,6 +217,11 @@ object StremioServer {
         /** Hide direct-download files whose server cannot seek (no byte ranges). Relay/proxy links are never hidden. */
         val filterNonSeekable: Boolean = false,
         /**
+         * With the media server OFF: hide links that only play with a Referer / Cookie / custom header (the player cannot send
+         * them, so they never play). With the media server on they are kept: it sends the headers itself.
+         */
+        val hideHeaderLinks: Boolean = false,
+        /**
          * Resolution cap, e.g. "1080p": streams above it are listed after everything within the cap
          * (a TV or phone that cannot decode 4K gets playable links first). "" = no cap.
          */
@@ -882,7 +887,8 @@ object StremioServer {
         // and the mirror's redirect is followed here: the list carries the address of the server that holds the file
         val kept = PixeldrainResolver.resolveAll(filterStreamsByProfile(sorted, p).map { pixeldrainBypass(it, p) })
         // Whatever the settings above did, the list that goes out is sorted by resolution and has nothing below 720p
-        val seekable = if (p.filterNonSeekable) SeekProbe.dropNonSeekable(kept) else kept
+        val playableHere = if (p.hideHeaderLinks && !MediaServer.prefs.enabled) kept.filterNot { needsHeaders(it) } else kept
+        val seekable = if (p.filterNonSeekable) SeekProbe.dropNonSeekable(playableHere) else playableHere
         val tSeek = System.currentTimeMillis()
         val filtered = enforceResolutionOrder(hardsubFirst(applyAnimeAudio(arrangeStreams(seekable, p), p)))
         ServerState.info("[Request] $type/$id timing: search ${(tBuilt - requestStart) / 1000.0}s, quality probe ${(tProbed - tBuilt) / 1000.0}s, seek check ${(tSeek - tProbed) / 1000.0}s")
@@ -956,11 +962,18 @@ object StremioServer {
                     providers = streams.groupingBy { it.info?.addonName ?: it.name ?: "?" }.eachCount()
                         .entries.sortedByDescending { it.value }.map { "${it.key}: ${it.value}" },
                     lines = out.map { st -> listOfNotNull(st.name, st.title).joinToString(" | ").replace("\n", " / ").replace("\r", "") },
+                    urls = out.map { st -> st.url ?: st.externalUrl ?: st.infoHash?.let { "magnet:?xt=urn:btih:$it" } ?: "" },
                 )
             )
         }
         if (p.prefetchNext) prefetchNextEpisode(type, id)
     }
+
+    /** Request headers a player cannot be asked to send: anything but the usual User-Agent / Accept family. */
+    private val HARMLESS_HEADERS = setOf("user-agent", "accept", "accept-language", "accept-encoding", "connection", "range", "host", "cache-control")
+
+    fun needsHeaders(s: StremioStream): Boolean =
+        s.behaviorHints?.proxyHeaders?.request.orEmpty().any { (k, v) -> v.isNotBlank() && k.lowercase() !in HARMLESS_HEADERS }
 
     private val prefetchedNext = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 

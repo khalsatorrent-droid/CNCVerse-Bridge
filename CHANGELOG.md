@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: no more endless buffering on a TV:** a TV player reads a file over several connections at once (the video, plus the end of the file for the index). The server kept one "last read" position that these connections overwrote in turn, so it deleted the data behind the wrong position and downloaded it again and again - playback stalled at some point and kept buffering. It now tracks every connection and keeps the data around the lowest recently active one. The file is still downloaded only within the read-ahead window, never as a whole.
+- **Media server limits:** the cache can now be set up to 5 GB (default stays 2 GB); read-ahead defaults to 512 MB and can be set up to 2 GB. A saved 1 GB read-ahead from 1.5.16 / 1.5.17 moves to 512 MB once.
+- **History shows the links:** every result in an opened history entry now lists its link, and a long press on a result copies it as text (name, description and link). "Copy list" includes the links. Links are kept for the newest 40 entries.
+- **Links into an extension's own server no longer "stop working" after a restart (gotaku hardsub and similar):** those links (127.0.0.1:port) die when the app or extension restarts, but they were saved in the stream cache and shown again. Lists that contain them are no longer cached (and old ones are dropped), so they are fetched fresh. The relay now writes what went wrong into the log (Logs tab).
+- **Sub / Dub / Hardsub only for anime:** movies and ordinary series no longer get a Sub / Dub / Hardsub label in the link description.
+- **Download-only links are hidden by "Hide non-seekable / non-playable files":** Google Drive download addresses (video-downloads.googleusercontent.com, drive.google.com/uc?export=download) are recognised from the address, without a network check that Google often refuses.
+- **New switch "Hide links that need headers":** with the media server off, links that play only with a Referer / cookie / custom header are removed (your player cannot send them). With the media server on they stay, since it sends the headers itself.
+
 ## 1.5.18
 
 - **Cloudflare checks: a stale cookie is no longer taken for a solved check:** the in-app browser keeps its cookies between checks, so when a site refused the saved cookie and the check was solved again, the old `cf_clearance` (e.g. issued 23 h ago) was found at once and saved as the "new" answer - the site showed "Solved" and "challenged" at the same time and the loop repeated. Now the old cookie is removed before the check starts, a cookie that is the same as before or was issued long before the check is ignored, and a fresh cookie that the site still refuses is not marked "Solved" (it stays in the queue and the log says so). The log now also says when a check was solved, and the card shows "Solved 5 min ago" once and warns when the cookie is older than the check.
