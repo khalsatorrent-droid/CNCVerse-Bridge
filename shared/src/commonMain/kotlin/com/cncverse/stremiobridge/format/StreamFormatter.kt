@@ -573,8 +573,8 @@ object StreamVariables {
             "stream.season" to season?.toLong(),
             "stream.episode" to episode?.toLong(),
             "stream.host" to hostOf(stream),
-            "stream.audiokind" to audioKindOf(stream)?.takeIf { showsAudioLabels(stream, ctx) },
-            "stream.subtype" to subTypeOf(stream)?.takeIf { showsAudioLabels(stream, ctx) },
+            "stream.audiokind" to audioKindOf(stream)?.takeIf { StreamFormatter.showsAudioLabels(stream, ctx) },
+            "stream.subtype" to subTypeOf(stream)?.takeIf { StreamFormatter.showsAudioLabels(stream, ctx) },
             // Server/extractor the extension reports (e.g. "FslServer", "HubCloud");
             // empty when it just repeats the extension name, so templates can use ::exists
             "stream.source" to source,
