@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.14
 
 - **Fixed link id is unique to each install:** new ids are "cb" + 10 random characters from a secure random source (was cb + 6), so two devices can never end up with the same fixed link; existing ids stay as they are.
 - README states that this is a personal fork whose new features were added with AI.
