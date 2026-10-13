@@ -211,9 +211,9 @@ object StremioServer {
         /** Extension names in priority order: earlier ones come first inside each group. */
         val providerOrder: List<String> = emptyList(),
         /** Show the "support the project" entry on top of stream lists. */
-        val showSupport: Boolean = true,
+        val showSupport: Boolean = false,
         /** Pixeldrain links (file ids) are sent through the fast mirror cdn.pixeldrain.eu.cc. */
-        val pixeldrainBypass: Boolean = true,
+        val pixeldrainBypass: Boolean = false,
         /** Hide direct-download files whose server cannot seek (no byte ranges). Relay/proxy links are never hidden. */
         val filterNonSeekable: Boolean = false,
         /**

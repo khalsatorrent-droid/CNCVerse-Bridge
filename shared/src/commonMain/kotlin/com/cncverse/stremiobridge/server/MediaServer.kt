@@ -53,7 +53,7 @@ data class MediaServerPrefs(
      * "hls": those plus every HLS stream (smooth playback of slow hosts).
      * "all": every http(s) stream.
      */
-    val mode: String = "hls",
+    val mode: String = "all",
     /** Download direct video files (mp4/mkv/...) to this device first, then serve them from disk. */
     val cacheFiles: Boolean = true,
     /** Cache HLS playlists and segments on this device. */
@@ -129,8 +129,8 @@ object MediaServer {
             if (q.ver < 2) q = q.copy(ver = 2, mode = if (q.mode == "headers") "hls" else q.mode, prefetchSegments = maxOf(q.prefetchSegments, 30))
             // v3: files are kept in 8 MB pieces and only a window around the playing position is kept on disk
             if (q.ver < 3) q = q.copy(ver = 3, readAheadMb = if (q.readAheadMb >= 1024 || q.readAheadMb == 0) 256 else q.readAheadMb)
-            // v4: aggressive read-ahead (1 GB) - a value that was still the old default (256 MB or less) is raised once
-            if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 1024 else q.readAheadMb)
+            // v4: aggressive read-ahead (512 MB) - a value that was still the old default (256 MB or less) is raised once
+            if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 512 else q.readAheadMb)
             // v5: 128 MB is the default again (with 8 parallel connections it keeps the window full without filling the disk)
             if (q.ver < 5) q = q.copy(ver = 5, readAheadMb = if (q.readAheadMb == 1024) 128 else q.readAheadMb)
             q
