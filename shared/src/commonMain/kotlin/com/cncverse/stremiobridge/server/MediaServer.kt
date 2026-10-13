@@ -61,13 +61,13 @@ data class MediaServerPrefs(
     /** HLS segments fetched ahead of the player. */
     val prefetchSegments: Int = 30,
     /** How far (MB) past the playing position a file download may run (0 = download the whole file). */
-    val readAheadMb: Int = 256,
+    val readAheadMb: Int = 1024,
     /** Upper limit of the cache folder, in MB (never more than 2048). Oldest entries are deleted first. */
     val maxCacheMb: Int = 2048,
     /** Entries not used for this many hours are deleted. */
     val keepHours: Int = 24,
     /** Settings generation (older files get the newer defaults once). */
-    val ver: Int = 3,
+    val ver: Int = 4,
 )
 
 @Serializable
@@ -127,6 +127,8 @@ object MediaServer {
             if (q.ver < 2) q = q.copy(ver = 2, mode = if (q.mode == "headers") "hls" else q.mode, prefetchSegments = maxOf(q.prefetchSegments, 30))
             // v3: files are kept in 8 MB pieces and only a window around the playing position is kept on disk
             if (q.ver < 3) q = q.copy(ver = 3, readAheadMb = if (q.readAheadMb >= 1024 || q.readAheadMb == 0) 256 else q.readAheadMb)
+            // v4: aggressive read-ahead (1 GB) - a value that was still the old default (256 MB or less) is raised once
+            if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 1024 else q.readAheadMb)
             q
         }
         val dir = File(base, "media_cache")
