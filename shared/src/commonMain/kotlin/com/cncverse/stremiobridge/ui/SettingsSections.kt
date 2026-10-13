@@ -31,6 +31,7 @@ import androidx.compose.ui.text.AnnotatedString
 import com.cncverse.stremiobridge.state.ServerState
 import com.cncverse.stremiobridge.state.ServerStatus
 import com.cncverse.stremiobridge.tunnel.CloudflaredManager
+import com.cncverse.stremiobridge.tunnel.StableLink
 import com.cncverse.stremiobridge.tunnel.TunnelSettings
 
 
@@ -77,6 +78,18 @@ fun TunnelSettingsCard() {
             modifier = Modifier.fillMaxWidth(),
             colors = amoledFieldColors(),
         )
+        Spacer(Modifier.height(10.dp))
+        var stable by remember { mutableStateOf(StableLink.enabled) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Fixed link for the free temporary tunnel", color = TextPrimary, fontSize = 13.sp)
+                Text(
+                    "Uses the pencarimovie-server relay: ${StableLink.url} always redirects to the current temporary link, so the Stremio add-on URL stays the same. Personal use only (the relay's owner does not allow monetising it). Takes effect the next time the tunnel starts.",
+                    color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,
+                )
+            }
+            Switch(checked = stable, onCheckedChange = { stable = it; StableLink.enabled = it })
+        }
         Spacer(Modifier.height(10.dp))
         val valid = token.length > 20 && TunnelSettings.normalizeHostname(hostname).contains('.')
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

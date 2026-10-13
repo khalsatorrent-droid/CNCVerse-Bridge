@@ -160,6 +160,16 @@ object CloudflaredManager {
                         if (ServerState.activeTunnelUrl.value != url) {
                             ServerState.activeTunnelUrl.value = url
                             ServerState.info("🚀 Cloudflare tunnel ready: $url  (Stremio add-on: $url/manifest.json)")
+                            // A temporary link gets a fixed address that redirects to it (opt-in, see StableLink)
+                            if (quick && StableLink.enabled && QUICK_URL.matches(url)) {
+                                launch(Dispatchers.IO) {
+                                    val fixed = StableLink.register(url)
+                                    if (fixed != null && ServerState.activeTunnelUrl.value == url) {
+                                        ServerState.activeTunnelUrl.value = fixed
+                                        ServerState.info("🔗 Fixed link: $fixed  (Stremio add-on: $fixed/manifest.json) - redirects to $url")
+                                    }
+                                }
+                            }
                         }
                     }
 

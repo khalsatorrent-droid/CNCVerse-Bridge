@@ -1,0 +1,73 @@
+package com.cncverse.stremiobridge.tunnel
+
+import com.cncverse.stremiobridge.repo.getExtensionSetting
+import com.cncverse.stremiobridge.repo.setExtensionSetting
+import com.cncverse.stremiobridge.state.ServerState
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
+
+/**
+ * A fixed address for the free temporary Cloudflare link, through the pencarimovie-server relay
+ * (https://github.com/aiskendi/pencarimovie-server): this device gets a permanent id, and
+ * `https://<id>-tunnel.pencarimovie.com` redirects to whatever `….trycloudflare.com` link the tunnel got this time.
+ * Every time the tunnel starts, the new link is registered with the relay (`{shortId, tunnelUrl}`).
+ *
+ * The relay belongs to the pencarimovie-server author, who allows it for personal use only (no monetising), so this is
+ * OFF until the user turns it on in Settings.
+ */
+object StableLink {
+    private const val KEY_ENABLED = "KEY_STABLE_LINK_ENABLED"
+    private const val KEY_ID = "KEY_STABLE_LINK_ID"
+    private const val PRIMARY = "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register"
+    private const val FALLBACK = "https://tunnel.pencarimovie.com/api/tunnel/register"
+
+    var enabled: Boolean
+        get() = getExtensionSetting(KEY_ENABLED) == "true"
+        set(v) = setExtensionSetting(KEY_ENABLED, if (v) "true" else "false")
+
+    /**
+     * Permanent per-device id. Eight characters, so it can never equal the relay's own six-character device ids.
+     */
+    val id: String
+        get() {
+            val saved = getExtensionSetting(KEY_ID)?.takeIf { Regex("^cb[0-9a-f]{6}$").matches(it) }
+            if (saved != null) return saved
+            val fresh = "cb" + java.util.UUID.randomUUID().toString().replace("-", "").take(6)
+            setExtensionSetting(KEY_ID, fresh)
+            return fresh
+        }
+
+    val url: String get() = "https://$id-tunnel.pencarimovie.com"
+
+    private val client by lazy {
+        okhttp3.OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
+    }
+
+    /**
+     * Registers [quickUrl] and returns the fixed address once it really leads to this bridge (its /manifest.json answers),
+     * or null when the relay could not be reached or the address does not work yet - the caller keeps the temporary link.
+     * Blocking: call from a background thread.
+     */
+    fun register(quickUrl: String): String? {
+        val body = """{"shortId":"$id","tunnelUrl":"$quickUrl"}""".toRequestBody("application/json".toMediaType())
+        var accepted = false
+        for (endpoint in listOf(PRIMARY, FALLBACK)) {
+            val ok = runCatching {
+                client.newCall(okhttp3.Request.Builder().url(endpoint).post(body).build()).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+            accepted = accepted || ok
+        }
+        if (!accepted) { ServerState.warn("Fixed link: the relay did not accept the registration - keeping the temporary link"); return null }
+        // The quick tunnel and the relay need a moment: check that the fixed address answers before it is shown
+        repeat(6) { attempt ->
+            val live = runCatching {
+                client.newCall(okhttp3.Request.Builder().url("$url/manifest.json").build()).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+            if (live) return url
+            if (attempt < 5) Thread.sleep(2_500)
+        }
+        ServerState.warn("Fixed link: $url does not answer yet - keeping the temporary link")
+        return null
+    }
+}
