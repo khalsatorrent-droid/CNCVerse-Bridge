@@ -1,5 +1,7 @@
 # CNCVerse Bridge
 
+> **Personal fork:** this is a personal fork of CNCVerse Bridge, made for the personal use of the person who maintains it. New features in this fork were added with the help of AI (Claude), so expect rough edges. If you run into any issues, please let me know by opening an issue on this repository.
+
 [![Join us on Telegram](https://img.shields.io/badge/Telegram-Join%20Group-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cncverse)
 [![Support Project (UPI Supported)](https://img.shields.io/badge/Support%20Project%20%28UPI%20Supported%29-FF0000?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://cncverse.pages.dev)
 

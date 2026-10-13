@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed link id is unique to each install:** new ids are "cb" + 10 random characters from a secure random source (was cb + 6), so two devices can never end up with the same fixed link; existing ids stay as they are.
+- README states that this is a personal fork whose new features were added with AI.
+
 ## 1.5.13
 
 - **Fixed link for the free temporary tunnel (optional):** Settings → Cloudflare Tunnel has a new switch. When on, the temporary `….trycloudflare.com` link is registered with the pencarimovie-server relay and you get a permanent address `https://<your id>-tunnel.pencarimovie.com` that redirects to it - the Stremio add-on URL no longer changes between runs. The fixed address is only shown once it really answers; otherwise the temporary link stays. The relay's owner allows this for personal use only (no monetising), so it is off by default.

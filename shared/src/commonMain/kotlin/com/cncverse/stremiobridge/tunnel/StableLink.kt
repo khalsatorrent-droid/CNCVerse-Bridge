@@ -27,13 +27,17 @@ object StableLink {
         set(v) = setExtensionSetting(KEY_ENABLED, if (v) "true" else "false")
 
     /**
-     * Permanent per-device id. Eight characters, so it can never equal the relay's own six-character device ids.
+     * Permanent per-install id: "cb" + 10 random hex characters (40 random bits, 12 characters - the longest the relay
+     * accepts), made from a secure random source the first time and then kept. Two devices therefore never share an id
+     * (the "cb" prefix is the only fixed part; it keeps the id apart from the relay's own six-character ids). Ids made
+     * by earlier versions (cb + 6 characters) stay as they are, so existing links keep working.
      */
     val id: String
         get() {
-            val saved = getExtensionSetting(KEY_ID)?.takeIf { Regex("^cb[0-9a-f]{6}$").matches(it) }
+            val saved = getExtensionSetting(KEY_ID)?.takeIf { Regex("^cb[0-9a-f]{6}([0-9a-f]{4})?$").matches(it) }
             if (saved != null) return saved
-            val fresh = "cb" + java.util.UUID.randomUUID().toString().replace("-", "").take(6)
+            val bytes = ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }
+            val fresh = "cb" + bytes.joinToString("") { "%02x".format(it) }
             setExtensionSetting(KEY_ID, fresh)
             return fresh
         }
