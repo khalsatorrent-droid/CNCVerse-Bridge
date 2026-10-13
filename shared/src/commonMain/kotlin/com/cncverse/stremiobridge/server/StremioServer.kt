@@ -879,7 +879,8 @@ object StremioServer {
 
         // Pixeldrain first, so the seek check below judges the link that is really played: a pixeldrain.com/u/ID address is
         // a web page (it used to be hidden as "not a file") while the fast mirror it becomes is a seekable file
-        val kept = filterStreamsByProfile(sorted, p).map { pixeldrainBypass(it, p) }
+        // and the mirror's redirect is followed here: the list carries the address of the server that holds the file
+        val kept = PixeldrainResolver.resolveAll(filterStreamsByProfile(sorted, p).map { pixeldrainBypass(it, p) })
         // Whatever the settings above did, the list that goes out is sorted by resolution and has nothing below 720p
         val seekable = if (p.filterNonSeekable) SeekProbe.dropNonSeekable(kept) else kept
         val tSeek = System.currentTimeMillis()
