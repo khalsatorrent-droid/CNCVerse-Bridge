@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.20
 
 - **Media server: no more endless buffering on a TV:** a TV player reads a file over several connections at once (the video, plus the end of the file for the index). The server kept one "last read" position that these connections overwrote in turn, so it deleted the data behind the wrong position and downloaded it again and again - playback stalled at some point and kept buffering. It now tracks every connection and keeps the data around the lowest recently active one. The file is still downloaded only within the read-ahead window, never as a whole.
 - **Media server limits:** the cache can now be set up to 5 GB (default stays 2 GB); read-ahead defaults to 512 MB and can be set up to 2 GB. A saved 1 GB read-ahead from 1.5.16 / 1.5.17 moves to 512 MB once.
