@@ -456,7 +456,7 @@ object MediaServer {
 
     /** A downloaded file is stored as 128 MB pieces (chunks/0, chunks/1, ...) so pieces already watched can be deleted. */
     private class ChunkStore(val dir: File) {
-        companion object { const val CHUNK = 128L * 1024 * 1024 }
+        companion object { const val CHUNK = 2L * 1024 * 1024 }
         fun exists(): Boolean = dir.isDirectory
         fun file(i: Long) = File(dir, i.toString())
         fun deleteBefore(chunkIndex: Long) {
@@ -504,7 +504,7 @@ object MediaServer {
         /** The address downloads use: the registered one, or an alternate address of the same file that can seek. */
         @Volatile var url: String = src.url
         val have = RangeSet()
-        val store = ChunkStore(File(dir, "chunks"))
+        val store = ChunkStore(File(dir, "pieces2"))
         /** Bytes before this offset were watched and deleted (never counted as missing). */
         @Volatile var floor = 0L
         /** Parallel download threads running for this file, and the 16 MB segments they are busy with. */
@@ -523,6 +523,7 @@ object MediaServer {
         @Volatile var focus = -1L
         @Volatile var stop = false
         @Volatile var lastAccess = System.currentTimeMillis()
+        @Volatile var lastSaved = 0L
         @Volatile var lastRead = 0L
         @Volatile var writePos = 0L
         @Volatile var worker: Thread? = null
@@ -572,8 +573,8 @@ object MediaServer {
     }
 
     /** Segment size and number of extra connections that download ahead of the player in parallel. */
-    private const val SEG = 8L * 1024 * 1024
-    private const val BOOSTERS = 5
+    private const val SEG = 2L * 1024 * 1024
+    private const val BOOSTERS = 16
 
     private fun startBoosters(e: FileEntry) {
         if (!e.boosters.compareAndSet(0, BOOSTERS)) return
@@ -650,7 +651,8 @@ object MediaServer {
             }
         }
         trimBehind(e)
-        synchronized(e.metaFile) { saveMeta(e) }
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - e.lastSaved > 2_000) synchronized(e.metaFile) { e.lastSaved = nowMs; saveMeta(e) }
         if (!makeRoom(0, e.id)) { e.error = "the media cache is full (limit ${prefs.maxCacheMb} MB)"; e.stop = true }
     }
 
@@ -660,7 +662,7 @@ object MediaServer {
     private fun parseStart(contentRange: String?): Long? =
         contentRange?.substringAfter("bytes ", "")?.substringBefore('-')?.trim()?.toLongOrNull()
 
-    /** Deletes the 8 MB pieces that lie more than KEEP_BEHIND behind the playing position (only for sources that can seek). */
+    /** Deletes the 2 MB pieces that lie more than KEEP_BEHIND behind the playing position (only for sources that can seek). */
     private fun trimBehind(e: FileEntry) {
         if (!e.ranges || e.total < 0 || e.lastRead <= 0) return
         val keepFrom = e.lastRead - KEEP_BEHIND
