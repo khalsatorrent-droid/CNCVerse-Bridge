@@ -61,7 +61,7 @@ data class MediaServerPrefs(
     /** HLS segments fetched ahead of the player. */
     val prefetchSegments: Int = 30,
     /** How far (MB) past the playing position a file download may run (0 = download the whole file). */
-    val readAheadMb: Int = 128,
+    val readAheadMb: Int = 512,
     /** Connections used per file at once (the main one plus the rest). Pixeldrain-bypass sites suggest 8 or 16; 1-20 works. */
     val connections: Int = 8,
     /** Upper limit of the cache folder, in MB (never more than 2048). Oldest entries are deleted first. */
