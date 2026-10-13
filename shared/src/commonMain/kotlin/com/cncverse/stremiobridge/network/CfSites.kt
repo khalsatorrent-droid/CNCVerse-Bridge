@@ -102,6 +102,14 @@ object CfSites {
     fun noteSolved(host: String, cookie: String) = update(host) { s ->
         val now = System.currentTimeMillis()
         s.copy(status = "SOLVED", solvedAt = now, cookieIssuedAt = issuedAt(cookie), skipUntil = 0)
+    }.also {
+        val at = issuedAt(cookie)
+        com.cncverse.stremiobridge.state.ServerState.info("Cloudflare: check solved for $host" + if (at > 0) " (cookie issued ${(System.currentTimeMillis() - at) / 60_000} min ago)" else "")
+    }
+
+    /** A cookie was saved but the site still challenged with it (stale, other address): not solved, queued again. */
+    fun noteSolveFailed(host: String) = update(host) { s ->
+        s.copy(status = "NEEDS", lastChallenge = System.currentTimeMillis(), skipUntil = System.currentTimeMillis() + SKIP_MS)
     }
 
     /** The saved cookie was refused: remember how long it lasted. */

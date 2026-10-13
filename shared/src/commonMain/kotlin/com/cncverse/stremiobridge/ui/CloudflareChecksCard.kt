@@ -101,9 +101,8 @@ private fun SiteRow(s: CfSite, solver: ((String, (Boolean) -> Unit) -> Unit)?, b
         Text(s.host, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
     val details = buildList {
-        add(label)
-        if (s.status == "SOLVED" && s.solvedAt > 0) add("solved ${ago(s.solvedAt)}")
-        if (s.status == "SOLVED" && s.cookieIssuedAt > 0) add("cookie issued ${ago(s.cookieIssuedAt)}")
+        add(if (s.status == "SOLVED" && s.solvedAt > 0) "Solved ${ago(s.solvedAt)}" else label)
+        if (s.status == "SOLVED" && s.cookieIssuedAt > 0) add("cookie issued ${ago(s.cookieIssuedAt)}" + if (s.solvedAt - s.cookieIssuedAt > 30 * 60_000L) " (older than the check - may be refused)" else "")
         if (s.lastLifetimeMs > 0) add("last cookie worked ${span(s.lastLifetimeMs)}")
         if (s.lastChallenge > 0 && s.status != "CLEAR") add("challenged ${ago(s.lastChallenge)}")
         if (s.status == "CLEAR" && s.lastClear > 0) add("checked ${ago(s.lastClear)}")

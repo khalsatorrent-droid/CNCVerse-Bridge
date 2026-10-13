@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Cloudflare checks: a stale cookie is no longer taken for a solved check:** the in-app browser keeps its cookies between checks, so when a site refused the saved cookie and the check was solved again, the old `cf_clearance` (e.g. issued 23 h ago) was found at once and saved as the "new" answer - the site showed "Solved" and "challenged" at the same time and the loop repeated. Now the old cookie is removed before the check starts, a cookie that is the same as before or was issued long before the check is ignored, and a fresh cookie that the site still refuses is not marked "Solved" (it stays in the queue and the log says so). The log now also says when a check was solved, and the card shows "Solved 5 min ago" once and warns when the cookie is older than the check.
+- **Defaults follow the settings you use:** "Load the next episode in advance" is off by default; the media server read-ahead default is 128 MB again (an installed 1 GB value from 1.5.16 / 1.5.17 moves back to 128 MB once). Connections stay at 8.
+
 ## 1.5.17
 
 - **Faster media server downloads:** the extra connections now fetch 8 MB at a time instead of 2 MB (each request costs a round trip, so small pieces left connections idle part of the time). Together with the changes since 1.5.16: up to 8 parallel connections per file (new "Connections" setting, 1-20; Pixeldrain bypass sites suggest 4-20 / 8 or 16 for download managers), 2 MB pieces on disk so watched parts are freed sooner, and a 1 GB read-ahead window by default.
