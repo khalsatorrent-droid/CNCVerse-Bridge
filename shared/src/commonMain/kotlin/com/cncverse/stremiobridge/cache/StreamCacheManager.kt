@@ -119,6 +119,15 @@ object StreamLinkClassifier {
         "r2.dev", "googleusercontent.com", "workers.dev"
     )
 
+    /**
+     * A link to a server an extension started inside this app (http://127.0.0.1:PORT/...): the port and its session die with
+     * the app or the extension, so a cached copy is a dead link (shown as "doesn't play at all" after a restart).
+     */
+    fun isLoopbackUrl(url: String?): Boolean {
+        val host = runCatching { java.net.URI(url ?: return false).host }.getOrNull()?.lowercase() ?: return false
+        return host == "127.0.0.1" || host == "localhost" || host == "[::1]" || host == "::1"
+    }
+
     private val UNIX_SECONDS_RX = Regex("""^1[6-9]\d{8}$|^2\d{9}$""")
     private val UNIX_MILLIS_RX = Regex("""^1[6-9]\d{11}$|^2\d{12}$""")
     private val HEX8_RX = Regex("""^[0-9a-fA-F]{8}$""")
@@ -488,6 +497,8 @@ object StreamCacheManager {
                 // Saved by an older build without stream info: those would come back as "Auto"
                 // with no release names, so they are refetched instead
                 .filter { it.streams.isEmpty() || it.infos.size == it.streams.size }
+                // Lists saved with links into an extension's local server (dead since the app restarted) are refetched
+                .filter { e -> e.streams.none { StreamLinkClassifier.isLoopbackUrl(it.url) } }
                 .sortedByDescending { it.cachedAt }.take(config.maxRamEntries)
                 .forEach { entry ->
                     // Re-attach each stream's info (saved alongside, same order)
@@ -683,6 +694,8 @@ object StreamCacheManager {
         val expiry = ArrayList<Long>(streams.size)
         for (stream in streams) {
             val url = stream.url
+            // A list with a link into an extension's own local server is never cached: that server will be gone next time
+            if (StreamLinkClassifier.isLoopbackUrl(url)) return Triple(emptyList(), 0L, emptyList())
             if (url.isNullOrBlank()) { // infoHash / YouTube id: no link to expire
                 kept += stream; expiry += now + listTtlMs; continue
             }

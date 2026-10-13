@@ -73,6 +73,20 @@ object SeekProbe {
         return true
     }
 
+    /**
+     * Links that are file downloads, never streams: Google Drive's download servers (they ignore ranges, expire quickly and
+     * often refuse a second request, so a network check cannot be trusted - it used to leave them in the list).
+     */
+    fun isDownloadOnlyUrl(url: String?): Boolean {
+        val uri = runCatching { java.net.URI(url ?: return false) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase() ?: return false
+        val path = uri.path.orEmpty().lowercase()
+        val query = uri.query.orEmpty().lowercase()
+        return host == "video-downloads.googleusercontent.com" ||
+            (host == "drive.usercontent.google.com" && path.startsWith("/download")) ||
+            ((host == "drive.google.com" || host == "docs.google.com") && path.startsWith("/uc") && "export=download" in query)
+    }
+
     private fun cached(key: String): Boolean? {
         val (ok, at) = verdicts[key] ?: return null
         if (System.currentTimeMillis() - at > HOST_TTL_MS) { verdicts.remove(key); return null }
@@ -147,6 +161,7 @@ object SeekProbe {
             }
         }
         return streams.filter { s ->
+            if (isDirectFile(s) && isDownloadOnlyUrl(s.url)) return@filter false
             val host = hostOf[s] ?: return@filter true
             cached(host) != false
         }

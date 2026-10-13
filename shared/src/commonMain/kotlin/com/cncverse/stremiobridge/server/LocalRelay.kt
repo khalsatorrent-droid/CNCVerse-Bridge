@@ -78,9 +78,11 @@ object LocalRelay {
         val resp = try {
             withContext(Dispatchers.IO) { client.newCall(reqB.build()).execute() }
         } catch (e: Exception) {
+            ServerState.warn("[LocalRelay] 127.0.0.1:$port/$path - ${e.javaClass.simpleName}: ${e.message}. The extension's own server is not answering (a link from before the app or extension restarted is dead - open the title again)")
             return call.respondText("Upstream unavailable", status = HttpStatusCode.BadGateway)
         }
         resp.use { r ->
+            if (!r.isSuccessful) ServerState.warn("[LocalRelay] 127.0.0.1:$port/$path -> HTTP ${r.code} ${r.message}")
             val body = r.body ?: return call.respondText("", status = HttpStatusCode.fromValue(r.code))
             val type = r.header("Content-Type").orEmpty()
             val isPlaylist = path.endsWith(".m3u8", true) || type.contains("mpegurl", true)

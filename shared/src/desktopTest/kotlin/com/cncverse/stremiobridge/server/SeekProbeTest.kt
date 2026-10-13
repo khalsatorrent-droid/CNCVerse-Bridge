@@ -143,4 +143,14 @@ class SeekProbeTest {
         val mkv = file("http://127.0.0.1:$port/vz/mkv?k=2")
         assertEquals(listOf(mkv), SeekProbe.dropNonSeekable(listOf(zip, mkv)))
     }
+
+    @Test
+    fun googleDriveDownloadLinksAreDownloadOnly() {
+        assertTrue(SeekProbe.isDownloadOnlyUrl("https://video-downloads.googleusercontent.com/ADGPM2kc-abc"))
+        assertTrue(SeekProbe.isDownloadOnlyUrl("https://drive.google.com/uc?export=download&id=1abc"))
+        assertTrue(SeekProbe.isDownloadOnlyUrl("https://drive.usercontent.google.com/download?id=1abc&export=download"))
+        assertFalse(SeekProbe.isDownloadOnlyUrl("https://cdn.example.com/video.mkv"))
+        assertFalse(SeekProbe.isDownloadOnlyUrl("https://drive.google.com/file/d/1abc/view"))
+        assertFalse(SeekProbe.isDownloadOnlyUrl(null))
+    }
 }

@@ -58,6 +58,7 @@ fun HistoryScreen(onCopy: (String) -> Unit = {}) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, onCopy: (String) -> Unit) {
     Column(
@@ -86,13 +87,24 @@ private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, 
             HorizontalDivider(color = DividerColor)
             Spacer(Modifier.height(8.dp))
             if (e.lines.isEmpty()) Text("No links were sent.", color = TextMuted, fontSize = 12.sp)
+            if (e.lines.isNotEmpty()) Text("Long-press a result to copy it with its link", color = TextMuted, fontSize = 10.sp)
             e.lines.forEachIndexed { i, l ->
-                Text("${i + 1}. $l", color = TextPrimary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 2.dp))
+                val url = e.urls.getOrNull(i).orEmpty()
+                Column(
+                    Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onCopy(if (url.isNotEmpty()) "$l\n$url" else l) })
+                        .padding(vertical = 4.dp),
+                ) {
+                    Text("${i + 1}. $l", color = TextPrimary, fontSize = 12.sp)
+                    if (url.isNotEmpty()) Text(url, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
             }
             TextButton(onClick = {
                 onCopy(buildString {
                     appendLine("${e.title} ${e.episode} (${e.id})")
-                    e.lines.forEachIndexed { i, l -> appendLine("${i + 1}. $l") }
+                    e.lines.forEachIndexed { i, l ->
+                        appendLine("${i + 1}. $l")
+                        e.urls.getOrNull(i)?.takeIf { it.isNotEmpty() }?.let { appendLine(it) }
+                    }
                 })
             }) { Text("Copy list") }
         } else {
