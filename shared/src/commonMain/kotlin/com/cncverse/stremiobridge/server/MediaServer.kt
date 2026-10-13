@@ -61,7 +61,7 @@ data class MediaServerPrefs(
     /** HLS segments fetched ahead of the player. */
     val prefetchSegments: Int = 30,
     /** How far (MB) past the playing position a file download may run (0 = download the whole file). */
-    val readAheadMb: Int = 1024,
+    val readAheadMb: Int = 128,
     /** Connections used per file at once (the main one plus the rest). Pixeldrain-bypass sites suggest 8 or 16; 1-20 works. */
     val connections: Int = 8,
     /** Upper limit of the cache folder, in MB (never more than 2048). Oldest entries are deleted first. */
@@ -69,7 +69,7 @@ data class MediaServerPrefs(
     /** Entries not used for this many hours are deleted. */
     val keepHours: Int = 24,
     /** Settings generation (older files get the newer defaults once). */
-    val ver: Int = 4,
+    val ver: Int = 5,
 )
 
 @Serializable
@@ -131,6 +131,8 @@ object MediaServer {
             if (q.ver < 3) q = q.copy(ver = 3, readAheadMb = if (q.readAheadMb >= 1024 || q.readAheadMb == 0) 256 else q.readAheadMb)
             // v4: aggressive read-ahead (1 GB) - a value that was still the old default (256 MB or less) is raised once
             if (q.ver < 4) q = q.copy(ver = 4, readAheadMb = if (q.readAheadMb in 1..256) 1024 else q.readAheadMb)
+            // v5: 128 MB is the default again (with 8 parallel connections it keeps the window full without filling the disk)
+            if (q.ver < 5) q = q.copy(ver = 5, readAheadMb = if (q.readAheadMb == 1024) 128 else q.readAheadMb)
             q
         }
         val dir = File(base, "media_cache")

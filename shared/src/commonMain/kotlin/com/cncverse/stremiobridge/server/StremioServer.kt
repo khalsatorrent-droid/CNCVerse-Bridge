@@ -230,7 +230,7 @@ object StremioServer {
         /** Adaptive (auto-resolution) HLS streams always play their highest resolution and are labelled with it. */
         val bestHls: Boolean = true,
         /** After an episode's links are loaded, load the next episode's links in the background. */
-        val prefetchNext: Boolean = true,
+        val prefetchNext: Boolean = false,
         /** Offer each rendition of an adaptive HLS playlist as its own stream (1080p / 720p / ...). */
         val splitHls: Boolean = false,
         /** Drop streams whose resolution cannot be found at all. */

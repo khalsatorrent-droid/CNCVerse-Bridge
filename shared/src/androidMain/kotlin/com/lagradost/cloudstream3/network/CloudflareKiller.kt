@@ -88,6 +88,10 @@ class CloudflareKiller : Interceptor {
                     response.close()
                     response = chain.proceed(newRequest)
                     if (!isChallenged(response)) return response
+                    // The fresh cookie was refused at once (other address / fingerprint): that is not "solved"
+                    com.cncverse.stremiobridge.network.CfCookieStore.forget(host)
+                    sites.noteSolveFailed(host)
+                    ServerState.warn("Cloudflare: $host refused the cookie right after the check was solved - it stays in the queue")
                 }
                 // The site lets a real browser in but not this app's HTTP client (it checks the TLS handshake, not a
                 // cookie): hand back the page the browser itself loaded
@@ -211,10 +215,32 @@ class CloudflareKiller : Interceptor {
                     override fun onPageStarted(view: WebView?, u: String?, f: android.graphics.Bitmap?) { pageFinished = false }
                 }
 
+                // The WebView keeps cookies between checks. A cf_clearance left from an earlier solve (the one the site just
+                // refused) would be taken for the new answer at once - drop it before the page loads, and never accept an
+                // old one afterwards (its issue time is inside the token)
+                val staleBefore = CookieManager.getInstance().getCookie(url)
+                    ?.split(';')?.map { it.trim() }?.firstOrNull { it.startsWith("cf_clearance=") }
+                run {
+                    val parts = host.split('.')
+                    val domains = (0..maxOf(0, parts.size - 2)).map { parts.drop(it).joinToString(".") }
+                    domains.forEach { d ->
+                        listOf("https://$d/", "https://$d").forEach { u ->
+                            CookieManager.getInstance().setCookie(u, "cf_clearance=; Max-Age=0; Path=/; Domain=$d")
+                            CookieManager.getInstance().setCookie(u, "cf_clearance=; Max-Age=0; Path=/; Domain=.$d")
+                        }
+                    }
+                    CookieManager.getInstance().flush()
+                }
+
                 fun cleared(): String? {
                     CookieManager.getInstance().flush()
-                    val c = CookieManager.getInstance().getCookie(url)
-                    return c?.takeIf { it.contains("cf_clearance") }
+                    val c = CookieManager.getInstance().getCookie(url) ?: return null
+                    if (!c.contains("cf_clearance")) return null
+                    val clearance = c.split(';').map { it.trim() }.firstOrNull { it.startsWith("cf_clearance=") } ?: return null
+                    if (clearance == staleBefore) return null
+                    val issued = com.cncverse.stremiobridge.network.CfSites.issuedAt(c)
+                    if (issued > 0 && issued < started - 10 * 60_000L) return null // issued long before this check began: not its answer
+                    return c
                 }
 
                 /** True when the check is on screen; false when the app is not in front (the site stays queued). */
