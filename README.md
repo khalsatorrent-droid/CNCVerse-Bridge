@@ -84,12 +84,36 @@ The app downloads `cloudflared` on first use.
 
 > **Disclaimer:** this project is vibe coded (written with AI assistance) and provided as is, with no warranty. The developer takes no responsibility for any damage, data loss or other consequences of using it.
 
-## New in 1.2.0
+## Changes since the fork
 
-- **Anime** - kitsu / MAL / AniList / AniDB ids are matched against every title the show is known by (English, romaji, synonyms) with fuzzy matching, season handling and flexible episode numbering, so extensions such as AniPM and Anidap find more shows and the right episode. Settings -> Streams: *Anime audio* (subbed / dubbed first, or hide the other).
-- **Quality** - adaptive HLS links get their real resolution from the playlist (no more "Auto" at the bottom), optional one-entry-per-rendition listing, a resolution cap ("Best quality for this device": links above it are listed last), and an option to hide unknown quality.
-- **Backup & import** - Settings -> Backup & import saves every setting (filters, formatter, cache, media server, repositories, installed / disabled extensions, extension settings) to one JSON file and restores it, also on another device.
-- **Media server** - Settings -> Media server. Links that need a Referer / cookies are downloaded by this device with those headers, kept on disk (hard limit 2 GB) and served to the player from there, with seeking while the download runs. HLS playlists and segments are cached and fetched ahead.
+What this fork adds or fixes compared with the original CNCVerse Bridge (it forked on 10 Oct 2026; releases 1.2.0 → latest). The full per-release list is in [CHANGELOG.md](CHANGELOG.md).
+
+### New features
+
+- **Media server** - links that need a Referer / cookies / headers are downloaded by the device with those headers, cached on disk and served to the player with seeking while the download runs. HLS playlists and segments are cached and fetched ahead; links are signed (no open proxy). Files are kept in 2 MB pieces and only a window around the playing position stays on disk; read-ahead up to 2 GB (default 512 MB), cache up to 5 GB (default 2 GB), up to 8 parallel connections per file. The playback position is checked every 20 s to top up the read-ahead. Many non-seekable links (Pixeldrain mirrors and others) are made seekable; extension-local m3u8 links (GoTaku hardsub and similar) are cached on the device.
+- **Streams and sorting** - results are sorted by real resolution ("Hide links below", default 720p); adaptive HLS links get their real resolution (or their best rendition); every link shows where it came from (matched extension title, file name, episode used); Sub / Dub / Hardsub labels for anime with hardsub first and an *Anime audio* setting; identical links listed once; new formatter fields and reworked default layouts; Upstream add-on links keep their own names.
+- **FORCE REFRESH entry** - first entry of every list: clears the saved results of that title and searches again, to get rid of stale results (can be hidden in Settings).
+- **Anime** - every known name of a show (AniList, Kitsu, MyAnimeList, TMDB) is searched with fuzzy matching and season checks; TMDB season / episode numbers are translated to AniList numbers; faster lookup that no longer cuts the search short.
+- **Cloudflare and network** - Cloudflare checks are solved in a hidden WebView (shown in a window when you need to tap), the cookie is saved with its User-Agent and reused; sites with a challenge are queued and listed in Settings with their status; real DNS-over-HTTPS fallback (Cloudflare, Google, Quad9); free Cloudflare quick tunnel without a token; optional **fixed link** through the pencarimovie relay (`<id>-tunnel.pencarimovie.com`) with a random per-device id and a reset button.
+- **Pixeldrain** - file links go through the fast mirror, and its redirect is resolved to the real CDN link before sharing.
+- **Upstream add-ons** - merge the streams of another Stremio add-on (for example your pencarimovie server for Telegram).
+- **History tab** - every request with counts, timing and extensions; open one to see the exact list that was sent, with links; long press a result to copy it as text.
+- **Backup & import** - every setting, repository and installed extension in one JSON file.
+- **Updates and releases** - update dialog that follows this fork's releases (Update / Later / Skip); a one-click Release workflow builds APK, MSI, EXE and DEB; a Check workflow compiles both apps and runs the tests on pull requests; six extension repositories are added by default; the Android server is kept alive (wake locks, battery-optimisation exemption, restart after swipe-away).
+- **Switches** - "Hide links that need headers", "Load the next episode in advance", "Show results once", "Show refresh results button", "Hide non-seekable / non-playable files".
+
+### Bugs fixed
+
+- Movies with no results (a cut-off emoji in a link name made the whole list fail to send); lists that failed to send are retried without subtitles.
+- "0 links" although extensions had found links; slow or empty answers in Nuvio (the search now runs on its own and keeps filling the cache).
+- Sorting by quality (the quality of each link was never passed on, so everything sorted alphabetically).
+- AnimePahe and other extensions with saved settings (settings were unreadable to them; the ksoup library was missing); anime searches that gave up after the first spelling.
+- Free tunnel failing on the second start, and the "api.trycloudflare.com" error.
+- Media server: TV buffering that never ended (several player connections overwrote one "last read" position), failed extra connections not being replaced, a probe at the end of the file pulling the download away, heavy cache-size checks.
+- Seekable links wrongly hidden by the non-seekable filter (the check ran before Pixeldrain links were switched to the fast mirror); Google Drive download-only links now recognised and hidden.
+- Cloudflare checks looping on a stale cookie.
+- GoTaku hardsub (extension-local) links starting a complete new search on every request, and being shown as dead links after a restart.
+- Log warnings: `authUser`, `AniListApi$CoverImage`, `WebViewResolver`.
 
 ## Building the APK on GitHub
 
