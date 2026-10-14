@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.29
 
 - **Sort grouping: fsl links are found by their name too.** Links whose address says nothing (`r2.dev`, `r2.cloudflarestorage.com`) but whose name says FSL ("Hub-Cloud[FSL Server]", "FSLv2 1080p") now go into the fsl group; other r2.dev / cloudflarestorage links join the workers group.
 
