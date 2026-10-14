@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Foreground Service type (Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- "specialUse" service type: unlike "dataSync" it has no time limit. Android 15 stops a dataSync service after about
+         6 hours and crashes the app when it does not stop in time - a server that runs all day hit exactly that. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- Keep the server alive: CPU / Wi-Fi wake locks and the battery-optimisation exemption -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -28,6 +31,7 @@
     <application
         android:name=".StremioApp"
         android:allowBackup="true"
+        android:largeHeap="true"
         android:label="CNCVerse Bridge"
         android:icon="@drawable/logo"
         android:theme="@style/AppTheme"
@@ -49,8 +53,12 @@
         <service
             android:name=".StremioForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local Stremio addon and media server that runs for as long as the user watches" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"
