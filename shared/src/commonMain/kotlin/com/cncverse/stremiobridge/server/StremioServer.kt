@@ -919,7 +919,7 @@ object StremioServer {
                 .map { st ->
                     try {
                         // Media server: links that need a Referer / Cookie are fetched by this bridge and cached here
-                        MediaServer.rewrite(LocalRelay.rewriteStream(withStreamBase(st)), mediaBase())
+                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), mediaBase()))
                     } catch (e: Throwable) {
                         ServerState.warn("[Request] could not prepare a link (${st.info?.addonName}): ${e.javaClass.simpleName}: ${e.message}")
                         st

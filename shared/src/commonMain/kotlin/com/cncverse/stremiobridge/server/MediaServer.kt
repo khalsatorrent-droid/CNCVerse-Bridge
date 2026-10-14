@@ -146,6 +146,38 @@ object MediaServer {
         scope.launch { runCatching { trim() } }
         // Old entries go after "Keep hours" even if nothing is being played
         if (cleaner?.isActive != true) cleaner = scope.launch { while (true) { delay(10 * 60_000L); runCatching { trim() } } }
+        if (monitor?.isActive != true) monitor = scope.launch { while (true) { delay(MONITOR_MS); runCatching { checkPlayback() } } }
+    }
+    @Volatile private var monitor: kotlinx.coroutines.Job? = null
+    private const val MONITOR_MS = 20_000L
+
+    /**
+     * Every 20 seconds: where is each player now? Files - the lowest position of the connections reading it; HLS - the last
+     * segment asked for. The read-ahead window after that position is topped up (a stopped downloader is started again, the
+     * download is pointed at the first missing piece after the position, the next segments are queued).
+     */
+    private fun checkPlayback() {
+        if (!prefs.enabled) return
+        val now = System.currentTimeMillis()
+        for (e in files.values) {
+            if (now - e.lastAccess > 3 * 60_000L || e.passthrough || !e.ready || e.complete || e.total <= 0 || !e.ranges || e.isPlaylist) continue
+            val pos = playPos(e)
+            val ahead = if (prefs.readAheadMb > 0) prefs.readAheadMb * 1024L * 1024L else e.total
+            val want = minOf(e.total, pos + ahead)
+            if (e.have.firstGapFrom(maxOf(pos, e.floor)) >= want) continue // the window is full
+            if (e.error != null && e.worker == null) e.error = null
+            if (e.worker == null) { e.stop = false; ensureWorker(e) }
+            else {
+                if (e.boosters.get() == 0) startBoosters(e)
+                if (e.have.contiguousEnd(pos) - pos < 2L * ChunkStore.CHUNK) e.focus = pos
+            }
+            ServerState.info("[MediaServer] playback at ${pos / 1_048_576} MB of ${e.total / 1_048_576} MB: read-ahead topped up")
+        }
+        for ((id, v) in hlsPlay) {
+            if (now - v.third > 3 * 60_000L) { hlsPlay.remove(id); continue }
+            val src = sourceFor(id) ?: continue
+            prefetch(id, src, v.first, v.second + 1)
+        }
     }
     @Volatile private var cleaner: kotlinx.coroutines.Job? = null
 
@@ -295,21 +327,53 @@ object MediaServer {
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return s
         if (!url.startsWith("http", true) || OWN_PATH.containsMatchIn(url)) return s
         val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return s
-        if (host in ServerState.ownHosts || host == "127.0.0.1" || host == "localhost") return s
+        val loop = isLoopbackUrl(url)
+        // An extension's own local server (127.0.0.1:port): only its playlists are taken over (below), and never this server itself
+        if (loop && (java.net.URI(url).port == ServerState.serverPort || !looksLikeHls(url, s.info?.linkType))) return s
+        if (!loop && host in ServerState.ownHosts) return s
         if (url.substringBefore('?').endsWith(".mpd", true) || url.contains(".mpd?", true)) return s // own DASH proxy
         val headers = s.behaviorHints?.proxyHeaders?.request.orEmpty()
         val hls = looksLikeHls(url, s.info?.linkType)
-        if (p.mode == "headers" && headers.isEmpty()) return s
-        if (p.mode == "hls" && headers.isEmpty() && !hls) return s
+        if (!loop && p.mode == "headers" && headers.isEmpty()) return s
+        if (!loop && p.mode == "hls" && headers.isEmpty() && !hls) return s
         if (hls && !p.cacheHls) return s
         if (!hls && !p.cacheFiles) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
         val id = register(url, headers)
+        // The extension's server may stop at any time: its playlists (and the first segments) are fetched and kept now
+        if (loop && !warmLocal(id, url)) return s
         val newUrl = if (hls) "$base/media/$id/pl/${token(id, url)}.m3u8" else "$base/media/$id/file/${fileName(url)}"
         return s.copy(
             url = newUrl,
             behaviorHints = s.behaviorHints?.copy(proxyHeaders = null),
         )
+    }
+
+    private fun isLoopbackUrl(url: String): Boolean =
+        runCatching { java.net.URI(url).host?.lowercase() }.getOrNull().let { it == "127.0.0.1" || it == "localhost" || it == "[::1]" }
+
+    /**
+     * An extension's local HLS link (http://127.0.0.1:port/…/master.m3u8): its playlist is downloaded right away, while the
+     * extension's server is still running, saved on disk and cached in memory for hours; the rendition playlists and the first
+     * segments follow. The player then gets everything from this bridge instead of through the extension's proxy.
+     */
+    private fun warmLocal(id: String, url: String): Boolean {
+        val src = sourceFor(id) ?: return false
+        val key = "$id|$url"
+        if (playlistCache.containsKey(key)) return true
+        return try {
+            val raw = String(fetchRemote(id, src, url).first)
+            if (!raw.trimStart().startsWith("#EXTM3U")) throw IOException("not a playlist")
+            runCatching { File(root ?: return@runCatching, "$id/playlist.m3u8").writeText(raw) }
+            val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
+            playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, url, useRaw, key))
+            if (raw.contains("#EXTINF")) prefetch(id, src, key, 0)
+            if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, url, useRaw)
+            true
+        } catch (t: Exception) {
+            ServerState.warn("[MediaServer] extension link $url could not be cached (${t.message}); it goes out through the plain relay")
+            false
+        }
     }
 
     private fun fileName(url: String): String {
@@ -958,6 +1022,8 @@ object MediaServer {
     /** "id|segment url" -> (playlist key, index) */
     private val segPos = ConcurrentHashMap<String, Pair<String, Int>>()
     private val segLocks = ConcurrentHashMap<String, Any>()
+    /** source id -> (playlist key, index of the segment the player asked for last, when) */
+    private val hlsPlay = ConcurrentHashMap<String, Triple<String, Int, Long>>()
     private val segWrites = AtomicLong(0)
 
     private fun segFile(id: String, url: String): File =
@@ -1067,11 +1133,17 @@ object MediaServer {
         touchDir(id)
         val key = "$id|$url"
         val cached = playlistCache[key]
-        val text = if (cached != null && System.currentTimeMillis() - cached.at < playlistTtl(cached.text)) cached.text else {
+        val local = isLoopbackUrl(url)
+        val ttl = { t: String -> if (local && (t.contains("#EXT-X-ENDLIST") || t.contains("#EXT-X-STREAM-INF"))) 6 * 3_600_000L else playlistTtl(t) }
+        val text = if (cached != null && System.currentTimeMillis() - cached.at < ttl(cached.text)) cached.text else {
             val raw = try {
                 withContext(Dispatchers.IO) { String(fetchRemote(id, src, url).first) }
             } catch (t: Exception) {
-                return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
+                // the extension's server is gone: the copy saved on disk still works
+                val saved = if (url == src.url) withContext(Dispatchers.IO) {
+                    runCatching { File(root ?: return@runCatching null, "$id/playlist.m3u8").takeIf { it.exists() }?.readText() }.getOrNull()
+                } else null
+                saved ?: return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
             }
             if (!raw.trimStart().startsWith("#EXTM3U")) {
                 return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
@@ -1110,6 +1182,7 @@ object MediaServer {
                         if (text.trimStart().startsWith("#EXTM3U")) {
                             val rewritten = rewritePlaylist(id, u, text, key)
                             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
+                            if (isLoopbackUrl(u) && text.contains("#EXTINF")) prefetch(id, src, key, 0)
                         }
                     }
                 }
@@ -1170,7 +1243,10 @@ object MediaServer {
         } catch (t: Exception) {
             return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
         }
-        segPos["$id|$url"]?.let { (pk, i) -> prefetch(id, src, pk, i + 1) }
+        segPos["$id|$url"]?.let { (pk, i) ->
+            hlsPlay[id] = Triple(pk, i, System.currentTimeMillis())
+            prefetch(id, src, pk, i + 1)
+        }
         val bytes = withContext(Dispatchers.IO) { file.readBytes() }
         // Some hosts hand out playlists under names without ".m3u8": recognise them by content and rewrite them too
         if (bytes.size in 8..2_000_000 && bytes[0] == '#'.code.toByte() && String(bytes, 0, 7) == "#EXTM3U") {
