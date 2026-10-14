@@ -61,6 +61,19 @@ object LocalRelay {
         return if (u == s.url && subs == s.subtitles) s else s.copy(url = u, subtitles = subs)
     }
 
+    /**
+     * True for a link into an extension's local server that no longer answers (the extension or the app restarted) and has
+     * no copy on this device (see [MediaServer.hasLocalCopy]) - such a result is left out instead of shown as a dead link.
+     */
+    fun isDeadLink(s: StremioStream): Boolean {
+        val u = s.url ?: return false
+        val m = LOOPBACK.matchEntire(u.trim()) ?: return false
+        val port = m.groupValues[2].toIntOrNull() ?: return false
+        if (port == ServerState.serverPort) return false
+        if (MediaServer.hasLocalCopy(u, s.behaviorHints?.proxyHeaders?.request.orEmpty())) return false
+        return !runCatching { java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 400); true } }.getOrDefault(false)
+    }
+
     private fun isAllowed(port: Int): Boolean {
         val at = allowed[port] ?: return false
         if (System.currentTimeMillis() - at > PORT_TTL_MS) { allowed.remove(port); return false }

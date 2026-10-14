@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Gotaku hardsub (extension-local) links no longer make every request search again:** a result list containing a `127.0.0.1` link used to be left out of the stream cache completely, so each request started a new full search (and the problem came back each time). Those links are now cached in memory for up to 45 minutes together with the rest of the list, never saved to disk, left out when they no longer answer and have no copy on this device, and removed one by one (not the whole list) when the cache is loaded after a restart.
+
 ## 1.5.23
 
 - **New fixed link (Settings → tunnel):** a button gives this device a new random id for the pencarimovie fixed link, so the address changes (use it when the old link got out). The old address stops leading here; install the Stremio add-on again with the new one.

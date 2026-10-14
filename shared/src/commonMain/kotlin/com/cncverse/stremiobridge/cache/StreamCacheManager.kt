@@ -497,8 +497,9 @@ object StreamCacheManager {
                 // Saved by an older build without stream info: those would come back as "Auto"
                 // with no release names, so they are refetched instead
                 .filter { it.streams.isEmpty() || it.infos.size == it.streams.size }
-                // Lists saved with links into an extension's local server (dead since the app restarted) are refetched
-                .filter { e -> e.streams.none { StreamLinkClassifier.isLoopbackUrl(it.url) } }
+                // Links into an extension's local server (dead since the app restarted) are left out of the restored lists;
+                // the other links of those lists stay
+                .map { e -> withoutLoopback(e) }
                 .sortedByDescending { it.cachedAt }.take(config.maxRamEntries)
                 .forEach { entry ->
                     // Re-attach each stream's info (saved alongside, same order)
@@ -514,6 +515,17 @@ object StreamCacheManager {
         }
     }
 
+    /** [e] without its links into an extension's local server (those streams, their infos and expiry times are removed together). */
+    private fun withoutLoopback(e: CachedStreamEntry): CachedStreamEntry {
+        if (e.streams.none { StreamLinkClassifier.isLoopbackUrl(it.url) }) return e
+        val keep = e.streams.indices.filter { !StreamLinkClassifier.isLoopbackUrl(e.streams[it].url) }
+        return e.copy(
+            streams = keep.map { e.streams[it] },
+            infos = if (e.infos.size == e.streams.size) keep.map { e.infos[it] } else e.infos,
+            streamExpiresAt = if (e.streamExpiresAt.size == e.streams.size) keep.map { e.streamExpiresAt[it] } else e.streamExpiresAt,
+        )
+    }
+
     /**
      * Streams the live entries straight to disk (no whole-cache String in
      * memory), then atomically replaces the file. Serialized so the periodic
@@ -526,6 +538,8 @@ object StreamCacheManager {
             val now = System.currentTimeMillis()
             val active = memoryCache.values.filter { it.expiresAt > now }
                 .map { e -> if (e.streams.any { it.info != null }) e.copy(infos = e.streams.map { it.info }) else e }
+                // links into an extension's local server die with the app: never saved
+                .map { e -> withoutLoopback(e) }.filter { it.streams.isNotEmpty() }
             val tmp = File(file.parentFile, "${file.name}.tmp")
             tmp.outputStream().buffered().use { cacheJson.encodeToStream(active, it) }
             java.nio.file.Files.move(
@@ -694,8 +708,10 @@ object StreamCacheManager {
         val expiry = ArrayList<Long>(streams.size)
         for (stream in streams) {
             val url = stream.url
-            // A list with a link into an extension's own local server is never cached: that server will be gone next time
-            if (StreamLinkClassifier.isLoopbackUrl(url)) return Triple(emptyList(), 0L, emptyList())
+            // A link into an extension's own local server (127.0.0.1:port) lives only as long as this app run: it is kept in
+            // memory for a while (the rest of the list is cached as usual, so a reload does not search again), is never saved
+            // to disk, and is dropped when it no longer answers (see LocalRelay.isDeadLink)
+            if (StreamLinkClassifier.isLoopbackUrl(url)) { kept += stream; expiry += now + minOf(listTtlMs, 45 * 60_000L); continue }
             if (url.isNullOrBlank()) { // infoHash / YouTube id: no link to expire
                 kept += stream; expiry += now + listTtlMs; continue
             }

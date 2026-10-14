@@ -352,6 +352,14 @@ object MediaServer {
         )
     }
 
+    /** True when the playlist of this extension-local link is already saved on this device (it plays without the extension). */
+    fun hasLocalCopy(url: String, headers: Map<String, String>): Boolean {
+        if (!prefs.enabled || !prefs.cacheHls) return false
+        val sorted = headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + ":" + it.value }
+        val id = sha256(url + "\n" + sorted).take(20)
+        return playlistCache.containsKey("$id|$url") || File(root ?: return false, "$id/playlist.m3u8").exists()
+    }
+
     private fun isLoopbackUrl(url: String): Boolean =
         runCatching { java.net.URI(url).host?.lowercase() }.getOrNull().let { it == "127.0.0.1" || it == "localhost" || it == "[::1]" }
 
@@ -374,6 +382,13 @@ object MediaServer {
             if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, url, useRaw)
             true
         } catch (t: Exception) {
+            // the extension's server is gone but an earlier run saved the playlist: that copy is used
+            val saved = runCatching { File(root ?: return@runCatching null, "$id/playlist.m3u8").takeIf { it.exists() }?.readText() }.getOrNull()
+            if (saved != null && saved.trimStart().startsWith("#EXTM3U")) {
+                val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(saved) else saved
+                playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, url, useRaw, key))
+                return true
+            }
             ServerState.warn("[MediaServer] extension link $url could not be cached (${t.message}); it goes out through the plain relay")
             false
         }

@@ -915,6 +915,8 @@ object StremioServer {
             }
             // "Hide subtitles": no subtitle tracks go out (after formatting, so the description stays truthful)
             val out = (if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted)
+                // Links into an extension's own server that no longer answers (and have no copy here) are left out
+                .filter { st -> !LocalRelay.isDeadLink(st) }
                 // One odd link must never cost the whole answer: a link whose rewrite fails goes out as it is
                 .map { st ->
                     try {
