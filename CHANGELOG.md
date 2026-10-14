@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **New fixed link (Settings → tunnel):** a button gives this device a new random id for the pencarimovie fixed link, so the address changes (use it when the old link got out). The old address stops leading here; install the Stremio add-on again with the new one.
+
 ## 1.5.22
 
 - **Media server fixes after a review:** extra download connections that ended after an error are now replaced one by one (before, they were restarted only when all of them were gone, so playback could fall back to a single slow connection and buffer); a failed segment no longer ends an extra connection; a probe connection further on in the file (a player reading the end of the file) can no longer pull the download away from the playing part; the cache-size check no longer walks every piece file for each 8 MB downloaded (less CPU on a TV box).

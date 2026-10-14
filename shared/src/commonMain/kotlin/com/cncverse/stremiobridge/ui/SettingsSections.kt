@@ -80,16 +80,25 @@ fun TunnelSettingsCard() {
         )
         Spacer(Modifier.height(10.dp))
         var stable by remember { mutableStateOf(StableLink.enabled) }
+        var fixedUrl by remember { mutableStateOf(StableLink.url) }
+        var fixedMsg by remember { mutableStateOf<String?>(null) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Fixed link for the free temporary tunnel", color = TextPrimary, fontSize = 13.sp)
                 Text(
-                    "Uses the pencarimovie-server relay: ${StableLink.url} always redirects to the current temporary link, so the Stremio add-on URL stays the same. Personal use only (the relay's owner does not allow monetising it). Takes effect the next time the tunnel starts.",
+                    "Uses the pencarimovie-server relay: $fixedUrl always redirects to the current temporary link, so the Stremio add-on URL stays the same. Personal use only (the relay's owner does not allow monetising it). Takes effect the next time the tunnel starts.",
                     color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,
                 )
             }
             Switch(checked = stable, onCheckedChange = { stable = it; StableLink.enabled = it })
         }
+        Spacer(Modifier.height(6.dp))
+        ActionButton("New fixed link (change this device's id)") {
+            StableLink.reset()
+            fixedUrl = StableLink.url
+            fixedMsg = "New fixed link: $fixedUrl - install the Stremio add-on again with it. Applies the next time the tunnel starts; the old link stops working."
+        }
+        fixedMsg?.let { Text(it, color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp) }
         Spacer(Modifier.height(10.dp))
         val valid = token.length > 20 && TunnelSettings.normalizeHostname(hostname).contains('.')
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

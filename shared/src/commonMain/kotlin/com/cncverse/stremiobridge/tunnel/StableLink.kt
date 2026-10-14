@@ -36,11 +36,21 @@ object StableLink {
         get() {
             val saved = getExtensionSetting(KEY_ID)?.takeIf { Regex("^cb[0-9a-f]{6}([0-9a-f]{4})?$").matches(it) }
             if (saved != null) return saved
-            val bytes = ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }
-            val fresh = "cb" + bytes.joinToString("") { "%02x".format(it) }
-            setExtensionSetting(KEY_ID, fresh)
-            return fresh
+            return newId()
         }
+
+    private fun newId(): String {
+        val bytes = ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }
+        val fresh = "cb" + bytes.joinToString("") { "%02x".format(it) }
+        setExtensionSetting(KEY_ID, fresh)
+        return fresh
+    }
+
+    /**
+     * Gives this device a new id, so the fixed address changes (the old address stops leading here). Used when the old
+     * link got out, or someone else is using it. The Stremio add-on has to be installed again with the new address.
+     */
+    fun reset(): String = newId()
 
     val url: String get() = "https://$id-tunnel.pencarimovie.com"
 
