@@ -58,12 +58,23 @@ fun HistoryScreen(onCopy: (String) -> Unit = {}) {
     }
 }
 
+/** The whole list of a request as text: the title line, then every result with its link. */
+private fun listText(e: HistoryEntry): String = buildString {
+    appendLine("${e.title} ${e.episode} (${e.id})".replace("  ", " "))
+    e.lines.forEachIndexed { i, l ->
+        appendLine("${i + 1}. $l")
+        e.urls.getOrNull(i)?.takeIf { it.isNotEmpty() }?.let { appendLine(it) }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, onCopy: (String) -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AmoledCard)
-            .border(1.dp, CardBorder, RoundedCornerShape(14.dp)).clickable { toggle() }.padding(14.dp),
+            .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+            // tap: open / close; long press on the card or its title: copy the whole list as text
+            .combinedClickable(onClick = toggle, onLongClick = { onCopy(listText(e)) }).padding(14.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
@@ -98,17 +109,9 @@ private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, 
                     if (url.isNotEmpty()) Text(url, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
             }
-            TextButton(onClick = {
-                onCopy(buildString {
-                    appendLine("${e.title} ${e.episode} (${e.id})")
-                    e.lines.forEachIndexed { i, l ->
-                        appendLine("${i + 1}. $l")
-                        e.urls.getOrNull(i)?.takeIf { it.isNotEmpty() }?.let { appendLine(it) }
-                    }
-                })
-            }) { Text("Copy list") }
+            TextButton(onClick = { onCopy(listText(e)) }) { Text("Copy list") }
         } else {
-            Text("Tap to see the list as shown", color = TextMuted, fontSize = 10.sp)
+            Text("Tap to see the list as shown - long press to copy it all", color = TextMuted, fontSize = 10.sp)
         }
     }
 }

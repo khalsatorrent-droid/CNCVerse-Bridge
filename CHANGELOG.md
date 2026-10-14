@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **History: long press on a request copies the whole list** (title, then every result with its link) as text; a long press on a single result still copies just that one.
+
 ## 1.5.27
 
 - **Default sort: quality, then similar links together.** Inside each resolution the links are now grouped by kind: all fsl links, then all Pixeldrain, then all workers.dev, then other direct files (grouped by site), then Telegram / the bridge's own relay, then adaptive m3u8 links (grouped by site), then torrents. Inside a group the size and extension-priority settings still apply. Settings → Streams → Sort: "Quality, then similar links together" (default) and "Quality, link type, biggest file"; "By extension" is unchanged.
