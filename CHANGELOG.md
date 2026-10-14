@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Sort grouping: fsl links are found by their name too.** Links whose address says nothing (`r2.dev`, `r2.cloudflarestorage.com`) but whose name says FSL ("Hub-Cloud[FSL Server]", "FSLv2 1080p") now go into the fsl group; other r2.dev / cloudflarestorage links join the workers group.
+
 ## 1.5.28
 
 - **History: long press on a request copies the whole list** (title, then every result with its link) as text; a long press on a single result still copies just that one.

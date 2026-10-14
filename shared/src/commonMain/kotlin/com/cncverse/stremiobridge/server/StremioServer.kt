@@ -2021,6 +2021,7 @@ object StremioServer {
     }
 
     private val HOST_RX = Regex("^https?://([^/:?#]+)", RegexOption.IGNORE_CASE)
+    private val FSL_RX = Regex("fsl", RegexOption.IGNORE_CASE)
 
     /**
      * The kind of a link, for grouping similar links together: (group order, name inside the group).
@@ -2036,7 +2037,11 @@ object StremioServer {
         val site = if (labels.size > 2 && labels[labels.size - 2].length <= 3 && labels.last().length == 2) labels.takeLast(3).joinToString(".")
             else labels.takeLast(2).joinToString(".")
         return when {
-            host.contains("fsl") || lower.contains("/fsl/") -> 0 to "fsl"
+            // fsl: in the address, or only in the link's name ("Hub-Cloud[FSLv2 Server]" on an r2.dev / cloudflarestorage host)
+            host.contains("fsl") || lower.contains("/fsl/") ||
+                FSL_RX.containsMatchIn(s.info?.linkName.orEmpty()) || FSL_RX.containsMatchIn(s.name.orEmpty()) ||
+                FSL_RX.containsMatchIn(s.title.orEmpty()) -> 0 to "fsl"
+            host.endsWith("r2.dev") || host.endsWith("r2.cloudflarestorage.com") -> 2 to host
             host.contains("pixeldrain") -> 1 to "pixeldrain"
             host.endsWith("workers.dev") -> 2 to host
             lower.contains("/proxy/") || lower.contains("/media/") || host.contains("telegram") || s.info?.addonName?.contains("telegram", true) == true -> 4 to site
