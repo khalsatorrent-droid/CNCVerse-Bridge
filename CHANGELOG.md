@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.28
 
 - **History: long press on a request copies the whole list** (title, then every result with its link) as text; a long press on a single result still copies just that one.
 
