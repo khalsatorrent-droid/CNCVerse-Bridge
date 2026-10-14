@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.23
 
 - **New fixed link (Settings → tunnel):** a button gives this device a new random id for the pencarimovie fixed link, so the address changes (use it when the old link got out). The old address stops leading here; install the Stremio add-on again with the new one.
 
