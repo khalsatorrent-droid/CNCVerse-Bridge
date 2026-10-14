@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Default sort: quality, then similar links together.** Inside each resolution the links are now grouped by kind: all fsl links, then all Pixeldrain, then all workers.dev, then other direct files (grouped by site), then Telegram / the bridge's own relay, then adaptive m3u8 links (grouped by site), then torrents. Inside a group the size and extension-priority settings still apply. Settings → Streams → Sort: "Quality, then similar links together" (default) and "Quality, link type, biggest file"; "By extension" is unchanged.
+
 ## 1.5.26
 
 - **Android: the bridge no longer crashes after running for hours:** its background service was declared as "data sync", and since Android 15 the system stops such a service after about 6 hours and crashes the app if it does not stop in time. It is now declared as a "special use" service (no time limit). The app also asks for a larger memory heap (long lists of 500+ links from 20+ extensions are heavy), writes an uncaught error to the log on the next start and logs why Android ended the previous run (crash, out of memory, ...), so a remaining crash can be traced.

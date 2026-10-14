@@ -1998,24 +1998,51 @@ object StremioServer {
     fun arrangeStreams(streams: List<StremioStream>, profile: StreamPrefs): List<StremioStream> {
         val bySize = profile.sortBy == "size"
         val byProvider = profile.groupBy == "provider"
-        if (profile.providerOrder.isEmpty() && !bySize && !byProvider) return streams
         val rank = profile.providerOrder.withIndex().associate { (i, n) -> n.lowercase() to i }
         // Sort keys are computed ONCE per stream: the size lookup is a text search and a sort
         // compares each stream about log2(n) times (6 ms -> well under 1 ms for 250 streams)
-        class Keyed(val stream: StremioStream, val providerRank: Int, val provider: String, val quality: Int, val sizeKey: Long)
+        class Keyed(val stream: StremioStream, val providerRank: Int, val provider: String, val quality: Int, val sizeKey: Long, val kindRank: Int, val kindName: String)
         val keyed = streams.map { st ->
             // The configure page lists extensions by display name ("4K HDHUB"); a stream's addon
             // label is often the plugin file name ("FourKHDHub"), so match on the display name
             val provider = (st.info?.providerName ?: com.cncverse.stremiobridge.format.StreamVariables.addonOf(st))?.lowercase().orEmpty()
             // Largest first via a negated key; unknown size gets +1 so it sorts after every known one
             val sizeKey = if (!bySize) 0L else -(com.cncverse.stremiobridge.format.StreamVariables.sizeBytesOf(st) ?: -1L)
-            Keyed(st, rank[provider] ?: Int.MAX_VALUE, provider, streamQualityRank(st), sizeKey)
+            val (kindRank, kindName) = linkKind(st)
+            Keyed(st, rank[provider] ?: Int.MAX_VALUE, provider, streamQualityRank(st), sizeKey, kindRank, kindName)
         }
         val order = if (byProvider)
             compareBy<Keyed>({ it.providerRank }, { it.provider }, { -it.quality }, { it.sizeKey })
         else
-            compareBy<Keyed>({ -it.quality }, { it.sizeKey }, { it.providerRank })
+            // default: best quality first, inside a quality the similar links together (all fsl, all pixeldrain, all workers,
+            // other direct files by site, adaptive m3u8 last), then size / provider order inside each group
+            compareBy<Keyed>({ -it.quality }, { it.kindRank }, { it.kindName }, { it.sizeKey }, { it.providerRank })
         return keyed.sortedWith(order).map { it.stream } // stable: ties keep their arrival order
+    }
+
+    private val HOST_RX = Regex("^https?://([^/:?#]+)", RegexOption.IGNORE_CASE)
+
+    /**
+     * The kind of a link, for grouping similar links together: (group order, name inside the group).
+     * 0 fsl, 1 pixeldrain, 2 workers (Cloudflare workers.dev), 3 other direct files (grouped by site),
+     * 4 Telegram / this bridge's own relay, 5 adaptive m3u8 (grouped by site), 6 torrents, 7 everything else.
+     */
+    internal fun linkKind(s: StremioStream): Pair<Int, String> {
+        val u = s.url
+        if (u.isNullOrBlank()) return (if (s.infoHash != null) 6 else 7) to ""
+        val host = HOST_RX.find(u)?.groupValues?.get(1)?.lowercase() ?: return 7 to ""
+        val lower = u.lowercase()
+        val labels = host.split('.')
+        val site = if (labels.size > 2 && labels[labels.size - 2].length <= 3 && labels.last().length == 2) labels.takeLast(3).joinToString(".")
+            else labels.takeLast(2).joinToString(".")
+        return when {
+            host.contains("fsl") || lower.contains("/fsl/") -> 0 to "fsl"
+            host.contains("pixeldrain") -> 1 to "pixeldrain"
+            host.endsWith("workers.dev") -> 2 to host
+            lower.contains("/proxy/") || lower.contains("/media/") || host.contains("telegram") || s.info?.addonName?.contains("telegram", true) == true -> 4 to site
+            s.info?.linkType.equals("M3U8", true) || lower.substringBefore('?').endsWith(".m3u8") || lower.contains(".m3u8") -> 5 to site
+            else -> 3 to site
+        }
     }
 
     /** Filters a list of streams against a user's profile quality preferences. */

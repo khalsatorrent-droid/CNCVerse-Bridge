@@ -451,8 +451,8 @@ fun StreamsCard() {
         Text("Sort", color = TextSecondary, fontSize = 11.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(
-                Triple("default", "default", "Best quality first"),
-                Triple("default", "size", "Quality, then biggest file"),
+                Triple("default", "default", "Quality, then similar links together"),
+                Triple("default", "size", "Quality, link type, biggest file"),
                 Triple("provider", "default", "By extension"),
                 Triple("provider", "size", "By extension, biggest first"),
             ).forEach { (group, sort, label) ->
