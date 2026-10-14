@@ -27,6 +27,49 @@ class StremioApp : Application() {
         com.cncverse.stremiobridge.server.BridgeRuntime.appScope =
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
         createNotificationChannel()
+        installCrashLog()
+    }
+
+    /**
+     * Writes what killed the previous run into the log (Logs tab): an uncaught exception is saved to a file before the
+     * process ends, and Android's own record of why a process died (crash, out of memory, a foreground service that ran
+     * into its time limit, ...) is read on the next start.
+     */
+    private fun installCrashLog() {
+        val crashFile = java.io.File(filesDir, "last_crash.txt")
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching {
+                crashFile.writeText("${System.currentTimeMillis()} thread=${t.name}\n" + e.stackTraceToString().take(6000))
+            }
+            previous?.uncaughtException(t, e)
+        }
+        runCatching {
+            if (crashFile.exists()) {
+                val text = crashFile.readText()
+                crashFile.delete()
+                com.cncverse.stremiobridge.state.ServerState.warn("[Crash] The app stopped with an uncaught error last time:\n" + text.take(1500))
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) runCatching {
+            val am = getSystemService(android.app.ActivityManager::class.java)
+            am.getHistoricalProcessExitReasons(packageName, 0, 3).forEach { r ->
+                val reason = when (r.reason) {
+                    android.app.ApplicationExitInfo.REASON_CRASH -> "crash"
+                    android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "native crash"
+                    android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "killed: low memory"
+                    android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "killed: excessive resource use"
+                    android.app.ApplicationExitInfo.REASON_ANR -> "not responding (ANR)"
+                    android.app.ApplicationExitInfo.REASON_USER_REQUESTED -> "closed by the user"
+                    android.app.ApplicationExitInfo.REASON_USER_STOPPED -> "force-stopped by the user"
+                    android.app.ApplicationExitInfo.REASON_SIGNALED -> "killed by a signal"
+                    android.app.ApplicationExitInfo.REASON_OTHER -> "other"
+                    else -> "code ${r.reason}"
+                }
+                if (r.reason != android.app.ApplicationExitInfo.REASON_USER_REQUESTED)
+                    com.cncverse.stremiobridge.state.ServerState.info("[Exit] earlier run ended: $reason (${java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.US).format(java.util.Date(r.timestamp))})" + (r.description?.let { " - $it" } ?: ""))
+            }
+        }
     }
 
     private fun createNotificationChannel() {
