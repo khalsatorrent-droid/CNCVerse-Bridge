@@ -835,6 +835,15 @@ object StreamCacheManager {
         return purged
     }
 
+    /** Removes the saved lists whose key starts with [prefix] (and stops a search that is still filling them). Returns how many were removed. */
+    fun invalidatePrefix(prefix: String): Int {
+        var n = 0
+        for (k in memoryCache.keys.toList()) if (k.startsWith(prefix) && memoryCache.remove(k) != null) n++
+        for (k in inFlight.keys.toList()) if (k.startsWith(prefix)) inFlight.remove(k)
+        if (n > 0) isDirty.set(true)
+        return n
+    }
+
     fun clearAll() {
         memoryCache.clear()
         inFlight.clear()

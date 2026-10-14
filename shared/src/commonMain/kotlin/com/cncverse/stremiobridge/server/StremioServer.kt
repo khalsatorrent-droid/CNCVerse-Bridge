@@ -212,6 +212,8 @@ object StremioServer {
         val providerOrder: List<String> = emptyList(),
         /** Show the "support the project" entry on top of stream lists. */
         val showSupport: Boolean = false,
+        /** A "refresh results" entry on top of every stream list: opens a page that clears this title's saved results and searches again. */
+        val showRefresh: Boolean = true,
         /** Pixeldrain links (file ids) are sent through the fast mirror cdn.pixeldrain.eu.cc. */
         val pixeldrainBypass: Boolean = false,
         /** Hide direct-download files whose server cannot seek (no byte ranges). Relay/proxy links are never hidden. */
@@ -709,6 +711,8 @@ object StremioServer {
                 }
             }
 
+            get("/refresh/{type}/{id}") { call.respondRefresh() }
+
             // Links to an extension's own server on this machine (Re:ANIME: http://127.0.0.1:41949/…)
             get("/proxy/local/{port}/{path...}") {
                 val port = call.parameters["port"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.NotFound)
@@ -929,7 +933,9 @@ object StremioServer {
                 }
                 .let { list ->
                     // "Support the project" entry on top, only above real results (can be hidden in the app)
-                    if (p.showSupport && list.isNotEmpty()) listOf(SUPPORT_STREAM) + list else list
+                    val withSupport = if (p.showSupport && list.isNotEmpty()) listOf(SUPPORT_STREAM) + list else list
+                    // "Refresh results" button first (it is not a video: it opens a page in the browser)
+                    if (p.showRefresh) listOf(refreshStream(type, id)) + withSupport else withSupport
                 }
                 .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = subs.map { it.copy(lang = com.cncverse.stremiobridge.format.SubtitleLangs.normalize(it.lang)) }) } ?: s }
 
@@ -1084,6 +1090,40 @@ object StremioServer {
         if (!p.pixeldrainBypass) return s
         val id = s.url?.let { PIXELDRAIN.matchEntire(it) }?.groupValues?.get(1) ?: return s
         return s.copy(url = "https://cdn.pixeldrain.eu.cc/$id")
+    }
+
+    private val lastRefresh = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun refreshStream(type: String, id: String) = StremioStream(
+        name = "🔄 FORCE REFRESH",
+        title = "⚡ Click to clear the saved results of this title and search again - then reload the list (not a video)",
+        url = mediaBase() + "/refresh/" + java.net.URLEncoder.encode(type, "UTF-8") + "/" + java.net.URLEncoder.encode(id, "UTF-8"),
+    )
+
+    /** Removes everything saved for this title (lists, extension searches) and starts a complete new search that fills the cache again. */
+    private suspend fun ApplicationCall.respondRefresh() {
+        val type = parameters["type"] ?: return respond(HttpStatusCode.BadRequest)
+        val id = parameters["id"] ?: return respond(HttpStatusCode.BadRequest)
+        // players ask the same address more than once (probe, retry): one refresh per title in 20 s
+        val key = "$type:$id"
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - (lastRefresh[key] ?: 0L) < 20_000L) return respondText("Refresh already started", ContentType.Text.Plain)
+        if (lastRefresh.size > 200) lastRefresh.clear()
+        lastRefresh[key] = nowMs
+        val cache = com.cncverse.stremiobridge.cache.StreamCacheManager
+        val removed = cache.invalidatePrefix("stream:generic:$type:$id:") +
+            (StremioIds.decode(id)?.let { (pluginKey, dataUrl) -> cache.invalidatePrefix("stream:direct:$pluginKey:$dataUrl") } ?: 0)
+        SearchLoadCache.clear()
+        ServerState.info("[Request] refresh $type/$id: $removed saved list(s) removed, searching again")
+        streamSearchScope.launch(pluginDispatcher) { runCatching { buildStreams(type, id) } }
+        val safe = id.replace("<", "").replace(">", "").replace("&", "")
+        respondText(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+                "<title>Refreshing</title><style>body{font-family:sans-serif;background:#000;color:#eee;padding:24px;max-width:480px;margin:auto}</style></head><body>" +
+                "<h2>🔄 Refreshing</h2><p>The saved results for <b>$safe</b> were removed and a complete new search started.</p>" +
+                "<p>Go back and open the title again in about a minute: the new results are saved for the next time.</p></body></html>",
+            ContentType.Text.Html,
+        )
     }
 
     private val SUPPORT_STREAM = StremioStream(

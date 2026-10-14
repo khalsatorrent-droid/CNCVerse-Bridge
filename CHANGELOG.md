@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **"FORCE REFRESH" button:** the first entry of every stream list (not a video: tapping it clears the saved results of that title and starts a complete new search that saves the fresh results; then reload the list). Gets rid of stale results. Can be hidden in Settings → streams ("Show refresh results button").
+
 ## 1.5.24
 
 - **Gotaku hardsub (extension-local) links no longer make every request search again:** a result list containing a `127.0.0.1` link used to be left out of the stream cache completely, so each request started a new full search (and the problem came back each time). Those links are now cached in memory for up to 45 minutes together with the rest of the list, never saved to disk, left out when they no longer answer and have no copy on this device, and removed one by one (not the whole list) when the cache is loaded after a restart.
