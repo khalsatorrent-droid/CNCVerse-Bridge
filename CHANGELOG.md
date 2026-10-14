@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Media server fixes after a review:** extra download connections that ended after an error are now replaced one by one (before, they were restarted only when all of them were gone, so playback could fall back to a single slow connection and buffer); a failed segment no longer ends an extra connection; a probe connection further on in the file (a player reading the end of the file) can no longer pull the download away from the playing part; the cache-size check no longer walks every piece file for each 8 MB downloaded (less CPU on a TV box).
+
 ## 1.5.21
 
 - **Extension-local m3u8 links are cached on the device (gotaku hardsub and similar `http://127.0.0.1:port/.../master.m3u8`):** the playlist is downloaded the moment the result is made, while the extension's own server is running, saved on the device and served by the media server (kept in memory for hours, with a copy on disk), together with the rendition playlists and the first segments. The link no longer depends on the extension's proxy staying reachable. When it can't be cached it still goes out through the plain relay (Logs tab shows why).

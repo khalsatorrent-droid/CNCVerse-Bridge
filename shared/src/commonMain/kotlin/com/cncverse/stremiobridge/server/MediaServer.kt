@@ -168,7 +168,7 @@ object MediaServer {
             if (e.error != null && e.worker == null) e.error = null
             if (e.worker == null) { e.stop = false; ensureWorker(e) }
             else {
-                if (e.boosters.get() == 0) startBoosters(e)
+                startBoosters(e)
                 if (e.have.contiguousEnd(pos) - pos < 2L * ChunkStore.CHUNK) e.focus = pos
             }
             ServerState.info("[MediaServer] playback at ${pos / 1_048_576} MB of ${e.total / 1_048_576} MB: read-ahead topped up")
@@ -227,6 +227,8 @@ object MediaServer {
     private fun lastUsed(d: File): Long = files[d.name]?.lastAccess?.takeIf { it > 0 } ?: d.lastModified()
 
     private val evictLock = Any()
+    @Volatile private var sizeCache = 0L
+    @Volatile private var sizeAt = 0L
 
     /**
      * Keeps the cache folder under its limit by deleting previously cached items, least recently used
@@ -238,7 +240,8 @@ object MediaServer {
     private fun makeRoom(extra: Long, keepId: String?): Boolean = synchronized(evictLock) {
         val dir = root ?: return false
         val cap = capBytes()
-        var total = dirSize(dir)
+        val nowMs = System.currentTimeMillis()
+        var total = if (extra <= 0 && nowMs - sizeAt < 1_000L) sizeCache else dirSize(dir).also { sizeCache = it; sizeAt = nowMs }
         if (extra > 0 && keepId != null) total -= dirSize(File(dir, keepId))
         if (total + extra <= cap) return true
         val victims = dir.listFiles()?.filter { it.isDirectory && it.name != keepId }?.sortedBy { lastUsed(it) } ?: emptyList()
@@ -662,9 +665,12 @@ object MediaServer {
 
     private fun startBoosters(e: FileEntry) {
         val extra = (prefs.connections - 1).coerceIn(0, 19)
-        if (extra == 0 || !e.boosters.compareAndSet(0, extra)) return
-        repeat(extra) { n ->
-            val t = Thread({ boost(e) }, "media-dl-b$n-" + e.id.take(6))
+        // also replaces single extra connections that ended after an error (not only when all of them are gone)
+        while (true) {
+            val cur = e.boosters.get()
+            if (cur >= extra) return
+            if (!e.boosters.compareAndSet(cur, cur + 1)) continue
+            val t = Thread({ boost(e) }, "media-dl-b$cur-" + e.id.take(6))
             t.isDaemon = true
             t.start()
         }
@@ -678,6 +684,7 @@ object MediaServer {
     private fun boost(e: FileEntry) {
         var wr: ChunkStore.Rw? = null
         var idleSince = System.currentTimeMillis()
+        var failures = 0
         try {
             val client = clientFor(e.id, e.src)
             val buf = ByteArray(128 * 1024)
@@ -701,6 +708,11 @@ object MediaServer {
                         try {
                             val w = wr ?: e.store.rw(true).also { wr = it }
                             downloadSegment(e, client, s0, s1, buf, w)
+                            failures = 0
+                        } catch (t: IOException) {
+                            // a hiccup on one segment: this connection waits a moment and goes on (gives up after ten in a row)
+                            if (++failures > 10) throw t
+                            Thread.sleep(500L * failures)
                         } finally { e.claimed.remove(i) }
                         idleSince = System.currentTimeMillis()
                         break
@@ -955,7 +967,10 @@ object MediaServer {
             return
         }
 
-        if (e.ranges && e.have.contiguousEnd(start) == start) e.focus = start
+        // a second connection further on (a probe of the end of the file) must not pull the download away from the playing part
+        val t0 = System.currentTimeMillis()
+        val playingBefore = e.readers.values.any { t0 - it[1] < 20_000L && it[0] < start }
+        if (e.ranges && !playingBefore && e.have.contiguousEnd(start) == start) e.focus = start
         call.respondBytesWriter(ct, httpStatus, len) {
             val reader = e.store.rw(false)
             val me = readerSeq.incrementAndGet()
