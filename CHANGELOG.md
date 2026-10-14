@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.25
 
 - **"FORCE REFRESH" button:** the first entry of every stream list (not a video: tapping it clears the saved results of that title and starts a complete new search that saves the fresh results; then reload the list). Gets rid of stale results. Can be hidden in Settings → streams ("Show refresh results button").
 
