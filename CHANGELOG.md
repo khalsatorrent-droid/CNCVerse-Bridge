@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.26
 
 - **Android: the bridge no longer crashes after running for hours:** its background service was declared as "data sync", and since Android 15 the system stops such a service after about 6 hours and crashes the app if it does not stop in time. It is now declared as a "special use" service (no time limit). The app also asks for a larger memory heap (long lists of 500+ links from 20+ extensions are heavy), writes an uncaught error to the log on the next start and logs why Android ended the previous run (crash, out of memory, ...), so a remaining crash can be traced.
 
