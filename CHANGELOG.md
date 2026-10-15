@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.31
 
 - **Upstream add-on results keep their full details.** The `description` text of an upstream stream (file name, size, languages... the multi-line part newer add-ons send) and its `filename` / `videoSize` hints were dropped, leaving only a short name like "telegram • PencariMovie 1080p". They are kept and shown now.
 - **Upstream add-ons on your home network now play away from home.** A self-hosted add-on that answers with links like `http://192.168.x.x:8088/...` used to hand those links to the player unchanged, which only works on the home Wi-Fi. Links to a private address (10.x, 172.16-31.x, 192.168.x, *.local) are now served by this bridge through the media server, so they play through the tunnel / relay link too.
