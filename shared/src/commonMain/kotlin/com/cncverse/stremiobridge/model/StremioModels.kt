@@ -138,6 +138,8 @@ data class StremioStream(
     @SerialName("externalUrl")   val externalUrl: String? = null,
     /** Server-side metadata for the stream formatter — never sent to Stremio. */
     @kotlinx.serialization.Transient val info: StreamInfo? = null,
+    /** The multi-line description newer Stremio add-ons send instead of / besides "title" (file name, size, languages...). */
+    @SerialName("description")   val description: String? = null,
 )
 
 /**
@@ -186,6 +188,9 @@ data class StreamBehaviorHints(
     @SerialName("bingeGroup")     val bingeGroup: String? = null,
     @SerialName("notWebReady")    val notWebReady: Boolean? = null,
     @SerialName("proxyHeaders")   val proxyHeaders: ProxyHeaders? = null,
+    @SerialName("filename")       val filename: String? = null,
+    @SerialName("videoSize")      val videoSize: Long? = null,
+    @SerialName("videoHash")      val videoHash: String? = null,
 )
 
 @Serializable
