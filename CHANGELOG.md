@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Sort: FSL links written in fancy letters are grouped too.** HubCloud names such as "𝗙𝗦𝗟 𝗦𝗲𝗿𝘃𝗲𝗿" (mathematical bold letters) were not recognised as FSL and fell into the workers group; the letters are folded to plain ones before matching, and Cloudflare R2 links in a `/hub/` or `/hub2/` bucket count as FSL.
+
 ## 1.5.31
 
 - **Upstream add-on results keep their full details.** The `description` text of an upstream stream (file name, size, languages... the multi-line part newer add-ons send) and its `filename` / `videoSize` hints were dropped, leaving only a short name like "telegram • PencariMovie 1080p". They are kept and shown now.

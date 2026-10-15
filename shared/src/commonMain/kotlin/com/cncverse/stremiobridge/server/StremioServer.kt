@@ -2025,6 +2025,9 @@ object StremioServer {
 
     private val HOST_RX = Regex("^https?://([^/:?#]+)", RegexOption.IGNORE_CASE)
     private val FSL_RX = Regex("fsl", RegexOption.IGNORE_CASE)
+    private val HUB_PATH_RX = Regex("^https?://[^/]+/hub2?/")
+    private fun isFslName(t: String?): Boolean =
+        !t.isNullOrBlank() && FSL_RX.containsMatchIn(java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFKC))
 
     /**
      * The kind of a link, for grouping similar links together: (group order, name inside the group).
@@ -2042,8 +2045,10 @@ object StremioServer {
         return when {
             // fsl: in the address, or only in the link's name ("Hub-Cloud[FSLv2 Server]" on an r2.dev / cloudflarestorage host)
             host.contains("fsl") || lower.contains("/fsl/") ||
-                FSL_RX.containsMatchIn(s.info?.linkName.orEmpty()) || FSL_RX.containsMatchIn(s.name.orEmpty()) ||
-                FSL_RX.containsMatchIn(s.title.orEmpty()) -> 0 to "fsl"
+                // HubCloud's FSL servers are Cloudflare R2 buckets named "hub" / "hub2"
+                (host.endsWith("r2.cloudflarestorage.com") && HUB_PATH_RX.containsMatchIn(lower)) ||
+                // names are often written in "mathematical bold" letters (𝗙𝗦𝗟): fold them to plain letters first
+                isFslName(s.info?.linkName) || isFslName(s.name) || isFslName(s.title) -> 0 to "fsl"
             host.endsWith("r2.dev") || host.endsWith("r2.cloudflarestorage.com") -> 2 to host
             host.contains("pixeldrain") -> 1 to "pixeldrain"
             host.endsWith("workers.dev") -> 2 to host
