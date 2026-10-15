@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.33
 
 - **Links that arrive JSON-escaped now play.** Some extensions (Anizone) hand back a link like `https:\/\/host\/path\/master.m3u8` with backslashes. It was neither recognised as an m3u8 nor opened by players; the backslashes are removed as soon as the result comes in, so such links go through the media server like any other.
 ## 1.5.32
