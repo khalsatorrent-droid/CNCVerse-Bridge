@@ -1,8 +1,10 @@
 # Changelog
 
-## 1.5.30
+## Unreleased
 
 - **Upstream add-ons on your home network now play away from home.** A self-hosted add-on that answers with links like `http://192.168.x.x:8088/...` used to hand those links to the player unchanged, which only works on the home Wi-Fi. Links to a private address (10.x, 172.16-31.x, 192.168.x, *.local) are now served by this bridge through the media server, so they play through the tunnel / relay link too.
+
+## 1.5.30
 
 
 - **Default sort: fast links first inside each resolution.** fsl, then pixeldrain, then workers, then adaptive m3u8 (fast but lower quality), then other direct links; similar links stay together. The resolution order is unchanged.
