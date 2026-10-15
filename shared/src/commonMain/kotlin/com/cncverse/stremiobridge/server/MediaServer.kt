@@ -166,19 +166,20 @@ object MediaServer {
             val want = minOf(e.total, pos + ahead)
             if (e.have.firstGapFrom(maxOf(pos, e.floor)) >= want) continue // the window is full
             if (e.error != null && e.worker == null) e.error = null
-            // How much is already on disk, in one piece, right after the player? Less than an eighth of the window (and at least
-            // 8 MB) means the player is close to catching up: the download is pointed at the hole under it and every extra
-            // connection is brought back, so it does not have to wait for the sequential download to come round.
+            // How much is already on disk, in one piece, right after the player? When HALF of the read-ahead window (at least 8 MB)
+            // or less is left, the refill starts at full strength: every extra connection is brought back and the main download is
+            // pointed at the first missing piece after the ready data, so the window is filled again long before the player gets to it.
             val contiguous = e.have.contiguousEnd(pos) - pos
-            val urgent = contiguous < maxOf(8L * 1_048_576L, minOf(ahead, 1L shl 30) / 8)
+            val urgent = contiguous < maxOf(8L * 1_048_576L, minOf(ahead, 1L shl 30) / 2)
             if (e.error != null && e.worker == null) e.error = null
             if (e.worker == null) { e.stop = false; ensureWorker(e) }
             else {
                 startBoosters(e)
-                if (urgent || contiguous < 2L * ChunkStore.CHUNK) e.focus = pos
+                if (urgent) e.focus = e.have.firstGapFrom(maxOf(pos, e.floor)).takeIf { it < want } ?: pos
+                else if (contiguous < 2L * ChunkStore.CHUNK) e.focus = pos
             }
             val line = "[MediaServer] playback at ${pos / 1_048_576} MB of ${e.total / 1_048_576} MB, ${contiguous / 1_048_576} MB ready ahead" +
-                if (urgent) " - catching up" else " - read-ahead topped up"
+                if (urgent) " - half or less left, refilling" else " - read-ahead topped up"
             if (urgent) ServerState.info(line) else ServerState.debug(line)
         }
         for ((id, v) in hlsPlay) {

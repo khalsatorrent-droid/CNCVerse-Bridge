@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **Media server refills earlier:** when half of the read-ahead window (it was an eighth) or less is ready after the player's position, every extra connection is brought back and the main download is pointed at the first missing piece after the ready data, so the window is full again long before the player reaches it. Checked every 5 seconds.
 ## 1.5.34
 
 - **Media server checks the player every 5 seconds** (was 20) and, when less than an eighth of the read-ahead window is ready right after the playback position, points the download at the hole under the player and brings every extra connection back ("catching up" in the log), so playback does not wait for the sequential download to reach it. HLS segments after the current one are queued on the same beat.
