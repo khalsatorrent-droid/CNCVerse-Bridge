@@ -1,15 +1,22 @@
-# CNCVerse Bridge
+# CNCVerse Bridge (personal fork)
 
-> **Personal fork:** this is a personal fork of CNCVerse Bridge, made for the personal use of the person who maintains it. New features in this fork were added with the help of AI (Claude), so expect rough edges. If you run into any issues, please let me know by opening an issue on this repository.
+CNCVerse Bridge runs Cloudstream extensions as a Stremio / Nuvio add-on on your own Android device or computer. Compared with the original it is built for links that start fast, seek well and stay in a sensible order.
 
-[![Join us on Telegram](https://img.shields.io/badge/Telegram-Join%20Group-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cncverse)
-[![Support Project (UPI Supported)](https://img.shields.io/badge/Support%20Project%20%28UPI%20Supported%29-FF0000?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://cncverse.pages.dev)
+- **Media server:** links that need headers, a Referer or cookies are downloaded by the device, kept on disk and served to the player with seeking and a read-ahead buffer, so playback keeps going while the source is slow. HLS playlists and segments are cached too.
+- **Better lists:** sorted by real resolution, then fast links first (FSL, Pixeldrain, workers, HLS), with similar links grouped. Names keep their full details; dead and non-seekable links are hidden.
+- **FORCE REFRESH:** the first entry of every list clears the saved results of a title and searches again.
+- **Anime:** every known title name is searched, with season and episode numbers translated between databases; hardsub / dub / softsub are labelled.
+- **Cloudflare:** checks are solved once in a WebView and the cookie is reused for later requests.
+- **Upstream add-ons:** merge another Stremio add-on, including self-hosted ones on your home network, which are served through the bridge so they play away from home.
+- **Tunnel:** free relay link or your own Cloudflare Tunnel for HTTPS in Stremio.
+- **History tab:** every request, timing and the exact list sent, copyable as text.
+- **Backup & updates:** one-file backup of all settings and extensions; in-app updates from this repository's releases.
 
-[![Discord](https://invidget.switchblade.xyz/jG8aKTtDze)](https://discord.gg/jG8aKTtDze)
+Why use it: fewer dead links, less buffering, a tidier list, and one place for Stremio, Nuvio and desktop. See [CHANGELOG.md](CHANGELOG.md) for every change.
 
-An application addon to run Cloudstream extensions on Nuvio, Stremio, and every other Stremio-supported platform.
+> **Personal fork.** This is a personal fork kept for the maintainer's own use. All credit for the original app goes to its original developer, **NivinCNC**: without his CNCVerse Bridge, none of the features added here would have been possible. This fork only builds on his work.
 
-> **Note:** This app is currently in the alpha stage. You may experience bugs or crashes. Join our community to report issues! If you are a developer, PRs for fixes are always welcome.
+> **Made with AI, no responsibility.** The changes in this fork were written with AI (Claude) and are provided **as is**, with no warranty of any kind. Expect bugs. The maintainer takes no responsibility for any damage, data loss, account problems or other consequences of using it, or for the content of any extension, add-on or website it connects to. Use it at your own risk and only for content you have the right to access.
 
 ## Downloads
 
@@ -82,8 +89,6 @@ The app downloads `cloudflared` on first use.
 
 ---
 
-> **Disclaimer:** this project is vibe coded (written with AI assistance) and provided as is, with no warranty. The developer takes no responsibility for any damage, data loss or other consequences of using it.
-
 ## Changes since the fork
 
 What this fork adds or fixes compared with the original CNCVerse Bridge (it forked on 10 Oct 2026; releases 1.2.0 → latest). The full per-release list is in [CHANGELOG.md](CHANGELOG.md).
@@ -144,17 +149,10 @@ On start the app looks at the releases of this repository. If a newer version wi
 
 ---
 
-## Support & Community
-
-Join our **[Telegram group](https://t.me/cncverse)** to discuss extensions, request features, or report issues.
-
-If you find this project useful, consider supporting the development!  
-**[☕ Buy Me a Coffee](https://buymeacoffee.com/nivincnc)**
-
----
-
 ## License
 
-All rights reserved. No part of this codebase may be copied, modified, distributed, or otherwise used without explicit permission from the copyright owner.
+The original CNCVerse Bridge code is **all rights reserved** by its original author (see the [LICENSE](LICENSE) file). This fork does not change that license and grants no extra rights: it is shared only as a personal project, and any use, copying or redistribution of the original code needs the original author's permission.
 
-**Note:** Files originating from the Cloudstream project retain their original licenses and copyright notices as applicable under the Cloudstream project and are not covered by this proprietary license. See the [LICENSE](LICENSE) file for more details.
+Files that come from the Cloudstream project keep their own licenses and copyright notices and are not covered by the license above. Other third-party libraries keep their own licenses too.
+
+This fork's additions were produced with AI assistance; the AI-generated parts carry no warranty and no promise of fitness for any purpose.
