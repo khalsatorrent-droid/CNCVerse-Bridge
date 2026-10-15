@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.32
 
 - **Sort: FSL links written in fancy letters are grouped too.** HubCloud names such as "𝗙𝗦𝗟 𝗦𝗲𝗿𝘃𝗲𝗿" (mathematical bold letters) were not recognised as FSL and fell into the workers group; the letters are folded to plain ones before matching, and Cloudflare R2 links in a `/hub/` or `/hub2/` bucket count as FSL.
 
