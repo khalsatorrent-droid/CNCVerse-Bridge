@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.30
 
 - **Default sort: fast links first inside each resolution.** fsl, then pixeldrain, then workers, then adaptive m3u8 (fast but lower quality), then other direct links; similar links stay together. The resolution order is unchanged.
 - **Cloudflare cookies are actually used now.** The saved cookie (and the User-Agent it was solved with) is sent on every request of every extension to that site, not only for extensions that bring their own Cloudflare handling. A challenge on any site now lands in Settings -> Cloudflare checks so it can be solved ahead of time, and a refused cookie is dropped and the site marked expired.
