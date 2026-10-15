@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.34
 
 - **Media server checks the player every 5 seconds** (was 20) and, when less than an eighth of the read-ahead window is ready right after the playback position, points the download at the hole under the player and brings every extra connection back ("catching up" in the log), so playback does not wait for the sequential download to reach it. HLS segments after the current one are queued on the same beat.
 - **Cloudflare checks use the Raghav Nepu extension's logic:** a challenge is recognised by the `cf-mitigated` header, or by a 403 / 503 / 429 whose page says "Just a moment" / challenge-platform (not only by the Server header), the old challenge cookies (`cf_chl_rc_ni`, `cf_chl_prog`) are wiped before a new check, and a saved clearance is sent on every request to the site.
