@@ -326,7 +326,10 @@ object MediaServer {
         val p = prefs
         if (!p.enabled || root == null) return s
         val url = s.url ?: return s
-        if (s.info?.linkType == "UPSTREAM") return s
+        // An upstream addon's links are left alone - except those pointing at a private home-network address (a self-hosted addon on
+        // 192.168.x.x): a phone away from home cannot open them, so this bridge (which can reach them) serves them
+        val lanUpstream = s.info?.linkType == "UPSTREAM" && isPrivateHost(runCatching { java.net.URI(s.url ?: "").host }.getOrNull())
+        if (s.info?.linkType == "UPSTREAM" && !lanUpstream) return s
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return s
         if (!url.startsWith("http", true) || OWN_PATH.containsMatchIn(url)) return s
         val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return s
@@ -339,10 +342,10 @@ object MediaServer {
         val hls = looksLikeHls(url, s.info?.linkType)
         // A site whose Cloudflare check was solved: only this server can send the saved cookie + browser User-Agent, so its links are taken over in every mode
         val needsCf = !loop && runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(host) }.getOrNull() != null
-        if (!loop && p.mode == "headers" && headers.isEmpty() && !needsCf) return s
-        if (!loop && p.mode == "hls" && headers.isEmpty() && !hls && !needsCf) return s
-        if (hls && !p.cacheHls) return s
-        if (!hls && !p.cacheFiles) return s
+        if (!loop && !lanUpstream && p.mode == "headers" && headers.isEmpty() && !needsCf) return s
+        if (!loop && !lanUpstream && p.mode == "hls" && headers.isEmpty() && !hls && !needsCf) return s
+        if (hls && !p.cacheHls && !lanUpstream) return s
+        if (!hls && !p.cacheFiles && !lanUpstream) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
         val id = register(url, headers)
         // The extension's server may stop at any time: its playlists (and the first segments) are fetched and kept now
@@ -360,6 +363,15 @@ object MediaServer {
         val sorted = headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + ":" + it.value }
         val id = sha256(url + "\n" + sorted).take(20)
         return playlistCache.containsKey("$id|$url") || File(root ?: return false, "$id/playlist.m3u8").exists()
+    }
+
+    /** 10.x, 172.16-31.x, 192.168.x, link-local and *.local names: reachable only from the home network. */
+    private fun isPrivateHost(host: String?): Boolean {
+        val h = host?.lowercase() ?: return false
+        if (h.endsWith(".local")) return true
+        val o = h.split('.').mapNotNull { it.toIntOrNull() }
+        if (o.size != 4) return false
+        return o[0] == 10 || (o[0] == 172 && o[1] in 16..31) || (o[0] == 192 && o[1] == 168) || (o[0] == 169 && o[1] == 254)
     }
 
     private fun isLoopbackUrl(url: String): Boolean =

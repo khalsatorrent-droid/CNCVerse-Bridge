@@ -2,6 +2,9 @@
 
 ## 1.5.30
 
+- **Upstream add-ons on your home network now play away from home.** A self-hosted add-on that answers with links like `http://192.168.x.x:8088/...` used to hand those links to the player unchanged, which only works on the home Wi-Fi. Links to a private address (10.x, 172.16-31.x, 192.168.x, *.local) are now served by this bridge through the media server, so they play through the tunnel / relay link too.
+
+
 - **Default sort: fast links first inside each resolution.** fsl, then pixeldrain, then workers, then adaptive m3u8 (fast but lower quality), then other direct links; similar links stay together. The resolution order is unchanged.
 - **Cloudflare cookies are actually used now.** The saved cookie (and the User-Agent it was solved with) is sent on every request of every extension to that site, not only for extensions that bring their own Cloudflare handling. A challenge on any site now lands in Settings -> Cloudflare checks so it can be solved ahead of time, and a refused cookie is dropped and the site marked expired.
 - **Links of sites with a saved Cloudflare cookie go through the media server** in every mode, since only it can send the cookie to the site (a player cannot).
