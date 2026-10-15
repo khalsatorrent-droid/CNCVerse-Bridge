@@ -337,8 +337,10 @@ object MediaServer {
         if (url.substringBefore('?').endsWith(".mpd", true) || url.contains(".mpd?", true)) return s // own DASH proxy
         val headers = s.behaviorHints?.proxyHeaders?.request.orEmpty()
         val hls = looksLikeHls(url, s.info?.linkType)
-        if (!loop && p.mode == "headers" && headers.isEmpty()) return s
-        if (!loop && p.mode == "hls" && headers.isEmpty() && !hls) return s
+        // A site whose Cloudflare check was solved: only this server can send the saved cookie + browser User-Agent, so its links are taken over in every mode
+        val needsCf = !loop && runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(host) }.getOrNull() != null
+        if (!loop && p.mode == "headers" && headers.isEmpty() && !needsCf) return s
+        if (!loop && p.mode == "hls" && headers.isEmpty() && !hls && !needsCf) return s
         if (hls && !p.cacheHls) return s
         if (!hls && !p.cacheFiles) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s

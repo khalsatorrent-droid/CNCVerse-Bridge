@@ -76,6 +76,7 @@ actual class PluginLoader(private val context: Context) {
 
             val newOk = existingOk.newBuilder()
                 .dns(com.cncverse.stremiobridge.network.AdaptiveHostDns)
+                .addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
                 .fastFallback(true)
                 .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(35, java.util.concurrent.TimeUnit.SECONDS)

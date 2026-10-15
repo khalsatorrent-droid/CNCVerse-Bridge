@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Default sort: fast links first inside each resolution.** fsl, then pixeldrain, then workers, then adaptive m3u8 (fast but lower quality), then other direct links; similar links stay together. The resolution order is unchanged.
+- **Cloudflare cookies are actually used now.** The saved cookie (and the User-Agent it was solved with) is sent on every request of every extension to that site, not only for extensions that bring their own Cloudflare handling. A challenge on any site now lands in Settings -> Cloudflare checks so it can be solved ahead of time, and a refused cookie is dropped and the site marked expired.
+- **Links of sites with a saved Cloudflare cookie go through the media server** in every mode, since only it can send the cookie to the site (a player cannot).
+
 ## 1.5.29
 
 - **Sort grouping: fsl links are found by their name too.** Links whose address says nothing (`r2.dev`, `r2.cloudflarestorage.com`) but whose name says FSL ("Hub-Cloud[FSL Server]", "FSLv2 1080p") now go into the fsl group; other r2.dev / cloudflarestorage links join the workers group.

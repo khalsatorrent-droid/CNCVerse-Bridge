@@ -2001,7 +2001,7 @@ object StremioServer {
         val rank = profile.providerOrder.withIndex().associate { (i, n) -> n.lowercase() to i }
         // Sort keys are computed ONCE per stream: the size lookup is a text search and a sort
         // compares each stream about log2(n) times (6 ms -> well under 1 ms for 250 streams)
-        class Keyed(val stream: StremioStream, val providerRank: Int, val provider: String, val quality: Int, val sizeKey: Long, val kindRank: Int, val kindName: String)
+        class Keyed(val stream: StremioStream, val providerRank: Int, val provider: String, val quality: Int, val sizeKey: Long, val kindRank: Int, val kindName: String, val height: Int)
         val keyed = streams.map { st ->
             // The configure page lists extensions by display name ("4K HDHUB"); a stream's addon
             // label is often the plugin file name ("FourKHDHub"), so match on the display name
@@ -2009,16 +2009,19 @@ object StremioServer {
             // Largest first via a negated key; unknown size gets +1 so it sorts after every known one
             val sizeKey = if (!bySize) 0L else -(com.cncverse.stremiobridge.format.StreamVariables.sizeBytesOf(st) ?: -1L)
             val (kindRank, kindName) = linkKind(st)
-            Keyed(st, rank[provider] ?: Int.MAX_VALUE, provider, streamQualityRank(st), sizeKey, kindRank, kindName)
+            Keyed(st, rank[provider] ?: Int.MAX_VALUE, provider, streamQualityRank(st), sizeKey, kindRank, kindName, resolutionHeight(st) ?: 0)
         }
         val order = if (byProvider)
             compareBy<Keyed>({ it.providerRank }, { it.provider }, { -it.quality }, { it.sizeKey })
         else
-            // default: best quality first, inside a quality the similar links together (all fsl, all pixeldrain, all workers,
-            // other direct files by site, adaptive m3u8 last), then size / provider order inside each group
-            compareBy<Keyed>({ -it.quality }, { it.kindRank }, { it.kindName }, { it.sizeKey }, { it.providerRank })
+            // default: highest resolution first; inside a resolution the fast links come first (fsl, pixeldrain, workers,
+            // then adaptive m3u8), the rest after; similar links together, then quality / size / provider order inside each group
+            compareBy<Keyed>({ -it.height }, { speedTier(it.kindRank) }, { it.kindName }, { -it.quality }, { it.sizeKey }, { it.providerRank })
         return keyed.sortedWith(order).map { it.stream } // stable: ties keep their arrival order
     }
+
+    /** fsl, pixeldrain, workers = 0..2, adaptive m3u8 = 3 (fast but lower quality), other direct = 4, relay = 5, rest unchanged */
+    private fun speedTier(kindRank: Int): Int = when (kindRank) { 5 -> 3; 3 -> 4; 4 -> 5; else -> kindRank }
 
     private val HOST_RX = Regex("^https?://([^/:?#]+)", RegexOption.IGNORE_CASE)
     private val FSL_RX = Regex("fsl", RegexOption.IGNORE_CASE)
