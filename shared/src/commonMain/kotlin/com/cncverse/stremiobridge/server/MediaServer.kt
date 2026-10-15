@@ -149,10 +149,10 @@ object MediaServer {
         if (monitor?.isActive != true) monitor = scope.launch { while (true) { delay(MONITOR_MS); runCatching { checkPlayback() } } }
     }
     @Volatile private var monitor: kotlinx.coroutines.Job? = null
-    private const val MONITOR_MS = 20_000L
+    private const val MONITOR_MS = 5_000L
 
     /**
-     * Every 20 seconds: where is each player now? Files - the lowest position of the connections reading it; HLS - the last
+     * Every 5 seconds: where is each player now? Files - the lowest position of the connections reading it; HLS - the last
      * segment asked for. The read-ahead window after that position is topped up (a stopped downloader is started again, the
      * download is pointed at the first missing piece after the position, the next segments are queued).
      */
@@ -166,12 +166,20 @@ object MediaServer {
             val want = minOf(e.total, pos + ahead)
             if (e.have.firstGapFrom(maxOf(pos, e.floor)) >= want) continue // the window is full
             if (e.error != null && e.worker == null) e.error = null
+            // How much is already on disk, in one piece, right after the player? Less than an eighth of the window (and at least
+            // 8 MB) means the player is close to catching up: the download is pointed at the hole under it and every extra
+            // connection is brought back, so it does not have to wait for the sequential download to come round.
+            val contiguous = e.have.contiguousEnd(pos) - pos
+            val urgent = contiguous < maxOf(8L * 1_048_576L, minOf(ahead, 1L shl 30) / 8)
+            if (e.error != null && e.worker == null) e.error = null
             if (e.worker == null) { e.stop = false; ensureWorker(e) }
             else {
                 startBoosters(e)
-                if (e.have.contiguousEnd(pos) - pos < 2L * ChunkStore.CHUNK) e.focus = pos
+                if (urgent || contiguous < 2L * ChunkStore.CHUNK) e.focus = pos
             }
-            ServerState.info("[MediaServer] playback at ${pos / 1_048_576} MB of ${e.total / 1_048_576} MB: read-ahead topped up")
+            val line = "[MediaServer] playback at ${pos / 1_048_576} MB of ${e.total / 1_048_576} MB, ${contiguous / 1_048_576} MB ready ahead" +
+                if (urgent) " - catching up" else " - read-ahead topped up"
+            if (urgent) ServerState.info(line) else ServerState.debug(line)
         }
         for ((id, v) in hlsPlay) {
             if (now - v.third > 3 * 60_000L) { hlsPlay.remove(id); continue }

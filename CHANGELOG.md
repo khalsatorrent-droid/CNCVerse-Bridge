@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Media server checks the player every 5 seconds** (was 20) and, when less than an eighth of the read-ahead window is ready right after the playback position, points the download at the hole under the player and brings every extra connection back ("catching up" in the log), so playback does not wait for the sequential download to reach it. HLS segments after the current one are queued on the same beat.
+- **Cloudflare checks use the Raghav Nepu extension's logic:** a challenge is recognised by the `cf-mitigated` header, or by a 403 / 503 / 429 whose page says "Just a moment" / challenge-platform (not only by the Server header), the old challenge cookies (`cf_chl_rc_ni`, `cf_chl_prog`) are wiped before a new check, and a saved clearance is sent on every request to the site.
+- **Saved Cloudflare cookies reach more requests:** one clearance now serves every host of the same site (`cdn.`, `api.`, `www.`), and the link-quality and seek probes send it too.
+- **README** now says this is a personal fork, credits the original developer, lists what this fork adds, and carries the license and "made with AI, no responsibility" notes; the original project's community and donation links are gone.
 ## 1.5.33
 
 - **Links that arrive JSON-escaped now play.** Some extensions (Anizone) hand back a link like `https:\/\/host\/path\/master.m3u8` with backslashes. It was neither recognised as an m3u8 nor opened by players; the backslashes are removed as soon as the result comes in, so such links go through the media server like any other.

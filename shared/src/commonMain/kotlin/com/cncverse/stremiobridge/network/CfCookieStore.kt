@@ -45,7 +45,19 @@ object CfCookieStore {
             // cookies of "example.com" also serve "www.example.com"
             c = map.values.firstOrNull { h == it.host || h.endsWith("." + it.host) || it.host.endsWith("." + h) }
         }
+        if (c == null) {
+            // another host of the same site (cdn.example.com / api.example.com): one Cloudflare zone, one clearance
+            val apex = apexOf(h)
+            c = map.values.filter { apexOf(it.host) == apex }.maxByOrNull { it.savedAt }
+        }
         return c?.takeIf { now - it.savedAt < TTL_MS }
+    }
+
+    /** example.com for a.b.example.com, example.co.uk for a.example.co.uk. */
+    fun apexOf(host: String): String {
+        val l = host.lowercase().split('.')
+        return if (l.size > 2 && l[l.size - 2].length <= 3 && l.last().length == 2) l.takeLast(3).joinToString(".")
+        else l.takeLast(2).joinToString(".")
     }
 
     fun put(host: String, cookie: String, userAgent: String) {

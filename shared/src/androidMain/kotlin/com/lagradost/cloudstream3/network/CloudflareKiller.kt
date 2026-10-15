@@ -41,9 +41,7 @@ class CloudflareKiller : Interceptor {
             Thread({ if (sites.probe(host) == true) ServerState.info("Cloudflare: $host no longer shows a challenge") }, "cf-probe").apply { isDaemon = true }.start()
         }
 
-        val challenged = (response.code == 503 || response.code == 403 || response.code == 429) &&
-            (response.header("Server")?.let { it.contains("cloudflare", true) || it.contains("ddos-guard", true) } == true ||
-                response.header("cf-mitigated")?.contains("challenge", true) == true)
+        val challenged = com.cncverse.stremiobridge.network.CfDetect.isChallenge(response)
         if (challenged) {
             // The saved clearance did not work (expired / other UA / other IP): drop it and solve again
             if (saved != null) { com.cncverse.stremiobridge.network.CfCookieStore.forget(host); sites.noteExpired(host) }
@@ -111,10 +109,7 @@ class CloudflareKiller : Interceptor {
         return response
     }
 
-    private fun isChallenged(r: Response): Boolean =
-        (r.code == 503 || r.code == 403 || r.code == 429) &&
-            (r.header("Server")?.let { it.contains("cloudflare", true) || it.contains("ddos-guard", true) } == true ||
-                r.header("cf-mitigated")?.contains("challenge", true) == true)
+    private fun isChallenged(r: Response): Boolean = com.cncverse.stremiobridge.network.CfDetect.isChallenge(r)
 
     private fun triedBrowserHeaders(r: okhttp3.Request) = r.header("Sec-Fetch-Mode") != null && r.header("sec-ch-ua") != null
 
@@ -225,8 +220,10 @@ class CloudflareKiller : Interceptor {
                     val domains = (0..maxOf(0, parts.size - 2)).map { parts.drop(it).joinToString(".") }
                     domains.forEach { d ->
                         listOf("https://$d/", "https://$d").forEach { u ->
-                            CookieManager.getInstance().setCookie(u, "cf_clearance=; Max-Age=0; Path=/; Domain=$d")
-                            CookieManager.getInstance().setCookie(u, "cf_clearance=; Max-Age=0; Path=/; Domain=.$d")
+                            listOf("cf_clearance", "cf_chl_rc_ni", "cf_chl_prog").forEach { n ->
+                                CookieManager.getInstance().setCookie(u, "$n=; Max-Age=0; Path=/; Domain=$d")
+                                CookieManager.getInstance().setCookie(u, "$n=; Max-Age=0; Path=/; Domain=.$d")
+                            }
                         }
                     }
                     CookieManager.getInstance().flush()

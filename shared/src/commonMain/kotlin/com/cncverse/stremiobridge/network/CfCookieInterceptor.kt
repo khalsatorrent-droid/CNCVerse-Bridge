@@ -19,9 +19,7 @@ object CfCookieInterceptor : Interceptor {
             request = request.newBuilder().header("Cookie", saved.cookie).header("User-Agent", saved.userAgent).build()
         }
         val response = chain.proceed(request)
-        val challenged = (response.code == 503 || response.code == 403 || response.code == 429) &&
-            (response.header("Server")?.let { it.contains("cloudflare", true) || it.contains("ddos-guard", true) } == true ||
-                response.header("cf-mitigated")?.contains("challenge", true) == true)
+        val challenged = CfDetect.isChallenge(response)
         if (challenged) runCatching {
             if (saved != null && CfCookieStore.get(host)?.cookie == saved.cookie) { CfCookieStore.forget(host); CfSites.noteExpired(host) }
             else if (saved == null && CfSites.get(host)?.status != "SOLVED") CfSites.noteChallenge(host)

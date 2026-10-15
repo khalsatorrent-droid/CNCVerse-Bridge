@@ -40,6 +40,7 @@ object SeekProbe {
             .readTimeout(3, TimeUnit.SECONDS)
             .callTimeout(4, TimeUnit.SECONDS)
             .followRedirects(true)
+            .addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
             .build()
     }
 
