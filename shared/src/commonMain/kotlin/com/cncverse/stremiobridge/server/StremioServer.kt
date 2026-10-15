@@ -2203,7 +2203,16 @@ object StremioServer {
         fun clear() { searchCache.clear(); loadCache.clear() }
     }
 
-    private suspend fun buildStreams(type: String, id: String): List<StremioStream> {
+    /** Every extension's answer, with links that arrive JSON-escaped (`https:\/\/host\/x.m3u8`, seen from Anizone) put right. */
+    private suspend fun buildStreams(type: String, id: String): List<StremioStream> =
+        buildStreamsRaw(type, id).map { st ->
+            val u = st.url
+            if (u != null && (u.contains("\\/") || u.contains("\\u0026")))
+                st.copy(url = u.replace("\\/", "/").replace("\\u0026", "&").replace("\\u003d", "="))
+            else st
+        }
+
+    private suspend fun buildStreamsRaw(type: String, id: String): List<StremioStream> {
         val decoded = StremioIds.decode(id)
         if (decoded != null) {
             val (pluginKey, dataUrl) = decoded

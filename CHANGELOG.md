@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **Links that arrive JSON-escaped now play.** Some extensions (Anizone) hand back a link like `https:\/\/host\/path\/master.m3u8` with backslashes. It was neither recognised as an m3u8 nor opened by players; the backslashes are removed as soon as the result comes in, so such links go through the media server like any other.
 ## 1.5.32
 
 - **Sort: FSL links written in fancy letters are grouped too.** HubCloud names such as "𝗙𝗦𝗟 𝗦𝗲𝗿𝘃𝗲𝗿" (mathematical bold letters) were not recognised as FSL and fell into the workers group; the letters are folded to plain ones before matching, and Cloudflare R2 links in a `/hub/` or `/hub2/` bucket count as FSL.
