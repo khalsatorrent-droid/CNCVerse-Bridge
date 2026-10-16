@@ -468,7 +468,8 @@ object StreamVariables {
     private val NAME_RES_RX = Regex("\\s-\\s(\\d{3,4})p\\s*$")
 
     fun resolutionOf(stream: StremioStream): String? =
-        resolutionFrom(stream.info?.quality, stream.info?.linkName ?: stream.title)
+        // the file name in the link ("Movie.2026.480P.Web-Dl.mkv") is the link's own text too
+        resolutionFrom(stream.info?.quality, stream.info?.linkName ?: stream.title, fileNameOf(stream))
             // the bridge itself writes "<extension> - 720p" as the last line of the name: reliable when nothing else says
             ?: stream.name?.substringAfterLast('\n')?.let { NAME_RES_RX.find(it)?.groupValues?.get(1)?.let { r -> r + "p" } }
 
@@ -611,7 +612,8 @@ object StreamVariables {
 
         if (cleaned.isEmpty()) return emptyList()
         if (cleaned.size <= 3) return cleaned
-        return cleaned.take(3) + "+${cleaned.size - 3} more"
+        // dozens of tracks (a hundred languages from OpenSubtitles) are just counted, not listed
+        return listOf("${cleaned.size} languages")
     }
 }
 
