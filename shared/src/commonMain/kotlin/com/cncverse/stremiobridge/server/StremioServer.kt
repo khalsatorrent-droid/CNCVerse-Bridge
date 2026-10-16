@@ -207,6 +207,8 @@ object StremioServer {
         val subtitleOnlyPreferred: Boolean = false,
         /** Moves every subtitle cue by this many milliseconds (positive = later). */
         val subtitleOffsetMs: Int = 0,
+        /** Subtitles are served by the bridge with a clean look: bold white text, black outline, no box (players that honour WebVTT styling). */
+        val subtitleStyle: Boolean = true,
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
         /** Order inside a group: default | size (largest first, unknown size last). */
@@ -736,8 +738,10 @@ object StremioServer {
                 val u = call.request.queryParameters["u"]
                 val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
                 if (u.isNullOrBlank() || !u.startsWith("http", true)) return@get call.respond(HttpStatusCode.BadRequest)
-                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchShifted(u, ms) }
-                if (text == null) call.respond(HttpStatusCode.BadGateway)
+                val style = call.request.queryParameters["st"] == "1"
+                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchShifted(u, ms, style) }
+                // could not be read here: the player gets the original file instead of nothing
+                if (text == null) call.respondRedirect(u)
                 else call.respondText(text, ContentType.parse("text/vtt; charset=utf-8"))
             }
 

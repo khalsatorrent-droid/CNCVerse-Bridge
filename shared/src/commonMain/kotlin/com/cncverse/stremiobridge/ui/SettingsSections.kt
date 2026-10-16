@@ -355,6 +355,7 @@ fun StreamsCard() {
             singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         SwitchRow("Only those subtitle languages", "Other languages are dropped (kept if none match)", p.subtitleOnlyPreferred) { update(p.copy(subtitleOnlyPreferred = it)) }
+        SwitchRow("Clean subtitle look", "Bold white text with a black outline and no box (only players that follow WebVTT styling)", p.subtitleStyle) { update(p.copy(subtitleStyle = it)) }
         OutlinedTextField(
             value = subOffset, onValueChange = { subOffset = it.filter { c -> c.isDigit() || c == '-' }.take(6) },
             label = { Text("Subtitle delay (ms, negative = earlier)") }, placeholder = { Text("0") },

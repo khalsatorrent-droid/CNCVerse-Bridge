@@ -42,19 +42,19 @@ object SubtitleTools {
             out = out.sortedBy(rank) // stable: the original order stays inside a language
         }
         val ms = p.subtitleOffsetMs
-        if (ms != 0) out = out.map { s -> shiftedUrl(s.url, ms, base)?.let { s.copy(url = it) } ?: s }
+        if (ms != 0 || p.subtitleStyle) out = out.map { s -> shiftedUrl(s.url, ms, p.subtitleStyle, base)?.let { s.copy(url = it) } ?: s }
         return out
     }
 
-    private fun shiftedUrl(url: String, ms: Int, base: String): String? {
+    private fun shiftedUrl(url: String, ms: Int, style: Boolean, base: String): String? {
         if (!url.startsWith("http", true)) return null
         val ext = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase()
         if (ext in setOf("ass", "ssa", "sub", "idx", "ttml", "dfxp")) return null // formats whose times are not shifted here
-        return base.trimEnd('/') + "/subshift?ms=$ms&u=" + URLEncoder.encode(url, "UTF-8")
+        return base.trimEnd('/') + "/subshift?ms=$ms&st=${if (style) 1 else 0}&u=" + URLEncoder.encode(url, "UTF-8")
     }
 
     /** The file at [url] as WebVTT with every cue moved by [ms] (SRT is converted); null when it cannot be read. */
-    fun fetchShifted(url: String, ms: Int): String? {
+    fun fetchShifted(url: String, ms: Int, style: Boolean): String? {
         val bytes = runCatching {
             client.newCall(okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()).execute().use { r ->
                 if (!r.isSuccessful) return null
@@ -65,7 +65,18 @@ object SubtitleTools {
             }
         }.getOrNull() ?: return null
         val text = decode(bytes).removePrefix("﻿")
-        return shiftText(text, ms)
+        val shifted = shiftText(text, ms)
+        return if (style) withStyle(shifted) else shifted
+    }
+
+    /** Cue look for players that honour WebVTT styling: bold white text, black outline, no box behind it. */
+    private const val CUE_STYLE = "STYLE\n::cue {\n  color: #ffffff;\n  background-color: transparent;\n  font-weight: bold;\n" +
+        "  text-shadow: -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000, 1px 1px 2px #000;\n}\n\n"
+
+    internal fun withStyle(vtt: String): String {
+        val i = vtt.indexOf("\n\n")
+        if (i < 0) return vtt
+        return vtt.substring(0, i + 2) + CUE_STYLE + vtt.substring(i + 2)
     }
 
     internal fun decode(b: ByteArray): String {

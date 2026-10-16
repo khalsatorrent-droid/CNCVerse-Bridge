@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Subtitles:** set your subtitle languages (Settings > Streams, e.g. `English, Hindi`) and they come first in every list; "Only those subtitle languages" drops the rest (kept when none match). Copies of the same subtitle file from different extensions are removed. A subtitle delay in milliseconds (negative = earlier) moves every cue: the bridge fetches the file, shifts it and serves it as WebVTT (SRT is converted; ASS files are left as they are).
+- **Subtitles:** set your subtitle languages (Settings > Streams, e.g. `English, Hindi`) and they come first in every list; "Only those subtitle languages" drops the rest (kept when none match). Copies of the same subtitle file from different extensions are removed. A subtitle delay in milliseconds (negative = earlier) moves every cue: the bridge fetches the file, shifts it and serves it as WebVTT (SRT is converted; ASS files are left as they are). "Clean subtitle look" (on by default) serves subtitles as WebVTT with bold white text, a black outline and no box, in players that follow WebVTT styling; if the file cannot be read here the player gets the original link.
 
 ## 1.5.37
 
