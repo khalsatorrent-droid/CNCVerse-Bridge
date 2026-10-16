@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **"FORCE REFRESH" entry shows the state of the search:** the first entry of every list now says how many results were found (and how many are shown), whether the search is complete or still running (`⏳ 15/22 source(s) done - reload the list`), and how many results each extension / upstream add-on found.
+- **Heavy sources no longer buffer (self-hosted PencariMovie / Telegram, NAS...):** a source on your home network, or one whose requests take over 1.5 s to start, gets at most 3 connections instead of 8, requests that end by themselves (64 MB, extra connections take 4 segments = 32 MB in one request) and is restarted for a refill only when the player is about to run dry. Eight parallel requests plus restarts used up the few workers of such a server (each request also starts a Telegram download), so the playback stalled.
+
 ## 1.5.35
 
 - **Media server refills earlier:** when half of the read-ahead window (it was an eighth) or less is ready after the player's position, every extra connection is brought back and the main download is pointed at the first missing piece after the ready data, so the window is full again long before the player reaches it. Checked every 5 seconds.

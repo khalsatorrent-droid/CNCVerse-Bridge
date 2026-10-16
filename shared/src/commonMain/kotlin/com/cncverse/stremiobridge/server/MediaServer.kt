@@ -175,7 +175,8 @@ object MediaServer {
             if (e.worker == null) { e.stop = false; ensureWorker(e) }
             else {
                 startBoosters(e)
-                if (urgent) e.focus = e.have.firstGapFrom(maxOf(pos, e.floor)).takeIf { it < want } ?: pos
+                // a heavy source takes seconds to start a request: it is restarted only when the player is about to run dry
+                if (urgent && (!isHeavy(e) || contiguous < 16L * 1_048_576L)) e.focus = e.have.firstGapFrom(maxOf(pos, e.floor)).takeIf { it < want } ?: pos
                 else if (contiguous < 2L * ChunkStore.CHUNK) e.focus = pos
             }
             val line = "[MediaServer] playback at ${pos / 1_048_576} MB of ${e.total / 1_048_576} MB, ${contiguous / 1_048_576} MB ready ahead" +
@@ -326,6 +327,34 @@ object MediaServer {
     }
 
     private fun hostOf(url: String): String = runCatching { java.net.URI(url).host }.getOrNull() ?: url
+
+    /**
+     * "Heavy" sources: a request costs the origin a lot (a self-hosted add-on that pulls the file from Telegram, a NAS...).
+     * Every request holds a worker of the origin for as long as it is open and takes seconds to start, so eight connections plus
+     * the restarts of a seek used up its workers and the playback stalled. Such a source gets few connections, long requests that
+     * end by themselves and fewer restarts. A host is heavy when it is on the local network, or when its requests take over
+     * [HEAVY_TTFB_MS] to start answering.
+     */
+    private val hostTtfb = ConcurrentHashMap<String, Long>()
+    private const val HEAVY_TTFB_MS = 1_500L
+    private const val HEAVY_CONNECTIONS = 3
+    /** Length of one request to a heavy source, and how many 8 MB segments an extra connection takes in one request. */
+    private const val HEAVY_REQUEST = 64L * 1024 * 1024
+    private const val HEAVY_SEGMENTS = 4
+
+    private fun noteTtfb(url: String, ms: Long) {
+        val h = hostOf(url)
+        hostTtfb.merge(h, ms) { old, new -> (old * 2 + new) / 3 }
+    }
+
+    private fun isHeavy(e: FileEntry): Boolean {
+        val h = hostOf(e.url)
+        return isPrivateHost(h) || (hostTtfb[h] ?: 0L) > HEAVY_TTFB_MS
+    }
+
+    /** Connections allowed for this file (main download included). */
+    private fun connectionsFor(e: FileEntry): Int =
+        if (isHeavy(e)) minOf(prefs.connections, HEAVY_CONNECTIONS) else prefs.connections
 
     private fun looksLikeHls(url: String, linkType: String?): Boolean =
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
@@ -702,7 +731,7 @@ object MediaServer {
     private const val SEG = 8L * 1024 * 1024
 
     private fun startBoosters(e: FileEntry) {
-        val extra = (prefs.connections - 1).coerceIn(0, 19)
+        val extra = (connectionsFor(e) - 1).coerceIn(0, 19)
         // also replaces single extra connections that ended after an error (not only when all of them are gone)
         while (true) {
             val cur = e.boosters.get()
@@ -733,6 +762,8 @@ object MediaServer {
                     Thread.sleep(200); continue
                 }
                 if (!e.ranges || e.total <= 0 || e.isPlaylist) break
+                // The source turned out to be a heavy one: surplus extra connections leave (a missing one is started again if needed)
+                if (e.boosters.get() > (connectionsFor(e) - 1).coerceIn(0, 19)) break
                 val ahead = prefs.readAheadMb * 1024L * 1024L
                 val from = maxOf(playPos(e), e.floor)
                 val to = if (ahead > 0) minOf(e.total, from + ahead) else e.total
@@ -743,15 +774,25 @@ object MediaServer {
                     val s1 = minOf(e.total, s0 + SEG)
                     if (e.have.contiguousEnd(s0) < s1 && e.claimed.add(i)) {
                         did = true
+                        // A heavy source starts slowly: take several neighbouring segments in ONE request
+                        val mine = mutableListOf(i)
+                        if (isHeavy(e)) {
+                            while (mine.size < HEAVY_SEGMENTS) {
+                                val k = mine.last() + 1
+                                if (k * SEG >= to || e.have.contiguousEnd(k * SEG) >= minOf(e.total, (k + 1) * SEG) || !e.claimed.add(k)) break
+                                mine.add(k)
+                            }
+                        }
+                        val end = minOf(e.total, (mine.last() + 1) * SEG)
                         try {
                             val w = wr ?: e.store.rw(true).also { wr = it }
-                            downloadSegment(e, client, s0, s1, buf, w)
+                            downloadSegment(e, client, s0, end, buf, w)
                             failures = 0
                         } catch (t: IOException) {
                             // a hiccup on one segment: this connection waits a moment and goes on (gives up after ten in a row)
                             if (++failures > 10) throw t
                             Thread.sleep(500L * failures)
-                        } finally { e.claimed.remove(i) }
+                        } finally { e.claimed.removeAll(mine.toSet()) }
                         idleSince = System.currentTimeMillis()
                         break
                     }
@@ -773,7 +814,9 @@ object MediaServer {
     private fun downloadSegment(e: FileEntry, client: okhttp3.OkHttpClient, s0: Long, s1: Long, buf: ByteArray, wr: ChunkStore.Rw) {
         val pos = e.have.firstGapFrom(s0)
         if (pos >= s1) return
+        val t0 = System.currentTimeMillis()
         client.newCall(requestFor(e.src, e.url, "bytes=$pos-${s1 - 1}")).execute().use { r ->
+            noteTtfb(e.url, System.currentTimeMillis() - t0)
             if (r.code != 206) return@use // ranges not honoured: the main connection copes
             val input = r.body?.byteStream() ?: return@use
             var off = parseStart(r.header("Content-Range")) ?: pos
@@ -838,9 +881,16 @@ object MediaServer {
                     if (pos >= e.total) pos = e.have.firstGapFrom(e.floor)
                     if (pos >= e.total) break // everything that is still needed is on disk
                 }
-                val range = if (!e.ready || e.ranges) (if (e.closedTotal > 0) "bytes=$pos-${e.closedTotal - 1}" else "bytes=$pos-") else null
+                val heavyEnd = if (e.ready && e.ranges && e.total > 0 && isHeavy(e)) minOf(e.total, pos + HEAVY_REQUEST) - 1 else -1L
+                val range = if (!e.ready || e.ranges) (when {
+                    heavyEnd >= pos -> "bytes=$pos-$heavyEnd"
+                    e.closedTotal > 0 -> "bytes=$pos-${e.closedTotal - 1}"
+                    else -> "bytes=$pos-"
+                }) else null
                 if (e.ready && !e.ranges && pos != 0L) { pos = 0L } // origin cannot seek: only a straight download works
+                val t0 = System.currentTimeMillis()
                 client.newCall(requestFor(e.src, e.url, range)).execute().use { r ->
+                    noteTtfb(e.url, System.currentTimeMillis() - t0)
                     if (r.code != 200 && r.code != 206) throw IOException("HTTP ${r.code} from the source")
                     if (!e.ready) {
                         // A 200 to a range request: the origin may still seek (it only answered "bytes=0-" with the whole
@@ -898,6 +948,8 @@ object MediaServer {
                     while (!e.stop) {
                         val f = e.focus
                         if (f >= 0 && e.ranges && f != off && e.have.contiguousEnd(f) == f) break // a seek: reconnect there
+                        // A heavy source's request ends by itself after HEAVY_REQUEST (the first one is open-ended: it is cut here)
+                        if (e.ranges && off - startAt >= HEAVY_REQUEST && isHeavy(e)) break
                         // Do not run far past what is being watched
                         val ahead = prefs.readAheadMb * 1024L * 1024L
                         // An origin that cannot seek is downloaded completely, at full speed: stopping would mean starting over

@@ -935,7 +935,7 @@ object StremioServer {
                     // "Support the project" entry on top, only above real results (can be hidden in the app)
                     val withSupport = if (p.showSupport && list.isNotEmpty()) listOf(SUPPORT_STREAM) + list else list
                     // "Refresh results" button first (it is not a video: it opens a page in the browser)
-                    if (p.showRefresh) listOf(refreshStream(type, id)) + withSupport else withSupport
+                    if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size)) + withSupport else withSupport
                 }
                 .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = subs.map { it.copy(lang = com.cncverse.stremiobridge.format.SubtitleLangs.normalize(it.lang)) }) } ?: s }
 
@@ -1094,11 +1094,28 @@ object StremioServer {
 
     private val lastRefresh = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    private fun refreshStream(type: String, id: String) = StremioStream(
-        name = "🔄 FORCE REFRESH",
-        title = "⚡ Click to clear the saved results of this title and search again - then reload the list (not a video)",
-        url = mediaBase() + "/refresh/" + java.net.URLEncoder.encode(type, "UTF-8") + "/" + java.net.URLEncoder.encode(id, "UTF-8"),
-    )
+    private fun refreshStream(type: String, id: String, found: Int, shown: Int): StremioStream {
+        val st = searchStatus["$type:$id"]
+        val perSource = st?.counts?.entries?.filter { it.value > 0 }?.sortedByDescending { it.value }
+        val total = maxOf(found, st?.counts?.values?.sum() ?: 0)
+        val head = "🔄 FORCE REFRESH • $total result(s) found" + (if (shown != total) ", $shown shown" else "")
+        val state = when {
+            st == null -> "📦 Saved results (no live search state): reload if something is missing"
+            st.finished -> "✅ Search complete: all ${st.total} source(s) answered"
+            else -> "⏳ Search still running: ${st.done.get()}/${st.total} source(s) done - reload the list in a few seconds"
+        }
+        val sources = when {
+            st == null || perSource == null -> ""
+            perSource.isEmpty() -> "\nNo source has found anything yet"
+            else -> "\n" + perSource.joinToString(" • ") { "${it.key}: ${it.value}" } +
+                (st.counts.size - perSource.size).takeIf { it > 0 }?.let { " • $it with none" }.orEmpty()
+        }
+        return StremioStream(
+            name = head,
+            title = "$state$sources\n⚡ Click here to clear the saved results of this title and search again (not a video)",
+            url = mediaBase() + "/refresh/" + java.net.URLEncoder.encode(type, "UTF-8") + "/" + java.net.URLEncoder.encode(id, "UTF-8"),
+        )
+    }
 
     /** Removes everything saved for this title (lists, extension searches) and starts a complete new search that fills the cache again. */
     private suspend fun ApplicationCall.respondRefresh() {
@@ -2134,6 +2151,14 @@ object StremioServer {
     private val PROVIDER_TIMEOUT_MS = 80_000L
     private val streamSearchScope = CoroutineScope(pluginDispatcher + SupervisorJob())
 
+    /** Live state of one title's search: how many sources there are, how many finished, what each one found. */
+    private class SearchStatus(val total: Int) {
+        val done = java.util.concurrent.atomic.AtomicInteger()
+        val counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+        @Volatile var finished = false
+    }
+    private val searchStatus = java.util.concurrent.ConcurrentHashMap<String, SearchStatus>()
+
     /**
      * Short-lived TTL cache for [search] and [load] results used in the generic
      * TMDB stream path. Avoids redundant plugin calls for the same title when
@@ -2369,6 +2394,9 @@ object StremioServer {
                 val publish = {
                     com.cncverse.stremiobridge.cache.StreamCacheManager.put(aggCacheKey, sortStreamsByQuality(accumulated))
                 }
+                val status = SearchStatus(activePlugins.size + UpstreamAddons.active().size)
+                if (searchStatus.size > 100) searchStatus.keys.take(50).forEach { searchStatus.remove(it) }
+                searchStatus["$type:$id"] = status
                 val jobs = activePlugins.map { api ->
                     streamSearchScope.launch {
                         sem.withPermit {
@@ -2376,6 +2404,7 @@ object StremioServer {
                                 try {
                                     val streams = buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget)
                                     accumulated.addAll(streams)
+                                    status.counts[api.name] = streams.size
                                 } catch (e: Throwable) {
                                     // Cancelled by the bridge (request gone / 45 s stop): not the provider's failure
                                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -2396,6 +2425,7 @@ object StremioServer {
                             try {
                                 val got = UpstreamAddons.fetch(up, type, id)
                                 accumulated.addAll(got)
+                                status.counts[up.name] = got.size
                                 ServerState.info("[Upstream] ${up.name}: ${got.size} stream(s)")
                             } catch (e: Throwable) {
                                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -2405,6 +2435,9 @@ object StremioServer {
                         if (answered.get() && accumulated.isNotEmpty()) publish()
                     }
                 }
+
+                jobs.forEach { j -> j.invokeOnCompletion { status.done.incrementAndGet() } }
+                streamSearchScope.launch { jobs.joinAll(); status.finished = true }
 
                 // The anime lookup missed its time budget: the extensions above were searched with the plain title only.
                 // When the lookup does finish (it keeps running detached), search every extension again with all the
