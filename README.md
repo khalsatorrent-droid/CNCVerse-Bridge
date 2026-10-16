@@ -4,7 +4,7 @@ CNCVerse Bridge runs Cloudstream extensions as a Stremio / Nuvio add-on on your 
 
 - **Media server:** links that need headers, a Referer or cookies are downloaded by the device, kept on disk and served to the player with seeking and a read-ahead buffer, so playback keeps going while the source is slow. HLS playlists and segments are cached too.
 - **Better lists:** sorted by real resolution, then fast links first (FSL, Pixeldrain, workers, HLS), with similar links grouped. Names keep their full details; dead and non-seekable links are hidden.
-- **FORCE REFRESH:** the first entry of every list clears the saved results of a title and searches again.
+- **FORCE REFRESH:** the first entry of every list shows how many results were found, how many each extension found and whether the search is still running; click it to clear the saved results of a title and search again.
 - **Anime:** every known title name is searched, with season and episode numbers translated between databases; hardsub / dub / softsub are labelled.
 - **Cloudflare:** checks are solved once in a WebView and the cookie is reused for later requests.
 - **Upstream add-ons:** merge another Stremio add-on, including self-hosted ones on your home network, which are served through the bridge so they play away from home.
@@ -89,15 +89,13 @@ The app downloads `cloudflared` on first use.
 
 ---
 
-## Changes since the fork
+## What this fork adds
 
-What this fork adds or fixes compared with the original CNCVerse Bridge (it forked on 10 Oct 2026; releases 1.2.0 → latest). The full per-release list is in [CHANGELOG.md](CHANGELOG.md).
+New features compared with the original CNCVerse Bridge (it forked on 10 Oct 2026; releases 1.2.0 → 1.6.0). Bug fixes are not listed here; the full per-release list is in [CHANGELOG.md](CHANGELOG.md).
 
-### New features
-
-- **Media server** - links that need a Referer / cookies / headers are downloaded by the device with those headers, cached on disk and served to the player with seeking while the download runs. HLS playlists and segments are cached and fetched ahead; links are signed (no open proxy). Files are kept in 2 MB pieces and only a window around the playing position stays on disk; read-ahead up to 2 GB (default 512 MB), cache up to 5 GB (default 2 GB), up to 8 parallel connections per file. The playback position is checked every 5 s; when half of the read-ahead window or less is ready, every connection is brought back to refill it. Many non-seekable links (Pixeldrain mirrors and others) are made seekable; extension-local m3u8 links (GoTaku hardsub and similar) are cached on the device.
-- **Streams and sorting** - results are sorted by real resolution ("Hide links below", default 720p); adaptive HLS links get their real resolution (or their best rendition); every link shows where it came from (matched extension title, file name, episode used); Sub / Dub / Hardsub labels for anime with hardsub first and an *Anime audio* setting; identical links listed once; new formatter fields and reworked default layouts; Upstream add-on links keep their own names.
-- **FORCE REFRESH entry** - first entry of every list: clears the saved results of that title and searches again, to get rid of stale results (can be hidden in Settings).
+- **Media server** - links that need a Referer / cookies / headers are downloaded by the device with those headers, cached on disk and served to the player with seeking while the download runs. HLS playlists and segments are cached and fetched ahead; links are signed (no open proxy). Files are kept in 2 MB pieces and only a window around the playing position stays on disk; read-ahead up to 2 GB (default 512 MB), cache up to 5 GB (default 2 GB), up to 8 parallel connections per file (3 for heavy sources such as a self-hosted Telegram server or a NAS on the home network, with longer requests and fewer restarts so their few workers are not used up). The playback position is checked every 5 s; when half of the read-ahead window or less is ready, every connection is brought back to refill it. Many non-seekable links (Pixeldrain mirrors and others) are made seekable; extension-local m3u8 links (GoTaku hardsub and similar) are cached on the device.
+- **Streams and sorting** - results are sorted by real resolution ("Hide links below", default 720p); adaptive HLS links get their real resolution (or their best rendition); every link shows where it came from (matched extension title, file name, episode used); the resolution is also read from the file name in the link; long subtitle lists are counted; Sub / Dub / Hardsub labels for anime (not shown for other titles) with hardsub first and an *Anime audio* setting; identical links listed once; new formatter fields and reworked default layouts; Upstream add-on links keep their own names.
+- **FORCE REFRESH entry** - first entry of every list: shows the number of results found (and shown), how many each extension / upstream add-on found, and whether the search is complete or still running (so you know if a reload is needed); click it to clear the saved results of that title and search again (can be hidden in Settings).
 - **Anime** - every known name of a show (AniList, Kitsu, MyAnimeList, TMDB) is searched with fuzzy matching and season checks; TMDB season / episode numbers are translated to AniList numbers; faster lookup that no longer cuts the search short.
 - **Cloudflare and network** - Cloudflare checks are solved in a hidden WebView (shown in a window when you need to tap), the cookie is saved with its User-Agent and reused; sites with a challenge are queued and listed in Settings with their status; real DNS-over-HTTPS fallback (Cloudflare, Google, Quad9); free Cloudflare quick tunnel without a token; optional **fixed link** through the pencarimovie relay (`<id>-tunnel.pencarimovie.com`) with a random per-device id and a reset button. Challenges are recognised the way the Raghav Nepu extension does (cf-mitigated header or the "Just a moment" page), the saved cookie is sent on every request to the site and shared by its other hosts, and the link probes use it too.
 - **Pixeldrain** - file links go through the fast mirror, and its redirect is resolved to the real CDN link before sharing.
@@ -106,19 +104,6 @@ What this fork adds or fixes compared with the original CNCVerse Bridge (it fork
 - **Backup & import** - every setting, repository and installed extension in one JSON file.
 - **Updates and releases** - update dialog that follows this fork's releases (Update / Later / Skip); a one-click Release workflow builds APK, MSI, EXE and DEB; a Check workflow compiles both apps and runs the tests on pull requests; six extension repositories are added by default; the Android server is kept alive (wake locks, battery-optimisation exemption, restart after swipe-away).
 - **Switches** - "Hide links that need headers", "Load the next episode in advance", "Show results once", "Show refresh results button", "Hide non-seekable / non-playable files".
-
-### Bugs fixed
-
-- Movies with no results (a cut-off emoji in a link name made the whole list fail to send); lists that failed to send are retried without subtitles.
-- "0 links" although extensions had found links; slow or empty answers in Nuvio (the search now runs on its own and keeps filling the cache).
-- Sorting by quality (the quality of each link was never passed on, so everything sorted alphabetically).
-- AnimePahe and other extensions with saved settings (settings were unreadable to them; the ksoup library was missing); anime searches that gave up after the first spelling.
-- Free tunnel failing on the second start, and the "api.trycloudflare.com" error.
-- Media server: TV buffering that never ended (several player connections overwrote one "last read" position), failed extra connections not being replaced, a probe at the end of the file pulling the download away, heavy cache-size checks.
-- Seekable links wrongly hidden by the non-seekable filter (the check ran before Pixeldrain links were switched to the fast mirror); Google Drive download-only links now recognised and hidden.
-- Cloudflare checks looping on a stale cookie.
-- GoTaku hardsub (extension-local) links starting a complete new search on every request, and being shown as dead links after a restart.
-- Log warnings: `authUser`, `AniListApi$CoverImage`, `WebViewResolver`.
 
 ## Building the APK on GitHub
 
@@ -134,13 +119,13 @@ Upload the project to a GitHub repository (branch `main`). The *Build APK* workf
 
 ### Releases
 
-Every release gets a new version number. Start **Actions -> Release -> Run workflow**: it raises the version by one patch step (`1.5.9` -> `1.5.10`, the Android `versionCode` +1; choose *minor* or *major* for a bigger step), turns `## Unreleased` in `CHANGELOG.md` into `## 1.5.10`, commits that, tags `v1.5.10`, builds everything with GitHub Actions (`.github/workflows/release.yml`) and publishes it. The release notes are the changelog section plus the commit list, so **write what changed under `## Unreleased` in `CHANGELOG.md` before releasing**.
+Every release gets a new version number. Start **Actions -> Release -> Run workflow**: it raises the version by one patch step (`1.6.0` -> `1.6.1`, the Android `versionCode` +1; choose *minor* or *major* for a bigger step), turns `## Unreleased` in `CHANGELOG.md` into `## 1.6.1`, commits that, tags `v1.6.1`, builds everything with GitHub Actions (`.github/workflows/release.yml`) and publishes it. The release notes are the changelog section plus the commit list, so **write what changed under `## Unreleased` in `CHANGELOG.md` before releasing**.
 
 You can also bump by hand and push the tag yourself - the tag must match `version.properties`:
 
 ```bash
 scripts/bump-version.sh           # patch step; or: minor / major
-git commit -am "Release v1.5.10" && git tag v1.5.10 && git push origin main v1.5.10
+git commit -am "Release v1.6.1" && git tag v1.6.1 && git push origin main v1.6.1
 ```
 
 ### Updates inside the app
