@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Clean subtitle look now works in more players:** with "Clean subtitle look" on, subtitles are handed to the player as ASS files (bold off-white text, thin dark outline and soft shadow, bottom centre, no box) instead of WebVTT with a `::cue` style, which Nuvio and other players ignore. Timing offset and language filters still apply.
+- **FORCE REFRESH entry:** "20 with none" now reads "20 found nothing" (that many of the sources answered but had no result for the title).
+
 ## 1.6.1
 
 - **Subtitles:** set your subtitle languages (Settings > Streams, e.g. `English, Hindi`) and they come first in every list; "Only those subtitle languages" drops the rest (kept when none match). Copies of the same subtitle file from different extensions are removed. A subtitle delay in milliseconds (negative = earlier) moves every cue: the bridge fetches the file, shifts it and serves it as WebVTT (SRT is converted; ASS files are left as they are). "Clean subtitle look" (on by default) serves subtitles as WebVTT with bold white text, a black outline and no box, in players that follow WebVTT styling; if the file cannot be read here the player gets the original link.
