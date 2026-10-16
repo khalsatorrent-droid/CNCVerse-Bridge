@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.37
 
 - **The real resolution is shown instead of "Auto":** a link whose own label carries no resolution (HubCloud / Driveseed style `[WEB-DL] [392.69MB]`) now takes it from the file name in its address (`...480P.Web-Dl...mkv`), so the title, sorting and the resolution filters see 480p / 720p.
 - **No more subtitle spam:** a result with more than three subtitle languages says `Subs: 63 languages` instead of listing three and "+60 more".
