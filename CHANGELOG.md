@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.3
 
 - **"Clean subtitle look" removed:** Nuvio and most players draw subtitles in their own style, so the option did nothing useful. Subtitles are only re-served by the bridge when a delay is set; set the look in the player's own subtitle settings.
 
