@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The real resolution is shown instead of "Auto":** a link whose own label carries no resolution (HubCloud / Driveseed style `[WEB-DL] [392.69MB]`) now takes it from the file name in its address (`...480P.Web-Dl...mkv`), so the title, sorting and the resolution filters see 480p / 720p.
+- **No more subtitle spam:** a result with more than three subtitle languages says `Subs: 63 languages` instead of listing three and "+60 more".
+
 ## 1.5.36
 
 - **"FORCE REFRESH" entry shows the state of the search:** the first entry of every list now says how many results were found (and how many are shown), whether the search is complete or still running (`⏳ 15/22 source(s) done - reload the list`), and how many results each extension / upstream add-on found.
