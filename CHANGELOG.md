@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **"Clean subtitle look" removed:** Nuvio and most players draw subtitles in their own style, so the option did nothing useful. Subtitles are only re-served by the bridge when a delay is set; set the look in the player's own subtitle settings.
+
 ## 1.6.2
 
 - **Clean subtitle look now works in more players:** with "Clean subtitle look" on, subtitles are handed to the player as ASS files (bold off-white text, thin dark outline and soft shadow, bottom centre, no box) instead of WebVTT with a `::cue` style, which Nuvio and other players ignore. Timing offset and language filters still apply.

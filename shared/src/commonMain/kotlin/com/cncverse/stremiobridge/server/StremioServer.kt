@@ -207,8 +207,6 @@ object StremioServer {
         val subtitleOnlyPreferred: Boolean = false,
         /** Moves every subtitle cue by this many milliseconds (positive = later). */
         val subtitleOffsetMs: Int = 0,
-        /** Subtitles are served by the bridge with a clean look: bold white text, black outline, no box (players that honour WebVTT styling). */
-        val subtitleStyle: Boolean = true,
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
         /** Order inside a group: default | size (largest first, unknown size last). */
@@ -733,16 +731,15 @@ object StremioServer {
                 LocalRelay.handle(call, port, call.parameters.getAll("path").orEmpty().joinToString("/"), call.request.queryString())
             }
 
-            // Subtitle with a timing offset / the clean look: the file is fetched here, moved and handed out as WebVTT (clean look: ASS)
-            for (subPath in listOf("/subshift", "/subshift.ass")) get(subPath) {
+            // Subtitle with a timing offset: the file is fetched here, moved and handed out as WebVTT
+            get("/subshift") {
                 val u = call.request.queryParameters["u"]
                 val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
                 if (u.isNullOrBlank() || !u.startsWith("http", true)) return@get call.respond(HttpStatusCode.BadRequest)
-                val style = call.request.queryParameters["st"] == "1"
-                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchShifted(u, ms, style) }
+                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchShifted(u, ms) }
                 // could not be read here: the player gets the original file instead of nothing
                 if (text == null) call.respondRedirect(u)
-                else call.respondText(text, ContentType.parse(if (style) "text/x-ssa; charset=utf-8" else "text/vtt; charset=utf-8"))
+                else call.respondText(text, ContentType.parse("text/vtt; charset=utf-8"))
             }
 
             // ── Media server: files and HLS cached on this device, then served to the player ──
