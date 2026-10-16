@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.35
 
 - **Media server refills earlier:** when half of the read-ahead window (it was an eighth) or less is ready after the player's position, every extra connection is brought back and the main download is pointed at the first missing piece after the ready data, so the window is full again long before the player reaches it. Checked every 5 seconds.
 ## 1.5.34
