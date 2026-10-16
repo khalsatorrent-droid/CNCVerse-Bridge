@@ -5,6 +5,7 @@ CNCVerse Bridge runs Cloudstream extensions as a Stremio / Nuvio add-on on your 
 - **Media server:** links that need headers, a Referer or cookies are downloaded by the device, kept on disk and served to the player with seeking and a read-ahead buffer, so playback keeps going while the source is slow. HLS playlists and segments are cached too.
 - **Better lists:** sorted by real resolution, then fast links first (FSL, Pixeldrain, workers, HLS), with similar links grouped. Names keep their full details; dead and non-seekable links are hidden.
 - **FORCE REFRESH:** the first entry of every list shows how many results were found, how many each extension found and whether the search is still running; click it to clear the saved results of a title and search again.
+- **Subtitles:** your languages first (or only), duplicates removed, optional timing delay.
 - **Anime:** every known title name is searched, with season and episode numbers translated between databases; hardsub / dub / softsub are labelled.
 - **Cloudflare:** checks are solved once in a WebView and the cookie is reused for later requests.
 - **Upstream add-ons:** merge another Stremio add-on, including self-hosted ones on your home network, which are served through the bridge so they play away from home.

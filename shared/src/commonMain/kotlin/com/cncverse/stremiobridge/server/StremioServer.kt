@@ -201,6 +201,12 @@ object StremioServer {
         val maxStreamsPerResolution: Int = 0,
         /** Streams go out without subtitle tracks and /subtitles answers empty. */
         val hideSubtitles: Boolean = false,
+        /** Subtitle languages in order of preference ("English, Hindi"); empty = leave the order as it is. */
+        val subtitleLangs: String = "",
+        /** Only those languages (unless none of the tracks match). */
+        val subtitleOnlyPreferred: Boolean = false,
+        /** Moves every subtitle cue by this many milliseconds (positive = later). */
+        val subtitleOffsetMs: Int = 0,
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
         /** Order inside a group: default | size (largest first, unknown size last). */
@@ -274,6 +280,8 @@ object StremioServer {
             minResolution = p.minResolution.takeIf { it in SELECTABLE_RESOLUTIONS } ?: "",
             animeAudio = p.animeAudio.takeIf { it in setOf("all", "sub", "dub") } ?: "all",
             providerOrder = p.providerOrder.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
+            subtitleLangs = p.subtitleLangs.trim().take(200),
+            subtitleOffsetMs = p.subtitleOffsetMs.coerceIn(-60_000, 60_000),
         )
         streamPrefs = cleaned
         val file = streamPrefsFile ?: return
@@ -723,6 +731,16 @@ object StremioServer {
                 LocalRelay.handle(call, port, call.parameters.getAll("path").orEmpty().joinToString("/"), call.request.queryString())
             }
 
+            // Subtitle with a timing offset: the file is fetched here, moved and handed out as WebVTT
+            get("/subshift") {
+                val u = call.request.queryParameters["u"]
+                val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
+                if (u.isNullOrBlank() || !u.startsWith("http", true)) return@get call.respond(HttpStatusCode.BadRequest)
+                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchShifted(u, ms) }
+                if (text == null) call.respond(HttpStatusCode.BadGateway)
+                else call.respondText(text, ContentType.parse("text/vtt; charset=utf-8"))
+            }
+
             // ── Media server: files and HLS cached on this device, then served to the player ──
             get("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
             head("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
@@ -937,7 +955,7 @@ object StremioServer {
                     // "Refresh results" button first (it is not a video: it opens a page in the browser)
                     if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size)) + withSupport else withSupport
                 }
-                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = subs.map { it.copy(lang = com.cncverse.stremiobridge.format.SubtitleLangs.normalize(it.lang)) }) } ?: s }
+                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, mediaBase())) } ?: s }
 
             out
         } catch (e: Throwable) {
@@ -1177,8 +1195,7 @@ object StremioServer {
             return
         }
         val streams = withContext(pluginDispatcher) { buildStreams(type, id) }
-        val subtitles = streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }
-            .map { it.copy(lang = com.cncverse.stremiobridge.format.SubtitleLangs.normalize(it.lang)) }
+        val subtitles = SubtitleTools.process(streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }, streamPrefs, mediaBase())
 
         respond(StremioSubtitleResponse(subtitles))
     }

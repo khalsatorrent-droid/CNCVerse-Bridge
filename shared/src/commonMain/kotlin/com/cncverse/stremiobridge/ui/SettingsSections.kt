@@ -317,6 +317,7 @@ fun StreamsCard() {
     var minGb by remember { mutableStateOf(p.minSizeGb.takeIf { it > 0 }?.toString().orEmpty()) }
     var maxGb by remember { mutableStateOf(p.maxSizeGb.takeIf { it > 0 }?.toString().orEmpty()) }
     var maxPer by remember { mutableStateOf(p.maxStreamsPerResolution.takeIf { it > 0 }?.toString().orEmpty()) }
+    var subOffset by remember { mutableStateOf(p.subtitleOffsetMs.takeIf { it != 0 }?.toString().orEmpty()) }
     var showOrder by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf<String?>(null) }
     fun update(n: StremioServer.StreamPrefs) { p = n; saved = null }
@@ -348,6 +349,17 @@ fun StreamsCard() {
             update(p.copy(filterNonSeekable = it))
         }
         SwitchRow("Hide subtitles", "Streams go out without subtitle tracks", p.hideSubtitles) { update(p.copy(hideSubtitles = it)) }
+        OutlinedTextField(
+            value = p.subtitleLangs, onValueChange = { update(p.copy(subtitleLangs = it)) },
+            label = { Text("Subtitle languages (best first)") }, placeholder = { Text("English, Hindi") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+        SwitchRow("Only those subtitle languages", "Other languages are dropped (kept if none match)", p.subtitleOnlyPreferred) { update(p.copy(subtitleOnlyPreferred = it)) }
+        OutlinedTextField(
+            value = subOffset, onValueChange = { subOffset = it.filter { c -> c.isDigit() || c == '-' }.take(6) },
+            label = { Text("Subtitle delay (ms, negative = earlier)") }, placeholder = { Text("0") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
         SwitchRow("Pixeldrain fast mirror", "Pixeldrain links go through cdn.pixeldrain.eu.cc (no download limit)", p.pixeldrainBypass) { update(p.copy(pixeldrainBypass = it)) }
         SwitchRow("Show \"refresh results\" button", "First entry of every list (not a video): clears the saved results of the title and searches again, to get rid of stale results (tap it, then reload the list)", p.showRefresh) { update(p.copy(showRefresh = it)) }
         SwitchRow("Show \"support the project\" entry", "One donate link on top of stream lists", p.showSupport) { update(p.copy(showSupport = it)) }
@@ -505,6 +517,7 @@ fun StreamsCard() {
                     maxStreamsPerResolution = maxPer.toIntOrNull() ?: 0,
                     minSizeGb = minGb.toDoubleOrNull() ?: 0.0,
                     maxSizeGb = maxGb.toDoubleOrNull() ?: 0.0,
+                    subtitleOffsetMs = subOffset.toIntOrNull() ?: 0,
                 )
             )
             p = StremioServer.streamPrefs

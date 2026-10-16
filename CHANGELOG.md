@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Subtitles:** set your subtitle languages (Settings > Streams, e.g. `English, Hindi`) and they come first in every list; "Only those subtitle languages" drops the rest (kept when none match). Copies of the same subtitle file from different extensions are removed. A subtitle delay in milliseconds (negative = earlier) moves every cue: the bridge fetches the file, shifts it and serves it as WebVTT (SRT is converted; ASS files are left as they are).
+
 ## 1.5.37
 
 - **The real resolution is shown instead of "Auto":** a link whose own label carries no resolution (HubCloud / Driveseed style `[WEB-DL] [392.69MB]`) now takes it from the file name in its address (`...480P.Web-Dl...mkv`), so the title, sorting and the resolution filters see 480p / 720p.
