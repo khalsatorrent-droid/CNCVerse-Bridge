@@ -79,7 +79,7 @@ object SubtitleTools {
         sb.append("[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n")
         sb.append("[V4+ Styles]\n")
         sb.append("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-        sb.append("Style: Default,Arial,50,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,40,40,38,1\n\n")
+        sb.append("Style: Default,Roboto,40,&H00F5F5F5,&H00F5F5F5,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,60,60,42,1\n\n")
         sb.append("[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
         for (block in vtt.split("\n\n")) {
             val lines = block.split('\n')

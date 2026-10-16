@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Clean subtitle look now works in more players:** with "Clean subtitle look" on, subtitles are handed to the player as ASS files (bold white text, black outline, no box) instead of WebVTT with a `::cue` style, which Nuvio and other players ignore. Timing offset and language filters still apply.
+- **Clean subtitle look now works in more players:** with "Clean subtitle look" on, subtitles are handed to the player as ASS files (bold off-white text, thin dark outline and soft shadow, bottom centre, no box - the look of the AnimePahe player) instead of WebVTT with a `::cue` style, which Nuvio and other players ignore. Timing offset and language filters still apply.
 - **FORCE REFRESH entry:** "20 with none" now reads "20 found nothing" (that many of the sources answered but had no result for the title).
 
 ## 1.6.1
