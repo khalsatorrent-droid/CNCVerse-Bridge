@@ -50,10 +50,11 @@ object SubtitleTools {
         if (!url.startsWith("http", true)) return null
         val ext = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase()
         if (ext in setOf("ass", "ssa", "sub", "idx", "ttml", "dfxp")) return null // formats whose times are not shifted here
-        return base.trimEnd('/') + "/subshift?ms=$ms&st=${if (style) 1 else 0}&u=" + URLEncoder.encode(url, "UTF-8")
+        // the clean look is an ASS file (the address ends in .ass so players pick the right reader); without it WebVTT stays
+        return base.trimEnd('/') + (if (style) "/subshift.ass" else "/subshift") + "?ms=$ms&st=${if (style) 1 else 0}&u=" + URLEncoder.encode(url, "UTF-8")
     }
 
-    /** The file at [url] as WebVTT with every cue moved by [ms] (SRT is converted); null when it cannot be read. */
+    /** The file at [url] with every cue moved by [ms]: WebVTT, or - with [style], the clean look - an ASS file; null when it cannot be read. */
     fun fetchShifted(url: String, ms: Int, style: Boolean): String? {
         val bytes = runCatching {
             client.newCall(okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()).execute().use { r ->
@@ -66,7 +67,48 @@ object SubtitleTools {
         }.getOrNull() ?: return null
         val text = decode(bytes).removePrefix("﻿")
         val shifted = shiftText(text, ms)
-        return if (style) withStyle(shifted) else shifted
+        return if (style) toAss(shifted) else shifted
+    }
+
+    /**
+     * Clean look: the cues as an ASS file with its own style (bold white text, black outline, no box), which players apply
+     * far more reliably than WebVTT's ::cue rule. Cues are read from the WebVTT text [shiftText] produced.
+     */
+    internal fun toAss(vtt: String): String {
+        val sb = StringBuilder()
+        sb.append("[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n")
+        sb.append("[V4+ Styles]\n")
+        sb.append("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
+        sb.append("Style: Default,Arial,50,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,40,40,38,1\n\n")
+        sb.append("[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+        for (block in vtt.split("\n\n")) {
+            val lines = block.split('\n')
+            val t = lines.indexOfFirst { "-->" in it }
+            if (t < 0) continue
+            val times = TIME.findAll(lines[t]).toList()
+            if (times.size < 2) continue
+            val text = lines.drop(t + 1).filter { it.isNotBlank() }.joinToString("\\N") { assText(it) }
+            if (text.isBlank()) continue
+            sb.append("Dialogue: 0,").append(assTime(toMs(times[0]))).append(',').append(assTime(toMs(times[1])))
+                .append(",Default,,0,0,0,,").append(text).append('\n')
+        }
+        return sb.toString()
+    }
+
+    private fun assTime(total: Long): String {
+        val t = maxOf(0L, total)
+        return "%d:%02d:%02d.%02d".format(t / 3_600_000, t / 60_000 % 60, t / 1000 % 60, t % 1000 / 10)
+    }
+
+    /** One cue line: italic / bold tags become ASS overrides, any other markup goes, entities are decoded. */
+    private fun assText(line: String): String {
+        // a literal brace would start an override block: replaced before the real overrides are added
+        var x = line.replace("{", "(").replace("}", ")")
+            .replace(Regex("(?i)<i>")) { "{\\i1}" }.replace(Regex("(?i)</i>")) { "{\\i0}" }
+            .replace(Regex("(?i)<b>")) { "{\\b1}" }.replace(Regex("(?i)</b>")) { "{\\b0}" }
+            .replace(Regex("(?i)<u>")) { "{\\u1}" }.replace(Regex("(?i)</u>")) { "{\\u0}" }
+        x = x.replace(Regex("<[^>]*>"), "")
+        return x.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
     }
 
     /** Cue look for players that honour WebVTT styling: bold white text, black outline, no box behind it. */

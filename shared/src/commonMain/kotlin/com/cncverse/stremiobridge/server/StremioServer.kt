@@ -733,8 +733,8 @@ object StremioServer {
                 LocalRelay.handle(call, port, call.parameters.getAll("path").orEmpty().joinToString("/"), call.request.queryString())
             }
 
-            // Subtitle with a timing offset: the file is fetched here, moved and handed out as WebVTT
-            get("/subshift") {
+            // Subtitle with a timing offset / the clean look: the file is fetched here, moved and handed out as WebVTT (clean look: ASS)
+            for (subPath in listOf("/subshift", "/subshift.ass")) get(subPath) {
                 val u = call.request.queryParameters["u"]
                 val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
                 if (u.isNullOrBlank() || !u.startsWith("http", true)) return@get call.respond(HttpStatusCode.BadRequest)
@@ -742,7 +742,7 @@ object StremioServer {
                 val text = withContext(Dispatchers.IO) { SubtitleTools.fetchShifted(u, ms, style) }
                 // could not be read here: the player gets the original file instead of nothing
                 if (text == null) call.respondRedirect(u)
-                else call.respondText(text, ContentType.parse("text/vtt; charset=utf-8"))
+                else call.respondText(text, ContentType.parse(if (style) "text/x-ssa; charset=utf-8" else "text/vtt; charset=utf-8"))
             }
 
             // ── Media server: files and HLS cached on this device, then served to the player ──
@@ -1130,7 +1130,7 @@ object StremioServer {
             st == null || perSource == null -> ""
             perSource.isEmpty() -> "\nNo source has found anything yet"
             else -> "\n" + perSource.joinToString(" • ") { "${it.key}: ${it.value}" } +
-                (st.counts.size - perSource.size).takeIf { it > 0 }?.let { " • $it with none" }.orEmpty()
+                (st.counts.size - perSource.size).takeIf { it > 0 }?.let { " • $it found nothing" }.orEmpty()
         }
         return StremioStream(
             name = head,
