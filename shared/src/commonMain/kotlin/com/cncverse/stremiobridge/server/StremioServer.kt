@@ -1400,6 +1400,9 @@ object StremioServer {
         periodicRefreshJob = manifestRefreshScope.launch {
             while (isActive) {
                 delay(HOME_REFRESH_INTERVAL_MS)
+                // the refresh asks 30+ extensions' sites at once: while a video is being streamed it waits (at most 15 min) so it does not compete for the connection
+                var waited = 0L
+                while (waited < 15 * 60_000L && MediaServer.isStreaming()) { delay(15_000L); waited += 15_000L }
                 runCatching { refreshManifestAndHomepages() }
                     .onFailure { ServerState.warn("Periodic home page refresh failed: ${it.message}") }
             }
