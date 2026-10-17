@@ -132,6 +132,7 @@ object WebSite {
     }
 
     private val DIGITS = Regex("[0-9]{1,10}")
+    private val ID_OK = Regex("tmdb:[0-9]{1,10}(:[0-9]{1,4}:[0-9]{1,4})?")
     private const val TV_PAGE = 120
     private val LEADING_SYMBOLS = Regex("^[^\\p{L}\\p{N}]+")
 
@@ -242,6 +243,14 @@ object WebSite {
                     }
                 })
             }.toString())
+        }
+        // Live results of a title: start=1 begins the search, later calls return the links found so far (and how far the search is)
+        get("/web/api/streams") {
+            if (!call.guard()) return@get
+            val type = call.request.queryParameters["type"]
+            val id = call.request.queryParameters["id"].orEmpty()
+            if ((type != "movie" && type != "series") || !ID_OK.matches(id)) return@get call.respond(HttpStatusCode.BadRequest)
+            call.json(StremioServer.webStreamsJson(type, id, call.request.queryParameters["start"] == "1"))
         }
         get("/web/api/title") {
             if (!call.guard()) return@get

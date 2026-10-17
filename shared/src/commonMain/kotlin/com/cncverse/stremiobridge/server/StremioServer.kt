@@ -24,6 +24,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -898,6 +899,48 @@ object StremioServer {
         val search = streamSearchScope.async(pluginDispatcher) { buildStreams(type, id) }
         val built = withTimeoutOrNull(RESPONSE_CAP_MS) { search.await() }
         if (built == null) ServerState.warn("[Request] $type/$id: search still running after ${RESPONSE_CAP_MS / 1000}s - answering now, results will be in the cache for the next try")
+        val prep = prepareStreams(type, id, built, requestStart)
+        val streams = prep.streams
+        val out = prep.out
+        val safeOut = prep.safeOut
+        val p = streamPrefs
+        try {
+            respond(StremioStreamResponse(safeOut))
+        } catch (e: Throwable) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            ServerState.warn("[Request] $type/$id: sending the list failed (${e.javaClass.simpleName}: ${e.message}) - sending it without subtitles")
+            respond(StremioStreamResponse(safeOut.map { it.copy(subtitles = null) }))
+        }
+        ServerState.info("[Request] sent ${out.size} link(s) for $type/$id (${(System.currentTimeMillis() - requestStart) / 1000.0}s)")
+        runCatching {
+            val parts = id.split(':')
+            val ep = if ((type == "series" || type == "anime") && parts.size >= 3) {
+                if (parts[0] == "kitsu" || parts[0] == "mal" || parts[0] == "anilist" || parts[0] == "anidb") "E${parts.last()}"
+                else "S${parts[parts.size - 2]} E${parts.last()}"
+            } else ""
+            com.cncverse.stremiobridge.state.StreamHistory.add(
+                com.cncverse.stremiobridge.state.HistoryEntry(
+                    time = System.currentTimeMillis(), type = type, id = id,
+                    title = com.cncverse.stremiobridge.state.StreamHistory.titleFor(id) ?: id.substringBefore(':'),
+                    episode = ep, found = streams.size, shown = out.size,
+                    tookMs = System.currentTimeMillis() - requestStart,
+                    providers = streams.groupingBy { it.info?.addonName ?: it.name ?: "?" }.eachCount()
+                        .entries.sortedByDescending { it.value }.map { "${it.key}: ${it.value}" },
+                    lines = out.map { st -> listOfNotNull(st.name, st.title).joinToString(" | ").replace("\n", " / ").replace("\r", "") },
+                    urls = out.map { st -> st.url ?: st.externalUrl ?: st.infoHash?.let { "magnet:?xt=urn:btih:$it" } ?: "" },
+                )
+            )
+        }
+        if (p.prefetchNext) prefetchNextEpisode(type, id)
+    }
+
+    private class Prepared(val streams: List<StremioStream>, val out: List<StremioStream>, val safeOut: List<StremioStream>)
+
+    /**
+     * Everything after the search - archive filter, quality / seek checks, sorting, the stream settings, formatting and the
+     * media-server links. Shared by the add-on answer and by the website's live results.
+     */
+    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long): Prepared {
         val tBuilt = System.currentTimeMillis()
         // Archive downloads (".zip" season packs) can never play in any player
         val streams = (built ?: emptyList()).filter { !SeekProbe.isArchiveUrl(it.url) }
@@ -969,34 +1012,46 @@ object StremioServer {
         }
         // Text with a broken emoji (a lone surrogate half) cannot be written as UTF-8 and would fail the whole answer
         val safeOut = out.map { sanitizeStream(it) }
-        try {
-            respond(StremioStreamResponse(safeOut))
-        } catch (e: Throwable) {
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            ServerState.warn("[Request] $type/$id: sending the list failed (${e.javaClass.simpleName}: ${e.message}) - sending it without subtitles")
-            respond(StremioStreamResponse(safeOut.map { it.copy(subtitles = null) }))
+        return Prepared(streams, out, safeOut)
+    }
+
+    /** The links found so far for a title (the list the providers add to while the search runs), by "type:id". */
+    private val searchPartial = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<StremioStream>>()
+    private val webSearches = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<StremioStream>>>()
+
+    /**
+     * The website's live results: with [start] the search for the title is started (detached) and the links found so far are
+     * answered at once; asking again returns the growing list and how many sources have answered, until the search is finished.
+     */
+    suspend fun webStreamsJson(type: String, id: String, start: Boolean): String {
+        val key = "$type:$id"
+        if (start) {
+            searchStatus.remove(key); searchPartial.remove(key)
+            streamRequestStart[key] = System.currentTimeMillis()
+            if (webSearches.size > 50) webSearches.clear()
+            webSearches[key] = streamSearchScope.async(pluginDispatcher) { buildStreams(type, id) }
         }
-        ServerState.info("[Request] sent ${out.size} link(s) for $type/$id (${(System.currentTimeMillis() - requestStart) / 1000.0}s)")
-        runCatching {
-            val parts = id.split(':')
-            val ep = if ((type == "series" || type == "anime") && parts.size >= 3) {
-                if (parts[0] == "kitsu" || parts[0] == "mal" || parts[0] == "anilist" || parts[0] == "anidb") "E${parts.last()}"
-                else "S${parts[parts.size - 2]} E${parts.last()}"
-            } else ""
-            com.cncverse.stremiobridge.state.StreamHistory.add(
-                com.cncverse.stremiobridge.state.HistoryEntry(
-                    time = System.currentTimeMillis(), type = type, id = id,
-                    title = com.cncverse.stremiobridge.state.StreamHistory.titleFor(id) ?: id.substringBefore(':'),
-                    episode = ep, found = streams.size, shown = out.size,
-                    tookMs = System.currentTimeMillis() - requestStart,
-                    providers = streams.groupingBy { it.info?.addonName ?: it.name ?: "?" }.eachCount()
-                        .entries.sortedByDescending { it.value }.map { "${it.key}: ${it.value}" },
-                    lines = out.map { st -> listOfNotNull(st.name, st.title).joinToString(" | ").replace("\n", " / ").replace("\r", "") },
-                    urls = out.map { st -> st.url ?: st.externalUrl ?: st.infoHash?.let { "magnet:?xt=urn:btih:$it" } ?: "" },
-                )
-            )
+        val job = webSearches[key]
+        val status = searchStatus[key]
+        val partial = searchPartial[key]
+        val raw: List<StremioStream> = when {
+            status != null && partial != null -> partial.toList().map { st ->
+                val u = st.url
+                if (u != null && (u.contains("\\/") || u.contains("\\u0026"))) st.copy(url = u.replace("\\/", "/").replace("\\u0026", "&").replace("\\u003d", "=")) else st
+            }
+            job != null && job.isCompleted -> job.await()
+            else -> emptyList()
         }
-        if (p.prefetchNext) prefetchNextEpisode(type, id)
+        val finished = if (status != null) status.finished else (job == null || job.isCompleted)
+        val prep = prepareStreams(type, id, raw, System.currentTimeMillis())
+        val base = serverJson.encodeToJsonElement(StremioStreamResponse(prep.safeOut)).jsonObject
+        return JsonObject(base + mapOf(
+            "found" to kotlinx.serialization.json.JsonPrimitive(raw.size),
+            "done" to kotlinx.serialization.json.JsonPrimitive(status?.done?.get() ?: 0),
+            "total" to kotlinx.serialization.json.JsonPrimitive(status?.total ?: 0),
+            "finished" to kotlinx.serialization.json.JsonPrimitive(finished),
+            "counts" to JsonObject((status?.counts ?: emptyMap<String, Int>()).entries.sortedByDescending { it.value }.associate { it.key to kotlinx.serialization.json.JsonPrimitive(it.value) }),
+        )).toString()
     }
 
     /** Request headers a player cannot be asked to send: anything but the usual User-Agent / Accept family. */
@@ -2480,6 +2535,7 @@ object StremioServer {
                 val status = SearchStatus(activePlugins.size + UpstreamAddons.active().size)
                 if (searchStatus.size > 100) searchStatus.keys.take(50).forEach { searchStatus.remove(it) }
                 searchStatus["$type:$id"] = status
+                searchPartial["$type:$id"] = accumulated
                 val jobs = activePlugins.map { api ->
                     streamSearchScope.launch {
                         sem.withPermit {

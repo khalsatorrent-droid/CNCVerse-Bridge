@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Website: links appear as the extensions find them:** opening a movie or episode on the website now shows the first links as soon as one extension answers and keeps adding more while the search runs, with a line like "Still searching: 12 of 30 sources answered, 9 links so far" that turns into "Search complete" at the end. Only the website works this way; Stremio and Nuvio get the same answer as before.
+
 ## 1.7.4
 
 - **Website, Live TV:** channels with the same name from several sources are one tile (with a "2 sources" tag); landscape logo tiles; a star on each tile adds it to Favourites; "Recently watched" and Favourites rows on top; clicking a channel starts it straight away (no list first) and falls back to the next link on its own if one does not play; Prev / Next buttons (keys P and N) switch channels without leaving the player; "Links" opens the full link list.

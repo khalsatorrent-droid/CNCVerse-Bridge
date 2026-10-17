@@ -200,7 +200,7 @@ video::cue{color:#fff;background:transparent;font-weight:700;font-size:1.3em;tex
 
 <div id="shade"></div>
 <aside id="panel" aria-label="Links">
- <div id="ph"><div class="tr"><div><h3 id="pht"></h3><div class="sub" id="phs"></div></div><button class="quiet" id="pcl">Close</button></div><div class="chips" id="chips"></div></div>
+ <div id="ph"><div class="tr"><div><h3 id="pht"></h3><div class="sub" id="phs"></div><div class="sub" id="pst"></div></div><button class="quiet" id="pcl">Close</button></div><div class="chips" id="chips"></div></div>
  <div id="pl"></div>
 </aside>
 <div id="player" class="hide"><video id="v" controls autoplay playsinline></video>
@@ -324,22 +324,31 @@ g('shade').onclick=closePanel;g('pcl').onclick=closePanel;
 function fix(u){var b=(cfg.bases||[]).slice().sort(function(a,c){return c.length-a.length});for(var i=0;i<b.length;i++){if(u.indexOf(b[i])===0)return location.origin+u.slice(b[i].length)}return u}
 var SKIP=/force refresh|support the project/i;
 function resOf(x){var m=((x.name||'')+' '+(x.description||x.title||'')).match(/(2160|1440|1080|720|576|480|360)p/i);if(m)return m[1]+'p';if(/\b4k\b/i.test((x.name||'')+(x.description||'')))return '2160p';return ''}
-function streams(type,id,s,e,title,year){var run=++streamRun;g('pht').textContent=title;g('phs').textContent=[year,type==='tv'?'Series':'Movie'].filter(Boolean).join('  ');g('chips').textContent='';
+function streams(type,id,s,e,title,year){var sid='tmdb:'+id+(s!=null?(':'+s+':'+e):'');var t=type==='tv'?'series':'movie';
+ streamRun++;g('pht').textContent=title;g('phs').textContent=[year,type==='tv'?'Series':'Movie'].filter(Boolean).join('  ');g('pst').textContent='';g('chips').textContent='';
  var pl=g('pl');g('panel').classList.add('on');g('shade').classList.add('on');
- var go=function(){var my=++streamRun;g('chips').textContent='';pl.textContent='';var w=el('div','wait','Searching every source. This can take up to a minute.');w.appendChild(el('div','bar')).appendChild(el('i'));pl.appendChild(w);
-  var sid='tmdb:'+id+(s!=null?(':'+s+':'+e):'');
-  fetch('/stream/'+(type==='tv'?'series':'movie')+'/'+encodeURIComponent(sid)+'.json').then(function(r){return r.json()}).then(function(d){if(my!==streamRun)return;
-   var list=(d.streams||[]).filter(function(x){return x.url&&!SKIP.test((x.name||'')+' '+(x.description||x.title||''))});render(list,title,go)
-  }).catch(function(){if(my!==streamRun)return;pl.textContent='';pl.appendChild(el('div','wait','The search failed. Try again.'));var b=el('button',null,'Search again');b.onclick=go;pl.appendChild(b)})};
+ var go=function(){var my=++streamRun;g('chips').textContent='';pl.textContent='';var w=el('div','wait','Starting the search');w.appendChild(el('div','bar')).appendChild(el('i'));pl.appendChild(w);g('pst').textContent='';
+  var sig='',t0=Date.now(),first=true;
+  var poll=function(){if(my!==streamRun)return;
+   fetch('/web/api/streams?type='+t+'&id='+encodeURIComponent(sid)+(first?'&start=1':''),{credentials:'same-origin'}).then(function(r){if(r.status===401){showLogin();throw new Error('auth')}if(!r.ok)throw new Error('http');return r.json()}).then(function(d){if(my!==streamRun)return;first=false;
+    var list=(d.streams||[]).filter(function(x){return x.url&&!SKIP.test((x.name||'')+' '+(x.description||x.title||''))});
+    var fin=d.finished||(Date.now()-t0>150000);
+    g('pst').textContent=fin?('Search complete: '+(d.total?(d.done+' of '+d.total+' sources answered, '):'')+list.length+' link(s)'):('Still searching: '+d.done+' of '+d.total+' sources answered, '+list.length+' link(s) so far');
+    var ns=list.length+':'+(list[0]&&list[0].url)+':'+(list[list.length-1]&&list[list.length-1].url);
+    if(ns!==sig){sig=ns;if(list.length)render(list,title,go,false,true)}
+    if(!list.length&&fin){render(list,title,go)}
+    if(!fin)setTimeout(poll,first?400:1500)
+   }).catch(function(e){if(my!==streamRun||e.message==='auth')return;if(!sig){pl.textContent='';pl.appendChild(el('div','wait','The search failed. Try again.'));var b=el('button',null,'Search again');b.onclick=go;pl.appendChild(b)}else setTimeout(poll,3000)})};
+  poll()};
  go()}
-function render(list,title,again,live){var pl=g('pl'),chips=g('chips');pl.textContent='';chips.textContent='';
+var keepSel='';function render(list,title,again,live,refresh){var pl=g('pl'),chips=g('chips');var top=pl.scrollTop;pl.textContent='';chips.textContent='';
  if(!list.length){var w=el('div','wait','No playable links yet. Some sources answer late, so search again in a few seconds.');pl.appendChild(w);var b=el('button',null,'Search again');b.onclick=again;w.appendChild(el('br'));w.appendChild(b);return}
- var set={};list.forEach(function(x){var r=resOf(x);if(r)set[r]=1});var rs=Object.keys(set).sort(function(a,b){return parseInt(b)-parseInt(a)});var sel='';
+ var set={};list.forEach(function(x){var r=resOf(x);if(r)set[r]=1});var rs=Object.keys(set).sort(function(a,b){return parseInt(b)-parseInt(a)});var sel=refresh?keepSel:'';if(!refresh)keepSel='';
  var draw=function(){pl.textContent='';var n=0;list.forEach(function(x){var r=resOf(x);if(sel&&r!==sel)return;n++;var row=el('button','st');row.type='button';var h=el('div','h');h.appendChild(el('span','res',r||'Auto'));h.appendChild(el('span','nm',(x.name||'Link').replace(/\s*\n\s*/g,'  ')));row.appendChild(h);
    var d=x.description||x.title||'';if(d)row.appendChild(el('pre',null,d));row.onclick=function(){closePanel();pick(list,x,title,!!live)};pl.appendChild(row)});
   Array.prototype.forEach.call(chips.children,function(c){c.setAttribute('aria-pressed',String((c.dataset.r||'')===sel))})};
- if(rs.length){[''].concat(rs).forEach(function(r){var c=el('button','chip',r||('All '+list.length));c.type='button';c.dataset.r=r;c.onclick=function(){sel=r;draw()};chips.appendChild(c)});var rb=el('button','chip','Search again');rb.type='button';rb.dataset.r='*';rb.onclick=again;chips.appendChild(rb)}
- draw()}
+ if(rs.length){[''].concat(rs).forEach(function(r){var c=el('button','chip',r||('All '+list.length));c.type='button';c.dataset.r=r;c.onclick=function(){sel=r;keepSel=r;draw()};chips.appendChild(c)});var rb=el('button','chip','Search again');rb.type='button';rb.dataset.r='*';rb.onclick=again;chips.appendChild(rb)}
+ draw();pl.scrollTop=top}
 
 /* player */
 function pick(list,x,title,live){tvMode=!!live;cur={list:list,idx:list.indexOf(x),title:title,auto:false};setTvUi(tvMode);play(x,title)}
