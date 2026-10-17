@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.2
 
 - **"📺 All TV channels (A-Z)" catalog:** one catalog that merges the channels of every TV catalog in the manifest (the ones you have not switched off) into a single list in alphabetical order, leading symbols and emoji ignored, so Stremio (web too) shows all live channels in one place and search works across all of them. It sits in front of the other TV catalogs and can be switched off in Settings -> Catalogs like any other.
 
