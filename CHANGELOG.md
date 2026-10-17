@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Live TV tab in the website version (/home):** a "Live TV" button next to the logo opens every channel of the "All TV channels (A-Z)" catalog in alphabetical order, with a channel search, A-Z / # letter filters and a "Show more" button; click a channel to play it (a choice of links appears when it has several). "Movies & series" goes back to the TMDB catalog.
+
 ## 1.7.2
 
 - **"📺 All TV channels (A-Z)" catalog:** one catalog that merges the channels of every TV catalog in the manifest (the ones you have not switched off) into a single list in alphabetical order, leading symbols and emoji ignored, so Stremio (web too) shows all live channels in one place and search works across all of them. It sits in front of the other TV catalogs and can be switched off in Settings -> Catalogs like any other.
