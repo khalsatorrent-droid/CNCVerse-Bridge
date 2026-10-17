@@ -940,7 +940,7 @@ object StremioServer {
      * Everything after the search - archive filter, quality / seek checks, sorting, the stream settings, formatting and the
      * media-server links. Shared by the add-on answer and by the website's live results.
      */
-    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false): Prepared {
+    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false, forWeb: Boolean = false): Prepared {
         val tBuilt = System.currentTimeMillis()
         // Archive downloads (".zip" season packs) can never play in any player
         val streams = (built ?: emptyList()).filter { !SeekProbe.isArchiveUrl(it.url) }
@@ -991,7 +991,7 @@ object StremioServer {
                 .map { st ->
                     try {
                         // Media server: links that need a Referer / Cookie are fetched by this bridge and cached here
-                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), mediaBase()))
+                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), mediaBase(), forWeb))
                     } catch (e: Throwable) {
                         ServerState.warn("[Request] could not prepare a link (${st.info?.addonName}): ${e.javaClass.simpleName}: ${e.message}")
                         st
@@ -1019,7 +1019,7 @@ object StremioServer {
     /** One live channel source for the website: the links of that source only, without the slow checks, so the first one can start playing at once. */
     suspend fun webTvStreamsJson(id: String): String {
         val built = withTimeoutOrNull(25_000L) { withContext(pluginDispatcher) { buildStreams("tv", id) } } ?: emptyList()
-        val prep = prepareStreams("tv", id, built, System.currentTimeMillis(), fast = true)
+        val prep = prepareStreams("tv", id, built, System.currentTimeMillis(), fast = true, forWeb = true)
         return serverJson.encodeToJsonElement(StremioStreamResponse(prep.safeOut)).toString()
     }
 
@@ -1051,7 +1051,7 @@ object StremioServer {
             else -> emptyList()
         }
         val finished = if (status != null) status.finished else (job == null || job.isCompleted)
-        val prep = prepareStreams(type, id, raw, System.currentTimeMillis())
+        val prep = prepareStreams(type, id, raw, System.currentTimeMillis(), forWeb = true)
         val base = serverJson.encodeToJsonElement(StremioStreamResponse(prep.safeOut)).jsonObject
         return JsonObject(base + mapOf(
             "found" to kotlinx.serialization.json.JsonPrimitive(raw.size),

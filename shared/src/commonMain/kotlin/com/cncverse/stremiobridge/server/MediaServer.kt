@@ -360,14 +360,17 @@ object MediaServer {
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
 
     /** The stream pointed at this bridge's media server when it qualifies; otherwise unchanged. */
-    fun rewrite(s: StremioStream, base: String): StremioStream {
+    fun rewrite(s: StremioStream, base: String, forWeb: Boolean = false): StremioStream {
         val p = prefs
         if (!p.enabled || root == null) return s
         val url = s.url ?: return s
+        // The website's player (hls.js) reads playlists with XHR, which a browser only allows from a server that sends CORS headers:
+        // every HLS link goes through this bridge for it, whatever the mode, and the upstream rule below does not apply
+        val webHls = forWeb && looksLikeHls(url, s.info?.linkType)
         // An upstream addon's links are left alone - except those pointing at a private home-network address (a self-hosted addon on
         // 192.168.x.x): a phone away from home cannot open them, so this bridge (which can reach them) serves them
         val lanUpstream = s.info?.linkType == "UPSTREAM" && isPrivateHost(runCatching { java.net.URI(s.url ?: "").host }.getOrNull())
-        if (s.info?.linkType == "UPSTREAM" && !lanUpstream) return s
+        if (s.info?.linkType == "UPSTREAM" && !lanUpstream && !webHls) return s
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return s
         if (!url.startsWith("http", true) || OWN_PATH.containsMatchIn(url)) return s
         val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return s
@@ -380,9 +383,9 @@ object MediaServer {
         val hls = looksLikeHls(url, s.info?.linkType)
         // A site whose Cloudflare check was solved: only this server can send the saved cookie + browser User-Agent, so its links are taken over in every mode
         val needsCf = !loop && runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(host) }.getOrNull() != null
-        if (!loop && !lanUpstream && p.mode == "headers" && headers.isEmpty() && !needsCf) return s
+        if (!loop && !lanUpstream && !webHls && p.mode == "headers" && headers.isEmpty() && !needsCf) return s
         if (!loop && !lanUpstream && p.mode == "hls" && headers.isEmpty() && !hls && !needsCf) return s
-        if (hls && !p.cacheHls && !lanUpstream) return s
+        if (hls && !p.cacheHls && !lanUpstream && !webHls) return s
         if (!hls && !p.cacheFiles && !lanUpstream) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
         val id = register(url, headers)

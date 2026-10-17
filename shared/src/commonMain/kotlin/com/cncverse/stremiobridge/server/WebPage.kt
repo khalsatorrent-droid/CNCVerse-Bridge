@@ -43,7 +43,8 @@ header{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:c
 header.solid{background:rgba(10,18,21,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .logo{font:700 22px var(--disp);letter-spacing:-.03em;cursor:pointer;white-space:nowrap;background:none;color:var(--tx);padding:0}
 .logo i{font-style:normal;color:var(--lamp)}
-.sbox{margin-left:auto;display:flex;gap:8px;align-items:center}
+.sbox{margin:0 0 0 auto;display:flex;gap:8px;align-items:center}
+.srch{padding:10px 16px}
 #q{width:min(34vw,340px);background:rgba(255,255,255,.07);border-color:transparent}
 #q:focus{background:var(--s1)}
 main{padding-bottom:60px;min-height:100vh}
@@ -115,7 +116,7 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 .ep:hover .th:after{background:rgba(255,178,62,.14)}
 .ep .en{margin-top:7px;font-weight:600;font-size:14px}
 .ep small{display:block;color:var(--mut);font-size:12.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-@media(max-width:640px){header{gap:10px}.sbox{flex:1}#q{width:auto;flex:1}button.quiet#out{padding:10px 12px}.tp .in{flex-direction:column;align-items:flex-start;padding-top:100px}.tp img.pp{width:120px}}
+@media(max-width:640px){header{flex-wrap:wrap;gap:6px 8px;padding:10px 4vw;background:rgba(10,18,21,.94)}.logo{order:1;font-size:20px}.nav{order:2;padding:8px 8px;font-size:14px}#out{order:3;margin-left:auto;padding:8px 12px}.sbox{order:4;flex:1 1 100%;margin:0}#q{width:auto;flex:1}.top-gap{height:118px}.hero{padding-top:100px}.tp .in{flex-direction:column;align-items:flex-start;padding-top:140px}.tp img.pp{width:120px}}
 
 /* links panel */
 #shade{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -193,7 +194,8 @@ video::cue{color:#fff;background:transparent;font-weight:700;font-size:1.3em;tex
 <div id="app" class="hide">
  <header id="hd"><button class="logo" id="home">CNC<i>Verse</i></button>
   <button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navtv" type="button">Live TV</button>
-  <div class="sbox"><input id="q" type="search" placeholder="Search movies and series" aria-label="Search"><button class="quiet" id="out">Log out</button></div>
+  <form class="sbox" id="sf" role="search"><input id="q" type="search" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
+  <button class="quiet" id="out" type="button">Log out</button>
  </header>
  <main id="main"></main>
 </div>
@@ -224,7 +226,7 @@ g('lf').addEventListener('submit',function(ev){ev.preventDefault();g('lerr').tex
 g('out').onclick=function(){fetch('/web/logout',{method:'POST',credentials:'same-origin'}).then(showLogin)};
 g('home').onclick=function(){g('q').value='';location.hash='#/'};
 g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};
-g('q').addEventListener('keydown',function(e){if(e.key==='Enter'){var s=g('q').value.trim();location.hash=s?('#/s/'+encodeURIComponent(s)):'#/'}});
+g('sf').addEventListener('submit',function(e){e.preventDefault();var s=g('q').value.trim();g('q').blur();if(location.hash==='#/s/'+encodeURIComponent(s))route();else location.hash=s?('#/s/'+encodeURIComponent(s)):'#/'});
 window.addEventListener('scroll',function(){g('hd').classList.toggle('solid',window.scrollY>40)},{passive:true});
 window.addEventListener('hashchange',function(){if(!g('app').classList.contains('hide'))route()});
 
@@ -360,7 +362,7 @@ var keepSel='';function render(list,title,again,live,refresh){var pl=g('pl'),chi
 function pick(list,x,title,live){tvMode=!!live;cur={list:list,idx:list.indexOf(x),title:title,auto:false};setTvUi(tvMode);play(x,title)}
 function shell(title,note){stopVideo();g('pmsg').textContent='';g('pnote').textContent=note||'';g('ptitle').textContent=title;g('player').classList.remove('hide');wake()}
 function isHls(u){return /\.m3u8(\?|#|${'$'})/i.test(u)||(u.indexOf('/media/')>=0&&u.indexOf('/pl/')>0)}
-var stallT=null;
+var stallT=null,bufT=null;
 function stopVideo(){clearTimeout(stallT);var v=g('v');if(hls){hls.destroy();hls=null}v.pause();v.removeAttribute('src');while(v.firstChild)v.removeChild(v.firstChild);v.load();g('paud').classList.add('hide');g('amenu').classList.add('hide')}
 var idleT=null;function wake(){var p=g('player');p.classList.remove('idle');clearTimeout(idleT);idleT=setTimeout(function(){if(!g('v').paused&&g('amenu').classList.contains('hide'))p.classList.add('idle')},2800)}
 g('player').addEventListener('mousemove',wake);g('player').addEventListener('touchstart',wake,{passive:true});
@@ -386,7 +388,7 @@ function audWatch(){audApplied=false;var v=g('v');if(v.audioTracks&&v.audioTrack
 function play(x,title){var v=g('v');stopVideo();g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('player').classList.remove('hide');wake();
  var url=fix(x.url);var tried=false;audWatch();
  (x.subtitles||[]).forEach(function(s,i){if(!s.url||s.url.indexOf('http')!==0)return;var t=document.createElement('track');t.kind='subtitles';t.label=s.lang||('Track '+(i+1));t.srclang=(s.lang||'und').slice(0,3);t.src='/subshift?ms=0&u='+encodeURIComponent(s.url);v.appendChild(t)});
- var useHls=function(){if(window.Hls&&Hls.isSupported()){hls=new Hls(tvMode?{maxBufferLength:20,liveSyncDurationCount:3,manifestLoadingTimeOut:8000,levelLoadingTimeOut:8000,fragLoadingTimeOut:12000,startFragPrefetch:true,capLevelToPlayerSize:true}:{maxBufferLength:60});hls.loadSource(url);hls.attachMedia(v);hls.on(Hls.Events.ERROR,function(_,d){if(d.fatal)fail()});
+ var useHls=function(){if(window.Hls&&Hls.isSupported()){hls=new Hls(tvMode?{maxBufferLength:20,liveSyncDurationCount:3,manifestLoadingTimeOut:8000,levelLoadingTimeOut:8000,fragLoadingTimeOut:12000,startFragPrefetch:true,capLevelToPlayerSize:true}:{maxBufferLength:60});hls.loadSource(url);hls.attachMedia(v);var netTry=0,medTry=0;hls.on(Hls.Events.ERROR,function(_,d){if(!d.fatal)return;if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&netTry<2){netTry++;hls.startLoad();return}if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&medTry<1){medTry++;hls.recoverMediaError();return}fail()});
    hls.on(Hls.Events.AUDIO_TRACKS_UPDATED,audRefresh);hls.on(Hls.Events.AUDIO_TRACK_SWITCHED,audRefresh);hls.on(Hls.Events.MANIFEST_PARSED,audRefresh)}else{v.src=url}};
  var useFile=function(){v.src=url};
  var fail=function(){if(!tried){tried=true;if(hls){hls.destroy();hls=null}if(isHls(url))useFile();else useHls();v.play().catch(function(){});return}
@@ -394,7 +396,8 @@ function play(x,title){var v=g('v');stopVideo();g('pmsg').textContent='';g('pnot
   g('pnote').textContent='';g('pmsg').textContent=(tvMode?'No link for this channel would play. Try Links or another channel.':'This link will not play in the browser. Go back and pick another one.')};
  var next=function(){if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('pnote').textContent='Trying link '+(cur.idx+1)+' of '+cur.list.length;play(cur.list[cur.idx],cur.title);return true}return false};
  clearTimeout(stallT);if(cur&&cur.auto&&tvMode)stallT=setTimeout(function(){next()},9000);
- v.onerror=fail;v.onplaying=function(){clearTimeout(stallT);g('pnote').textContent='';if(cur&&cur.auto)cur.auto=false};
+ v.onerror=fail;v.onplaying=function(){clearTimeout(stallT);clearTimeout(bufT);g('pnote').textContent='';if(cur&&cur.auto)cur.auto=false};
+ v.onwaiting=function(){clearTimeout(bufT);bufT=setTimeout(function(){if(!v.paused&&v.readyState<3&&!g('pmsg').textContent)g('pnote').textContent='Buffering. The source is slow, hold on or try another link.'},4000)};
  if(isHls(url))useHls();else useFile();
  v.play().catch(function(){});v.focus()}
 function closePlayer(){stopVideo();g('player').classList.add('hide');g('pnote').textContent='';cur=null}
