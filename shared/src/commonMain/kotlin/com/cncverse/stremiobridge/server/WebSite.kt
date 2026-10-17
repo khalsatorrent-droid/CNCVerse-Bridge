@@ -141,6 +141,32 @@ object WebSite {
         return if (c != null && c in 'A'..'Z') c.toString() else "#"
     }
 
+    /** One channel for the page: the same name from several sources is one entry that holds every source's id. */
+    private class ChannelGroup(val name: String, val key: String, val letter: String, val poster: String?, val ids: List<String>)
+
+    private var groupedFrom: List<com.cncverse.stremiobridge.model.StremioMeta>? = null
+    private var grouped: List<ChannelGroup> = emptyList()
+    private val NAME_SEP = Regex("[^\\p{L}\\p{N}]+")
+
+    private suspend fun channelGroups(): List<ChannelGroup> {
+        val all = StremioServer.liveChannels()
+        if (all === groupedFrom) return grouped
+        val by = LinkedHashMap<String, MutableList<com.cncverse.stremiobridge.model.StremioMeta>>()
+        for (m in all) {
+            val key = m.name.lowercase().replace(NAME_SEP, " ").trim()
+            if (key.isNotEmpty()) by.getOrPut(key) { mutableListOf() }.add(m)
+        }
+        grouped = by.map { (key, ms) ->
+            ChannelGroup(
+                ms.first().name.trim(), key, letterOf(ms.first().name),
+                ms.firstNotNullOfOrNull { m -> (m.poster ?: m.logo)?.takeIf { it.startsWith("http") } },
+                ms.map { it.id }.distinct().take(8),
+            )
+        }
+        groupedFrom = all
+        return grouped
+    }
+
     fun Route.webRoutes() {
         get("/home") {
             if (!prefs.enabled) return@get call.respond(HttpStatusCode.NotFound)
@@ -201,18 +227,17 @@ object WebSite {
             val letter = call.request.queryParameters["l"]?.trim().orEmpty().take(1).uppercase()
             val offset = call.request.queryParameters["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
             val words = q.split(' ').filter { it.isNotEmpty() }
-            val all = StremioServer.liveChannels()
-            val found = all.filter { m ->
-                (words.isEmpty() || m.name.lowercase().let { n -> words.all { n.contains(it) } }) &&
-                    (letter.isEmpty() || letterOf(m.name) == letter)
+            val found = channelGroups().filter { c ->
+                (words.isEmpty() || words.all { c.key.contains(it) }) && (letter.isEmpty() || c.letter == letter)
             }
             call.json(buildJsonObject {
                 put("total", found.size)
                 put("items", buildJsonArray {
-                    found.drop(offset).take(TV_PAGE).forEach { m ->
+                    found.drop(offset).take(TV_PAGE).forEach { c ->
                         add(buildJsonObject {
-                            put("id", m.id); put("name", m.name)
-                            (m.poster ?: m.logo)?.takeIf { it.startsWith("http") }?.let { put("poster", it) }
+                            put("name", c.name)
+                            c.poster?.let { put("poster", it) }
+                            put("ids", buildJsonArray { c.ids.forEach { add(it) } })
                         })
                     }
                 })
