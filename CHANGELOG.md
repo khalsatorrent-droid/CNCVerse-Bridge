@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.4
 
 - **Website, Live TV:** channels with the same name from several sources are one tile (with a "2 sources" tag); landscape logo tiles; a star on each tile adds it to Favourites; "Recently watched" and Favourites rows on top; clicking a channel starts it straight away (no list first) and falls back to the next link on its own if one does not play; Prev / Next buttons (keys P and N) switch channels without leaving the player; "Links" opens the full link list.
 - **Website, audio language:** a new "Audio" button in the player lists the audio languages of HLS streams (and of files whose audio tracks the browser can list); the pick is remembered for next time (key A opens it). A plain MP4 / MKV file with two audio tracks cannot be switched by Chrome or Edge: use its HLS link, or the link labelled with the language you want.
