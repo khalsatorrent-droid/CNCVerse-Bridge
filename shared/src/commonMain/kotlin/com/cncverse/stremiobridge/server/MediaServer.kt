@@ -335,21 +335,40 @@ object MediaServer {
      * end by themselves and fewer restarts. A host is heavy when it is on the local network, or when its requests take over
      * [HEAVY_TTFB_MS] to start answering.
      */
-    private val hostTtfb = ConcurrentHashMap<String, Long>()
+    private class Ttfb { var avg = 0L; var seen = 0; var at = 0L }
+    private val hostTtfb = ConcurrentHashMap<String, Ttfb>()
     private const val HEAVY_TTFB_MS = 1_500L
     private const val HEAVY_CONNECTIONS = 3
     /** Length of one request to a heavy source, and how many 8 MB segments an extra connection takes in one request. */
     private const val HEAVY_REQUEST = 64L * 1024 * 1024
     private const val HEAVY_SEGMENTS = 4
+    /** The first requests to a host include DNS, TCP and TLS set-up (eight at once on a phone): they say nothing about the host, so they are not counted. */
+    private const val TTFB_WARMUP = 8
+    private const val TTFB_MIN_SAMPLES = 4
+    /** A host that has not been asked for this long is judged again from scratch. */
+    private const val TTFB_FORGET_MS = 5 * 60_000L
 
     private fun noteTtfb(url: String, ms: Long) {
-        val h = hostOf(url)
-        hostTtfb.merge(h, ms) { old, new -> (old * 2 + new) / 3 }
+        val t = hostTtfb.getOrPut(hostOf(url)) { Ttfb() }
+        synchronized(t) {
+            val now = System.currentTimeMillis()
+            if (now - t.at > TTFB_FORGET_MS) { t.avg = 0L; t.seen = 0 }
+            t.at = now
+            t.seen++
+            if (t.seen <= TTFB_WARMUP) return
+            // a single slow answer moves the average only a little (and is capped), so one hiccup cannot make a host heavy
+            val m = minOf(ms, 6_000L)
+            t.avg = if (t.avg == 0L) m else (t.avg * 3 + m) / 4
+        }
     }
 
     private fun isHeavy(e: FileEntry): Boolean {
         val h = hostOf(e.url)
-        return isPrivateHost(h) || (hostTtfb[h] ?: 0L) > HEAVY_TTFB_MS
+        if (isPrivateHost(h)) return true
+        val t = hostTtfb[h] ?: return false
+        return synchronized(t) {
+            System.currentTimeMillis() - t.at <= TTFB_FORGET_MS && t.seen >= TTFB_WARMUP + TTFB_MIN_SAMPLES && t.avg > HEAVY_TTFB_MS
+        }
     }
 
     /** Connections allowed for this file (main download included). */

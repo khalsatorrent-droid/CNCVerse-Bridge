@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: no more wrongly slowed hosts:** since 1.7.1 a host whose requests took over 1.5 s to start answering was treated as a "heavy" source and limited to 3 connections with long requests. That time included DNS and TLS set-up (eight new connections at once on a phone), so ordinary fast hosts were slowed down, and the flag hardly ever went away. The first requests to a host are no longer counted, at least 4 real answers are needed before a host is judged, one slow answer counts for little, and the judgement is forgotten after 5 minutes without requests. Hosts on the local network are still always treated as heavy.
+
 ## 1.7.6
 
 - **Website, search on a phone:** the search box now has a Search button (and the keyboard's search key works), and the header wraps on a narrow screen: logo, Movies & series, Live TV and Log out on the first row, the search box on its own row below, so nothing is pushed off the screen.
