@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.6
 
 - **Website, search on a phone:** the search box now has a Search button (and the keyboard's search key works), and the header wraps on a narrow screen: logo, Movies & series, Live TV and Log out on the first row, the search box on its own row below, so nothing is pushed off the screen.
 - **Website, Live TV keeps loading:** HLS channels are now always served through this bridge for the website's player. A browser only lets the player read a playlist from a server that sends CORS headers, which almost no channel host does, so the player waited for ever on direct links (media server mode "headers" / "hls" or HLS caching off made it worse). The player also retries a stalled network or media error before giving up on a link, and says "Buffering" when a stream stays empty for 4 seconds.
