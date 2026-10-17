@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0
 
 - **Website version (/home):** a new "Website version" card in Settings switches on a small website served by the bridge on this device: open `your-tunnel-address/home`, enter the password you set, and you get the TMDB catalog (trending, popular, top rated), search, title pages with seasons and episodes, the same link list the add-on gives, and a built-in player (MP4 and HLS, subtitles shown bold white with an outline). Off by default; five wrong passwords lock that address out for a minute. Links that need a header or cookie play best with the media server on.
 
