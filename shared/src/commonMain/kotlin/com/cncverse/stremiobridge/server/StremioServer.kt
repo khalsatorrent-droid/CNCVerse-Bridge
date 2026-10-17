@@ -940,26 +940,27 @@ object StremioServer {
      * Everything after the search - archive filter, quality / seek checks, sorting, the stream settings, formatting and the
      * media-server links. Shared by the add-on answer and by the website's live results.
      */
-    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long): Prepared {
+    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false): Prepared {
         val tBuilt = System.currentTimeMillis()
         // Archive downloads (".zip" season packs) can never play in any player
         val streams = (built ?: emptyList()).filter { !SeekProbe.isArchiveUrl(it.url) }
         // Filters and ordering from the app's stream settings
         val p = streamPrefs
         // Adaptive HLS links report no quality: read their playlist for the real resolution
-        val probed = if (p.probeHls || p.splitHls) QualityProbe.enrich(streams, p.splitHls, 4_000L, p.bestHls) else streams
+        val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(streams, p.splitHls, 4_000L, p.bestHls) else streams
         val tProbed = System.currentTimeMillis()
         val sorted = sortStreamsByQuality(probed)
 
         // Pixeldrain first, so the seek check below judges the link that is really played: a pixeldrain.com/u/ID address is
         // a web page (it used to be hidden as "not a file") while the fast mirror it becomes is a seekable file
         // and the mirror's redirect is followed here: the list carries the address of the server that holds the file
-        val kept = PixeldrainResolver.resolveAll(filterStreamsByProfile(sorted, p).map { pixeldrainBypass(it, p) })
+        val kept = if (fast) sorted else PixeldrainResolver.resolveAll(filterStreamsByProfile(sorted, p).map { pixeldrainBypass(it, p) })
         // Whatever the settings above did, the list that goes out is sorted by resolution and has nothing below 720p
         val playableHere = if (p.hideHeaderLinks && !MediaServer.prefs.enabled) kept.filterNot { needsHeaders(it) } else kept
-        val seekable = if (p.filterNonSeekable) SeekProbe.dropNonSeekable(playableHere) else playableHere
+        val seekable = if (!fast && p.filterNonSeekable) SeekProbe.dropNonSeekable(playableHere) else playableHere
         val tSeek = System.currentTimeMillis()
-        val filtered = enforceResolutionOrder(hardsubFirst(applyAnimeAudio(arrangeStreams(seekable, p), p)))
+        // live channels (fast): no probes, and no resolution rules - a 480p channel is still a channel
+        val filtered = if (fast) seekable else enforceResolutionOrder(hardsubFirst(applyAnimeAudio(arrangeStreams(seekable, p), p)))
         ServerState.info("[Request] $type/$id timing: search ${(tBuilt - requestStart) / 1000.0}s, quality probe ${(tProbed - tBuilt) / 1000.0}s, seek check ${(tSeek - tProbed) / 1000.0}s")
 
         val out: List<StremioStream> = try {
@@ -1013,6 +1014,13 @@ object StremioServer {
         // Text with a broken emoji (a lone surrogate half) cannot be written as UTF-8 and would fail the whole answer
         val safeOut = out.map { sanitizeStream(it) }
         return Prepared(streams, out, safeOut)
+    }
+
+    /** One live channel source for the website: the links of that source only, without the slow checks, so the first one can start playing at once. */
+    suspend fun webTvStreamsJson(id: String): String {
+        val built = withTimeoutOrNull(25_000L) { withContext(pluginDispatcher) { buildStreams("tv", id) } } ?: emptyList()
+        val prep = prepareStreams("tv", id, built, System.currentTimeMillis(), fast = true)
+        return serverJson.encodeToJsonElement(StremioStreamResponse(prep.safeOut)).toString()
     }
 
     /** The links found so far for a title (the list the providers add to while the search runs), by "type:id". */

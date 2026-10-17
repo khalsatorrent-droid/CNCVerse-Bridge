@@ -132,6 +132,7 @@ object WebSite {
     }
 
     private val DIGITS = Regex("[0-9]{1,10}")
+    private val CNC_ID = Regex("cnc:[A-Za-z0-9+/=_%.:-]{1,2000}")
     private val ID_OK = Regex("tmdb:[0-9]{1,10}(:[0-9]{1,4}:[0-9]{1,4})?")
     private const val TV_PAGE = 120
     private val LEADING_SYMBOLS = Regex("^[^\\p{L}\\p{N}]+")
@@ -251,6 +252,13 @@ object WebSite {
             val id = call.request.queryParameters["id"].orEmpty()
             if ((type != "movie" && type != "series") || !ID_OK.matches(id)) return@get call.respond(HttpStatusCode.BadRequest)
             call.json(StremioServer.webStreamsJson(type, id, call.request.queryParameters["start"] == "1"))
+        }
+        // One source of a live channel: its links only, no slow checks
+        get("/web/api/tvstreams") {
+            if (!call.guard()) return@get
+            val id = call.request.queryParameters["id"].orEmpty()
+            if (!CNC_ID.matches(id)) return@get call.respond(HttpStatusCode.BadRequest)
+            call.json(StremioServer.webTvStreamsJson(id))
         }
         get("/web/api/title") {
             if (!call.guard()) return@get
