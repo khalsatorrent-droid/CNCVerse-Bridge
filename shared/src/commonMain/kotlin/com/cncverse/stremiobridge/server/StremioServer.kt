@@ -1496,7 +1496,22 @@ object StremioServer {
                 .filter { "${it.type}/${it.id}" !in prefs.disabledCatalogs }
         }
         val hasCatalogs = catalogs.isNotEmpty()
+        return buildManifestFrom(withAllTvCatalog(catalogs), hasCatalogs, types)
+    }
 
+    /** The combined "All TV channels" catalog goes in front of the first TV catalog (when TV catalogs exist and it is not switched off). */
+    private fun withAllTvCatalog(catalogs: List<StremioCatalogDef>): List<StremioCatalogDef> {
+        val first = catalogs.indexOfFirst { it.type == "tv" }
+        if (first < 0 || "tv/$ALL_TV_ID" in streamPrefs.disabledCatalogs) return catalogs
+        return catalogs.take(first) + allTvDef() + catalogs.drop(first)
+    }
+
+    private fun allTvDef() = StremioCatalogDef(
+        type = "tv", id = ALL_TV_ID, name = "📺 All TV channels (A-Z)",
+        extra = listOf(ExtraEntry("search"), ExtraEntry("skip")),
+    )
+
+    private fun buildManifestFrom(catalogs: List<StremioCatalogDef>, hasCatalogs: Boolean, types: List<String>): StremioManifest {
         // Changes whenever the catalog list does, so players drop their cached manifest
         val configHash = (catalogs.joinToString(",") { it.id + it.extra.size }.hashCode() xor catalogs.size)
             .let { kotlin.math.abs(it) % 10000 }
@@ -1518,7 +1533,11 @@ object StremioServer {
     fun allCatalogs(): List<Pair<String, String>> =
         loadedApis.filter { !isGloballyDisabled(it) }.flatMap { api ->
             providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
-        }.distinctBy { it.id }.map { "${it.type}/${it.id}" to it.name }
+        }.distinctBy { it.id }.let { defs ->
+            // the combined TV catalog is listed in front of the first TV catalog so it can be switched off like the others
+            val i = defs.indexOfFirst { it.type == "tv" }
+            if (i < 0) defs else defs.take(i) + allTvDef() + defs.drop(i)
+        }.map { "${it.type}/${it.id}" to it.name }
 
     // ── Catalog builder ───────────────────────────────────────────────────────
 
@@ -1846,9 +1865,40 @@ object StremioServer {
         ServerState.debug("TMDB resolved $tmdbId -> '$title' ($year)")
         return result
     }
+    private const val ALL_TV_ID = "cnc_all_tv"
+    /** The merged list and the cached pages it was made from (by identity), so a refreshed page rebuilds it and nothing else does. */
+    private class AllTv(val sources: List<Int>, val metas: List<StremioMeta>)
+    @Volatile private var allTvCache: AllTv? = null
+
+    /**
+     * Every channel of every TV catalog in the manifest (the ones not switched off) as ONE list in alphabetical order
+     * (leading symbols and emoji ignored). The whole list goes out at once, so later pages (skip > 0) are empty.
+     */
+    private suspend fun buildAllTv(search: String?, skip: Int): List<StremioMeta> {
+        if (skip > 0) return emptyList()
+        val defs = loadedApis.filter { !isGloballyDisabled(it) }.flatMap { api ->
+            providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
+        }.filter { it.type == "tv" && it.id != ALL_TV_ID && "tv/${it.id}" !in streamPrefs.disabledCatalogs }.distinctBy { it.id }
+        // a source whose first page is not loaded yet is loaded now (each one is cached by buildCatalog), all at the same time
+        coroutineScope {
+            defs.filter { d -> homePageCatalogCache.keys.none { it.startsWith("tv:${d.id}:") } }.map { d ->
+                async { withTimeoutOrNull(30_000L) { runCatching { buildCatalog("tv", d.id, null, 0, null) } } }
+            }.awaitAll()
+        }
+        val pages = homePageCatalogCache.entries.filter { (k, _) -> defs.any { k.startsWith("tv:${it.id}:") } }.map { it.value }
+        val sig = pages.map { System.identityHashCode(it) }.sorted()
+        val merged = allTvCache?.takeIf { it.sources == sig }?.metas ?: pages.asSequence().flatten().distinctBy { it.id }
+            .sortedWith(compareBy<StremioMeta, String>(String.CASE_INSENSITIVE_ORDER) { m -> m.name.replace(LEADING_SYMBOLS, "").trim().ifEmpty { m.name } })
+            .toList().also { allTvCache = AllTv(sig, it) }
+        if (search.isNullOrBlank()) return merged
+        val words = normalizeTitle(search).split(' ').filter { it.isNotEmpty() }
+        return merged.filter { m -> val n = m.name.lowercase(); words.all { n.contains(it) } }.take(200)
+    }
+
     private suspend fun buildCatalog(
         type: String, id: String, search: String?, skip: Int, genre: String?
     ): List<StremioMeta> {
+        if (id == ALL_TV_ID) return if (type == "tv" && !ServerState.disableCatalogsGlobally) buildAllTv(search, skip) else emptyList()
         val prefix = "cnc_"
         if (!id.startsWith(prefix)) return emptyList()
         val rest = id.removePrefix(prefix)

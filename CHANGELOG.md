@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **"📺 All TV channels (A-Z)" catalog:** one catalog that merges the channels of every TV catalog in the manifest (the ones you have not switched off) into a single list in alphabetical order, leading symbols and emoji ignored, so Stremio (web too) shows all live channels in one place and search works across all of them. It sits in front of the other TV catalogs and can be switched off in Settings -> Catalogs like any other.
+
 ## 1.7.1
 
 - **Website redesign:** new look for /home with a featured title on top, rows you scroll with arrows, a "Recently opened" row, season tabs and episode cards, a side panel for links with resolution filters, a player with auto-hiding controls and keyboard keys (space, arrows, F, M, Esc), and a back button that works through the browser history. Works on phone width too.
