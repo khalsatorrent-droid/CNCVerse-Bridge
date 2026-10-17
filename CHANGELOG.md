@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.1
 
 - **Website redesign:** new look for /home with a featured title on top, rows you scroll with arrows, a "Recently opened" row, season tabs and episode cards, a side panel for links with resolution filters, a player with auto-hiding controls and keyboard keys (space, arrows, F, M, Esc), and a back button that works through the browser history. Works on phone width too.
 
