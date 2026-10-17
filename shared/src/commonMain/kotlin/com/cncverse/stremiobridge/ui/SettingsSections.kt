@@ -24,6 +24,7 @@ import com.cncverse.stremiobridge.format.TemplateException
 import com.cncverse.stremiobridge.server.MediaServer
 import com.cncverse.stremiobridge.server.MediaServerPrefs
 import com.cncverse.stremiobridge.server.StremioServer
+import com.cncverse.stremiobridge.server.WebSite
 import com.cncverse.stremiobridge.settings.FileTransferHost
 import com.cncverse.stremiobridge.settings.SettingsBackup
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -830,5 +831,52 @@ fun BackupCard() {
         }
         message?.let { Text(it, color = Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
         error?.let { Text(it, color = Red400, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
+    }
+}
+
+// ── Website version ───────────────────────────────────────────────────────────
+
+/** Switch for the website version of the bridge (/home) and its password. */
+@Composable
+fun WebsiteCard() {
+    var enabled by remember { mutableStateOf(WebSite.prefs.enabled) }
+    var password by remember { mutableStateOf(WebSite.prefs.password) }
+    var show by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    var isError by remember { mutableStateOf(false) }
+    val tunnel by ServerState.activeTunnelUrl.collectAsState()
+    val host = TunnelSettings.hostname?.takeIf { it.isNotBlank() }?.let { "https://" + it.removePrefix("https://") }
+    val base = (tunnel ?: host ?: "http://<this device>:${ServerState.serverPort}").trimEnd('/')
+
+    fun save(on: Boolean) {
+        val err = WebSite.update(WebSite.Prefs(on, password))
+        if (err != null) { isError = true; msg = err; enabled = false; return }
+        enabled = on; isError = false
+        msg = if (on) "Website on: open $base/home" else "Website off"
+    }
+
+    AmoledCard(Modifier.fillMaxWidth()) {
+        SectionTitle(
+            "Website version",
+            "Watch in a browser on a laptop without Stremio or Nuvio. The bridge on this device serves the page at /home (TMDB catalog, search, player) behind a password; reach it through your Cloudflare Tunnel.",
+        )
+        SwitchRow("Host the website", "Off: /home does not exist", enabled) { save(it) }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it.take(100); msg = null },
+            label = { Text("Website password (4+ characters)") },
+            singleLine = true,
+            visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { show = !show }) { Text(if (show) "Hide" else "Show", color = Violet400, fontSize = 11.sp) }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = amoledFieldColors(),
+        )
+        Spacer(Modifier.height(8.dp))
+        ActionButton("Save password", primary = true) { save(enabled) }
+        Text("Address: $base/home", color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+        msg?.let { Text(it, color = if (isError) Red400 else Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
     }
 }

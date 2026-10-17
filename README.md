@@ -9,6 +9,7 @@ CNCVerse Bridge runs Cloudstream extensions as a Stremio / Nuvio add-on on your 
 - **Anime:** every known title name is searched, with season and episode numbers translated between databases; hardsub / dub / softsub are labelled.
 - **Cloudflare:** checks are solved once in a WebView and the cookie is reused for later requests.
 - **Upstream add-ons:** merge another Stremio add-on, including self-hosted ones on your home network, which are served through the bridge so they play away from home.
+- **Website version:** optional password-protected site at `/home` (TMDB catalog, search, player) served by the bridge itself, for a laptop browser.
 - **Tunnel:** free relay link or your own Cloudflare Tunnel for HTTPS in Stremio.
 - **History tab:** every request, timing and the exact list sent, copyable as text.
 - **Backup & updates:** one-file backup of all settings and extensions; in-app updates from this repository's releases.

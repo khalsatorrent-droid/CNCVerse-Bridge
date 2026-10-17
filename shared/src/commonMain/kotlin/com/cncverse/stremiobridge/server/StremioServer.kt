@@ -400,6 +400,7 @@ object StremioServer {
             MediaServer.init(cacheDir)
             UpstreamAddons.init(cacheDir); com.cncverse.stremiobridge.state.StreamHistory.init(cacheDir)
             com.cncverse.stremiobridge.network.CfCookieStore.initIfNeeded(cacheDir)
+            WebSite.load(cacheDir)
             configLoadedFrom = cacheDir
         }
     }
@@ -695,6 +696,8 @@ object StremioServer {
     private fun Application.setupRoutes() {
         setupMpdProxyRoutes()
         routing {
+            // The website version (off unless switched on in the app): /home and /web/...
+            with(WebSite) { webRoutes() }
             // Configuration lives in the app; the root just says the addon is up
             get("/") {
                 call.respondText(
@@ -1605,6 +1608,15 @@ object StremioServer {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, Int?>>?) = size > 5_000
         }
     )
+
+    /** TMDB answer for the website version ([endpointPathAndQuery] without the key). */
+    suspend fun tmdb(endpointPathAndQuery: String): JsonObject? = fetchTmdbJson(endpointPathAndQuery)
+
+    /** Every address stream links can start with, so the website can turn them into its own address. */
+    fun webBases(): List<String> = listOfNotNull(
+        ServerState.streamBaseUrl, ServerState.publicBaseUrl.ifBlank { null },
+        "http://127.0.0.1:${ServerState.serverPort}", "http://localhost:${ServerState.serverPort}",
+    ).map { it.trimEnd('/') }.filter { it.isNotEmpty() }.distinct()
 
     private suspend fun fetchTmdbJson(endpointPathAndQuery: String): JsonObject? {
         val cleanPath = endpointPathAndQuery.trimStart('/')
