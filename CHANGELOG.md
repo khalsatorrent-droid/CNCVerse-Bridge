@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.3
 
 - **Live TV tab in the website version (/home):** a "Live TV" button next to the logo opens every channel of the "All TV channels (A-Z)" catalog in alphabetical order, with a channel search, A-Z / # letter filters and a "Show more" button; click a channel to play it (a choice of links appears when it has several). "Movies & series" goes back to the TMDB catalog.
 
