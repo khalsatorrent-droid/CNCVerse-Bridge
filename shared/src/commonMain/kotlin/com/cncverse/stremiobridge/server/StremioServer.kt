@@ -19,6 +19,7 @@ import io.ktor.server.routing.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.encodeToStream
+import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -401,6 +402,8 @@ object StremioServer {
             UpstreamAddons.init(cacheDir); com.cncverse.stremiobridge.state.StreamHistory.init(cacheDir)
             com.cncverse.stremiobridge.network.CfCookieStore.initIfNeeded(cacheDir)
             WebSite.load(cacheDir)
+            allTvFile = File(cacheDir, "all_tv_cache.json.gz")
+            manifestRefreshScope.launch { runCatching { loadAllTvFromDisk() } }
             configLoadedFrom = cacheDir
         }
     }
@@ -1391,6 +1394,7 @@ object StremioServer {
             coroutineScope {
                 refreshWork = coroutineContext[kotlinx.coroutines.Job]
                 refreshManifestAndHomepagesInner()
+                rebuildAllTvInBackground()
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Our own scope was cancelled by a plugin reload — the caller keeps running
@@ -1869,30 +1873,100 @@ object StremioServer {
     suspend fun liveChannels(): List<StremioMeta> = withContext(pluginDispatcher) { buildAllTv(null, 0) }
 
     private const val ALL_TV_ID = "cnc_all_tv"
-    /** The merged list and the cached pages it was made from (by identity), so a refreshed page rebuilds it and nothing else does. */
-    private class AllTv(val sources: List<Int>, val metas: List<StremioMeta>)
+    /** The merged list, when it was built and the cached pages it was made from (by identity). */
+    private class AllTv(val builtAt: Long, val sources: List<Int>, val metas: List<StremioMeta>)
     @Volatile private var allTvCache: AllTv? = null
+    @Volatile private var allTvFile: File? = null
+    private val allTvBuilding = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** The saved list is served at once; it is rebuilt in the background when it is older than this or its sources changed. */
+    private const val ALL_TV_TTL_MS = 15 * 60_000L
+
+    /** Loads the list saved by an earlier run, so the TV catalog is there before any extension has answered. */
+    private fun loadAllTvFromDisk() {
+        val f = allTvFile ?: return
+        if (allTvCache != null || !f.exists()) return
+        runCatching {
+            @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+            val list = java.util.zip.GZIPInputStream(f.inputStream().buffered(64 * 1024)).use {
+                serverJson.decodeFromStream(kotlinx.serialization.builtins.ListSerializer(StremioMeta.serializer()), it)
+            }
+            if (list.isNotEmpty() && allTvCache == null) {
+                allTvCache = AllTv(0L, emptyList(), list)
+                ServerState.info("[Catalog] All TV channels: ${list.size} channels loaded from the saved list")
+            }
+        }.onFailure { ServerState.warn("[Catalog] saved TV list unreadable: ${it.message}") }
+    }
+
+    private fun saveAllTvToDisk(list: List<StremioMeta>) {
+        val f = allTvFile ?: return
+        runCatching {
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+            java.util.zip.GZIPOutputStream(tmp.outputStream().buffered(64 * 1024)).use {
+                serverJson.encodeToStream(kotlinx.serialization.builtins.ListSerializer(StremioMeta.serializer()), list, it)
+            }
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        }.onFailure { ServerState.warn("[Catalog] could not save the TV list: ${it.message}") }
+    }
+
+    /** The TV catalogs of the manifest that feed the combined list. */
+    private fun allTvDefs(): List<StremioCatalogDef> = loadedApis.filter { !isGloballyDisabled(it) }.flatMap { api ->
+        providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
+    }.filter { it.type == "tv" && it.id != ALL_TV_ID && "tv/${it.id}" !in streamPrefs.disabledCatalogs }.distinctBy { it.id }
+
+    private fun allTvSignature(defs: List<StremioCatalogDef>): List<Int> =
+        homePageCatalogCache.entries.filter { (k, _) -> defs.any { k.startsWith("tv:${it.id}:") } }
+            .map { System.identityHashCode(it.value) }.sorted()
 
     /**
-     * Every channel of every TV catalog in the manifest (the ones not switched off) as ONE list in alphabetical order
-     * (leading symbols and emoji ignored). The whole list goes out at once, so later pages (skip > 0) are empty.
+     * Loads the pages that are missing (all at the same time, 30 s each), merges every page of every TV catalog, sorts it
+     * A-Z (leading symbols and emoji ignored) and keeps it in memory and on disk. One build at a time.
+     */
+    private suspend fun rebuildAllTv(): List<StremioMeta>? {
+        if (!allTvBuilding.compareAndSet(false, true)) return null
+        try {
+            val defs = allTvDefs()
+            coroutineScope {
+                defs.filter { d -> homePageCatalogCache.keys.none { it.startsWith("tv:${d.id}:") } }.map { d ->
+                    async { withTimeoutOrNull(30_000L) { runCatching { buildCatalog("tv", d.id, null, 0, null) } } }
+                }.awaitAll()
+            }
+            val pages = homePageCatalogCache.entries.filter { (k, _) -> defs.any { k.startsWith("tv:${it.id}:") } }.map { it.value }
+            if (pages.isEmpty()) return null
+            val merged = pages.asSequence().flatten().distinctBy { it.id }
+                .sortedWith(compareBy<StremioMeta, String>(String.CASE_INSENSITIVE_ORDER) { m -> m.name.replace(LEADING_SYMBOLS, "").trim().ifEmpty { m.name } })
+                .toList()
+            allTvCache = AllTv(System.currentTimeMillis(), allTvSignature(defs), merged)
+            saveAllTvToDisk(merged)
+            ServerState.info("[Catalog] All TV channels: ${merged.size} channels from ${defs.size} catalog(s), saved")
+            return merged
+        } finally {
+            allTvBuilding.set(false)
+        }
+    }
+
+    /** Starts a background rebuild (nothing waits for it). */
+    private fun rebuildAllTvInBackground() {
+        streamSearchScope.launch { runCatching { rebuildAllTv() } }
+    }
+
+    /**
+     * Every channel of every TV catalog in the manifest (the ones not switched off) as ONE list in alphabetical order.
+     * Answers at once from the saved list (memory, else disk); an old or changed list is rebuilt in the background. Only
+     * the very first time, with nothing saved yet, the request waits (up to 20 s) for the extensions to answer.
+     * The whole list goes out at once, so later pages (skip > 0) are empty.
      */
     private suspend fun buildAllTv(search: String?, skip: Int): List<StremioMeta> {
         if (skip > 0) return emptyList()
-        val defs = loadedApis.filter { !isGloballyDisabled(it) }.flatMap { api ->
-            providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
-        }.filter { it.type == "tv" && it.id != ALL_TV_ID && "tv/${it.id}" !in streamPrefs.disabledCatalogs }.distinctBy { it.id }
-        // a source whose first page is not loaded yet is loaded now (each one is cached by buildCatalog), all at the same time
-        coroutineScope {
-            defs.filter { d -> homePageCatalogCache.keys.none { it.startsWith("tv:${d.id}:") } }.map { d ->
-                async { withTimeoutOrNull(30_000L) { runCatching { buildCatalog("tv", d.id, null, 0, null) } } }
-            }.awaitAll()
+        loadAllTvFromDisk()
+        var cached = allTvCache
+        if (cached == null) {
+            withTimeoutOrNull(20_000L) { rebuildAllTv() }
+            cached = allTvCache ?: return emptyList()
+        } else if (System.currentTimeMillis() - cached.builtAt > ALL_TV_TTL_MS || cached.sources != allTvSignature(allTvDefs())) {
+            if (cached.builtAt > 0L || loadedApis.isNotEmpty()) rebuildAllTvInBackground()
         }
-        val pages = homePageCatalogCache.entries.filter { (k, _) -> defs.any { k.startsWith("tv:${it.id}:") } }.map { it.value }
-        val sig = pages.map { System.identityHashCode(it) }.sorted()
-        val merged = allTvCache?.takeIf { it.sources == sig }?.metas ?: pages.asSequence().flatten().distinctBy { it.id }
-            .sortedWith(compareBy<StremioMeta, String>(String.CASE_INSENSITIVE_ORDER) { m -> m.name.replace(LEADING_SYMBOLS, "").trim().ifEmpty { m.name } })
-            .toList().also { allTvCache = AllTv(sig, it) }
+        val merged = cached.metas
         if (search.isNullOrBlank()) return merged
         val words = normalizeTitle(search).split(' ').filter { it.isNotEmpty() }
         return merged.filter { m -> val n = m.name.lowercase(); words.all { n.contains(it) } }.take(200)

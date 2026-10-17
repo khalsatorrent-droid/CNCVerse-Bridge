@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The TV catalog is cached and opens at once:** the merged "All TV channels (A-Z)" list is kept in memory and saved on disk (`all_tv_cache.json.gz`), so Stremio, Nuvio and the website's Live TV tab get it immediately, even right after a restart. An older (15 min) or changed list is rebuilt in the background after every home-page refresh and the new list replaces it when ready. Only the very first time, with nothing saved yet, the request waits (up to 20 s) for the extensions.
+
 ## 1.7.3
 
 - **Live TV tab in the website version (/home):** a "Live TV" button next to the logo opens every channel of the "All TV channels (A-Z)" catalog in alphabetical order, with a channel search, A-Z / # letter filters and a "Show more" button; click a channel to play it (a choice of links appears when it has several). "Movies & series" goes back to the TMDB catalog.
