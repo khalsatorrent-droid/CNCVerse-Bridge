@@ -326,6 +326,12 @@ object MediaServer {
         return null
     }
 
+    /** True while a player is reading a file that is not fully downloaded yet (read within the last 20 s): background work should wait. */
+    fun isStreaming(): Boolean {
+        val now = System.currentTimeMillis()
+        return files.values.any { !it.stop && !it.complete && now - it.lastAccess < 20_000L }
+    }
+
     private fun hostOf(url: String): String = runCatching { java.net.URI(url).host }.getOrNull() ?: url
 
     /**
