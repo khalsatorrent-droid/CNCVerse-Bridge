@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.5
 
 - **Website, Live TV starts much faster:** a channel starts playing as soon as its first source answers (the other sources keep loading as fallbacks, no more waiting for the slowest one); the quality and seek checks are skipped for live channels; links are looked up in advance while you hover over a channel; a link that has not started after 9 seconds is skipped for the next one; the player buffers less for live streams.
 - **Website: links appear as the extensions find them:** opening a movie or episode on the website now shows the first links as soon as one extension answers and keeps adding more while the search runs, with a line like "Still searching: 12 of 30 sources answered, 9 links so far" that turns into "Search complete" at the end. Only the website works this way; Stremio and Nuvio get the same answer as before.
