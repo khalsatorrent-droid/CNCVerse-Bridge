@@ -1865,6 +1865,9 @@ object StremioServer {
         ServerState.debug("TMDB resolved $tmdbId -> '$title' ($year)")
         return result
     }
+    /** Every channel of the combined TV catalog (A-Z), for the website's Live TV tab. */
+    suspend fun liveChannels(): List<StremioMeta> = withContext(pluginDispatcher) { buildAllTv(null, 0) }
+
     private const val ALL_TV_ID = "cnc_all_tv"
     /** The merged list and the cached pages it was made from (by identity), so a refreshed page rebuilds it and nothing else does. */
     private class AllTv(val sources: List<Int>, val metas: List<StremioMeta>)

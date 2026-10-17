@@ -63,6 +63,14 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 .acts{display:flex;gap:10px;flex-wrap:wrap}
 .hero.sk{background:var(--s1)}
 .top-gap{height:84px}
+.nav{background:none;color:var(--mut);padding:8px 12px;font-weight:600}
+.nav:hover{color:var(--tx);filter:none}
+.nav[aria-current=page]{color:var(--lamp)}
+.tvbar{display:flex;gap:10px;padding:0 4vw;margin-bottom:6px}
+.tvbar input{flex:1;max-width:420px}
+.tvl{padding:8px 4vw 14px;margin-top:0}
+.ch .p{aspect-ratio:16/9;object-fit:contain;padding:10px}
+.more{display:block;margin:26px auto 0}
 
 /* rows */
 .rowwrap{position:relative}
@@ -159,6 +167,7 @@ video::cue{color:#fff;background:transparent;font-weight:700;font-size:1.3em;tex
 
 <div id="app" class="hide">
  <header id="hd"><button class="logo" id="home">CNC<i>Verse</i></button>
+  <button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navtv" type="button">Live TV</button>
   <div class="sbox"><input id="q" type="search" placeholder="Search movies and series" aria-label="Search"><button class="quiet" id="out">Log out</button></div>
  </header>
  <main id="main"></main>
@@ -187,12 +196,14 @@ g('lf').addEventListener('submit',function(ev){ev.preventDefault();g('lerr').tex
  .catch(function(){g('lerr').textContent='Could not reach the bridge. Check that it is running.'})});
 g('out').onclick=function(){fetch('/web/logout',{method:'POST',credentials:'same-origin'}).then(showLogin)};
 g('home').onclick=function(){g('q').value='';location.hash='#/'};
+g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};
 g('q').addEventListener('keydown',function(e){if(e.key==='Enter'){var s=g('q').value.trim();location.hash=s?('#/s/'+encodeURIComponent(s)):'#/'}});
 window.addEventListener('scroll',function(){g('hd').classList.toggle('solid',window.scrollY>40)},{passive:true});
 window.addEventListener('hashchange',function(){if(!g('app').classList.contains('hide'))route()});
 
 function route(){var h=location.hash.replace(/^#\/?/,'').split('/');window.scrollTo(0,0);closePanel();
- if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else goHome()}
+ g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navmov').setAttribute('aria-current',h[0]==='tv'?'false':'page');
+ if(h[0]==='tv')liveTv();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else goHome()}
 
 function recent(){try{return JSON.parse(localStorage.getItem('cncRecent')||'[]')}catch(e){return[]}}
 function remember(t){try{var l=recent().filter(function(x){return !(x.id===t.id&&x.type===t.type)});l.unshift({id:t.id,type:t.type,title:t.title,year:t.year,poster:t.poster});localStorage.setItem('cncRecent',JSON.stringify(l.slice(0,20)))}catch(e){}}
@@ -237,6 +248,30 @@ function openTitle(type,id){skeleton();api('/web/api/title?type='+type+'&id='+id
   seasons.forEach(function(s){var b=el('button','tab',s.name);b.type='button';b.setAttribute('role','tab');b.dataset.n=s.n;b.onclick=function(){pick(s.n)};tabs.appendChild(b)});
   if(seasons.length)pick(seasons[0].n)}
  }).catch(function(e){if(e.message!=='auth'){g('main').textContent='';g('main').appendChild(el('p','msg','Could not load this title. Go back and try again.'))}})}
+
+/* live TV: every channel of every TV catalog, A-Z */
+var tvq='',tvl='';
+function liveTv(){document.title='Live TV - CNCVerse';var m=g('main');m.textContent='';m.appendChild(el('div','top-gap'));m.appendChild(el('h2','rt','Live TV'));
+ var bar=el('div','tvbar');var qi=document.createElement('input');qi.type='search';qi.placeholder='Search channels';qi.setAttribute('aria-label','Search channels');qi.value=tvq;bar.appendChild(qi);m.appendChild(bar);
+ var chips=el('div','chips tvl');m.appendChild(chips);var info=el('p','msg');m.appendChild(info);var gr=el('div','grid');m.appendChild(gr);var more=el('button','quiet more','Show more');more.type='button';more.classList.add('hide');m.appendChild(more);
+ var off=0,run=0;
+ var load=function(reset){if(reset){off=0;gr.textContent='';}var my=++run;info.textContent=off?info.textContent:'Loading channels. The first time can take half a minute.';more.classList.add('hide');
+  api('/web/api/tv?q='+encodeURIComponent(tvq)+'&l='+encodeURIComponent(tvl)+'&offset='+off).then(function(d){if(my!==run)return;
+   d.items.forEach(function(c){var b=el('button','card ch');b.type='button';if(c.poster){var i=el('img','p');i.loading='lazy';i.alt='';i.src=c.poster;i.onerror=function(){var n=el('div','p noimg',c.name);i.replaceWith(n)};b.appendChild(i)}else{b.appendChild(el('div','p noimg',c.name))}
+    b.appendChild(el('div','t',c.name));b.onclick=function(){openChannel(c)};gr.appendChild(b)});
+   off+=d.items.length;info.textContent=d.total?(off+' of '+d.total+' channels'):'No channel matches. Try another spelling or letter.';
+   if(off<d.total)more.classList.remove('hide')}).catch(function(e){if(e.message!=='auth')info.textContent='Could not load the channels. Reload in a moment.'})};
+ var letters=['','#'].concat('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''));
+ letters.forEach(function(l){var c=el('button','chip',l===''?'All':l);c.type='button';c.dataset.l=l;c.onclick=function(){tvl=l;mark();load(true)};chips.appendChild(c)});
+ var mark=function(){Array.prototype.forEach.call(chips.children,function(c){c.setAttribute('aria-pressed',String(c.dataset.l===tvl))})};mark();
+ var t=null;qi.addEventListener('input',function(){clearTimeout(t);t=setTimeout(function(){tvq=qi.value.trim();load(true)},300)});
+ more.onclick=function(){load(false)};load(true)}
+function openChannel(c){var run=++streamRun;g('pht').textContent=c.name;g('phs').textContent='Live TV';g('chips').textContent='';var pl=g('pl');g('panel').classList.add('on');g('shade').classList.add('on');pl.textContent='';
+ var w=el('div','wait','Opening the channel');w.appendChild(el('div','bar')).appendChild(el('i'));pl.appendChild(w);
+ fetch('/stream/tv/'+encodeURIComponent(c.id)+'.json').then(function(r){return r.json()}).then(function(d){if(run!==streamRun)return;
+  var list=(d.streams||[]).filter(function(x){return x.url&&!SKIP.test((x.name||'')+' '+(x.description||x.title||''))});
+  if(list.length===1){closePanel();play(list[0],c.name)}else render(list,c.name,function(){openChannel(c)})
+ }).catch(function(){if(run!==streamRun)return;pl.textContent='';pl.appendChild(el('div','wait','The channel did not answer. Try again.'))})}
 
 /* links panel */
 function closePanel(){streamRun++;g('panel').classList.remove('on');g('shade').classList.remove('on')}

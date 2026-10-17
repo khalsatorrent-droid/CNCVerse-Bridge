@@ -132,6 +132,14 @@ object WebSite {
     }
 
     private val DIGITS = Regex("[0-9]{1,10}")
+    private const val TV_PAGE = 120
+    private val LEADING_SYMBOLS = Regex("^[^\\p{L}\\p{N}]+")
+
+    /** The A-Z group of a channel name (leading symbols and emoji ignored); "#" for digits and other scripts. */
+    private fun letterOf(name: String): String {
+        val c = name.replace(LEADING_SYMBOLS, "").firstOrNull()?.uppercaseChar()
+        return if (c != null && c in 'A'..'Z') c.toString() else "#"
+    }
 
     fun Route.webRoutes() {
         get("/home") {
@@ -186,6 +194,29 @@ object WebSite {
             if (q.isEmpty()) return@get call.json("[]")
             val r = StremioServer.tmdb("search/multi?include_adult=false&query=" + java.net.URLEncoder.encode(q, "UTF-8"))
             call.json(items(r, null).toString())
+        }
+        get("/web/api/tv") {
+            if (!call.guard()) return@get
+            val q = call.request.queryParameters["q"]?.trim().orEmpty().take(100).lowercase()
+            val letter = call.request.queryParameters["l"]?.trim().orEmpty().take(1).uppercase()
+            val offset = call.request.queryParameters["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+            val words = q.split(' ').filter { it.isNotEmpty() }
+            val all = StremioServer.liveChannels()
+            val found = all.filter { m ->
+                (words.isEmpty() || m.name.lowercase().let { n -> words.all { n.contains(it) } }) &&
+                    (letter.isEmpty() || letterOf(m.name) == letter)
+            }
+            call.json(buildJsonObject {
+                put("total", found.size)
+                put("items", buildJsonArray {
+                    found.drop(offset).take(TV_PAGE).forEach { m ->
+                        add(buildJsonObject {
+                            put("id", m.id); put("name", m.name)
+                            (m.poster ?: m.logo)?.takeIf { it.startsWith("http") }?.let { put("poster", it) }
+                        })
+                    }
+                })
+            }.toString())
         }
         get("/web/api/title") {
             if (!call.guard()) return@get
