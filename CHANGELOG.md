@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.10
 
 - **Media server: slow streams start sooner:** when a list of links is shown, the first two direct-file links are opened in the background and their first 8 MB are saved (then the connection is let go, and a video that is already playing is never disturbed). By the time a link is chosen, the slow part of its start - a source that first has to fetch the file (a Telegram-backed server), redirects, the TLS handshake - is already over, and playback begins from disk.
 - **Media server: a cold file gets time to answer:** the first request of a file now waits up to 100 s for the source's first byte (it was 45 s), so a self-hosted server that has to resolve a cold Telegram file first no longer ends in "The source did not answer in time". For a slow ("heavy") source the extra connections also wait up to 10 s for the main one, so a cold file is not asked for by several connections at once.
