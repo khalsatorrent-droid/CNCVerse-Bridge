@@ -94,6 +94,25 @@ object ServerState {
     /** Host names clients have reached this bridge by (its domain, IP, LAN names) - capped. */
     val ownHosts: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    /** Ports clients have reached this bridge on (besides [serverPort]): a port-forward or a reverse proxy may use another one. */
+    val ownPorts: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /**
+     * True when [host]:[port] (port -1 = the scheme's default) is this bridge. The host alone is not enough: another service on
+     * the same device (a self-hosted add-on on 192.168.x.x:8088 next to the bridge on :8080) has the same host name.
+     */
+    fun isOwnAddress(host: String?, port: Int): Boolean {
+        val h = host?.lowercase() ?: return false
+        if (h !in ownHosts) return false
+        return port <= 0 || port == serverPort || port in ownPorts
+    }
+
+    /** [isOwnAddress] for a whole link (false when it cannot be parsed). */
+    fun isOwnUrl(url: String): Boolean {
+        val u = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+        return isOwnAddress(u.host, u.port)
+    }
+
     val streamBaseUrl: String? = System.getenv("CNC_STREAM_BASE_URL")?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
 
 

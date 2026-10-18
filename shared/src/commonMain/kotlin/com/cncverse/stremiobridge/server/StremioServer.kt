@@ -686,6 +686,7 @@ object StremioServer {
             }
             ServerState.publicBaseUrl = inferredBase
             if (ServerState.ownHosts.size < 64) ServerState.ownHosts.add(reqHost.lowercase())
+            if (reqPort > 0 && ServerState.ownPorts.size < 16) ServerState.ownPorts.add(reqPort)
             
             if (call.request.httpMethod == HttpMethod.Options) {
                 call.respond(HttpStatusCode.OK)
@@ -1249,7 +1250,7 @@ object StremioServer {
         fun fix(u: String?): String? {
             val m = u?.let { RELAY_PATH.matchEntire(it) } ?: return u
             // Only links back to this bridge; another site's own /proxy/ path is left alone
-            if (m.groupValues[1].lowercase() !in ServerState.ownHosts) return u
+            if (u == null || !ServerState.isOwnUrl(u)) return u
             return base + m.groupValues[2]
         }
         val subs = s.subtitles?.map { it.copy(url = fix(it.url) ?: it.url) }

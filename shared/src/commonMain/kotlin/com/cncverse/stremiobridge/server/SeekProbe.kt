@@ -69,7 +69,7 @@ object SeekProbe {
         val host = uri.host?.lowercase() ?: return false
         // The bridge's own relay links (proxy, decrypt, local relay) are never filtered
         if (RELAY_PATH.containsMatchIn(uri.rawPath ?: "")) return false
-        if (host in ServerState.ownHosts) return false
+        if (ServerState.isOwnUrl(url)) return false
         ServerState.streamBaseUrl?.let { b -> if (runCatching { java.net.URI(b).host }.getOrNull() == host) return false }
         return true
     }

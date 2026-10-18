@@ -496,7 +496,7 @@ object StreamVariables {
     fun hostOf(stream: StremioStream): String? {
         val u = stream.url ?: return null
         val h = runCatching { java.net.URI(u).host }.getOrNull()?.lowercase()?.removePrefix("www.") ?: return null
-        if (h == "127.0.0.1" || h == "localhost" || h in com.cncverse.stremiobridge.state.ServerState.ownHosts) return null
+        if (h == "127.0.0.1" || h == "localhost" || com.cncverse.stremiobridge.state.ServerState.isOwnUrl(u)) return null
         return h
     }
 

@@ -106,7 +106,7 @@ object QualityProbe {
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null) return false
         if (!url.startsWith("http", true)) return false
         val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return false
-        if (host in ServerState.ownHosts || host == "127.0.0.1" || host == "localhost") return false
+        if (ServerState.isOwnUrl(url) || host == "127.0.0.1" || host == "localhost") return false
         return s.info?.linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true)
     }
 

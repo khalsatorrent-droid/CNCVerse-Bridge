@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Self-hosted add-on on the same device now goes through the media server:** a link to another service on this device's own address (the Telegram-backed PencariMovie server at 192.168.x.x:8088 next to the bridge on :8080) was taken for the bridge itself and left untouched, so the media server settings never applied to it. Links are now compared by address and port. The seek check, the quality check and the host label in the link list had the same mistake.
+
 ## 1.7.10
 
 - **Media server: slow streams start sooner:** when a list of links is shown, the first two direct-file links are opened in the background and their first 8 MB are saved (then the connection is let go, and a video that is already playing is never disturbed). By the time a link is chosen, the slow part of its start - a source that first has to fetch the file (a Telegram-backed server), redirects, the TLS handshake - is already over, and playback begins from disk.

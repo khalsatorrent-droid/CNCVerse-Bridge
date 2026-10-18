@@ -402,7 +402,7 @@ object MediaServer {
         val loop = isLoopbackUrl(url)
         // An extension's own local server (127.0.0.1:port): only its playlists are taken over (below), and never this server itself
         if (loop && (java.net.URI(url).port == ServerState.serverPort || !looksLikeHls(url, s.info?.linkType))) return s
-        if (!loop && host in ServerState.ownHosts) return s
+        if (!loop && ServerState.isOwnUrl(url)) return s
         if (url.substringBefore('?').endsWith(".mpd", true) || url.contains(".mpd?", true)) return s // own DASH proxy
         val headers = s.behaviorHints?.proxyHeaders?.request.orEmpty()
         val hls = looksLikeHls(url, s.info?.linkType)
