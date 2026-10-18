@@ -59,11 +59,11 @@ object HeaderNeed {
     internal fun keyOf(host: String, headers: Map<String, String>): String =
         host.lowercase() + "|" + headers.keys.map { it.lowercase() }.sorted().joinToString(",")
 
-    private fun keyOf(url: String, headers: Map<String, String>): String? = LinkUrl.host(url)?.let { keyOf(it, headers) }
+    private fun keyOfUrl(url: String, headers: Map<String, String>): String? = LinkUrl.host(url)?.let { keyOf(it, headers) }
 
     /** true = the host refused the link without the extension's headers, false = it plays without them, null = not known (yet). */
     fun verdict(url: String, headers: Map<String, String>): Boolean? {
-        val key = keyOf(url, headers) ?: return null
+        val key = keyOfUrl(url, headers) ?: return null
         val v = verdicts[key] ?: return null
         val ttl = if (v.needed) NEEDED_TTL_MS else NOT_NEEDED_TTL_MS
         return if (System.currentTimeMillis() - v.at <= ttl) v.needed else null
