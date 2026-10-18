@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: slow streams start sooner:** when a list of links is shown, the first two direct-file links are opened in the background and their first 8 MB are saved (then the connection is let go, and a video that is already playing is never disturbed). By the time a link is chosen, the slow part of its start - a source that first has to fetch the file (a Telegram-backed server), redirects, the TLS handshake - is already over, and playback begins from disk.
+- **Media server: a cold file gets time to answer:** the first request of a file now waits up to 100 s for the source's first byte (it was 45 s), so a self-hosted server that has to resolve a cold Telegram file first no longer ends in "The source did not answer in time". For a slow ("heavy") source the extra connections also wait up to 10 s for the main one, so a cold file is not asked for by several connections at once.
+- **Media server log:** a line like `[MediaServer] host answered HTTP 206 after 3.2 s: 1158 MB, seekable, heavy source` shows how fast and how seekable each source is.
+
 ## 1.7.9
 
 - **Website: Live TV no longer loads for ever:** a link that does not start within 8 seconds, fails, or freezes for 12 seconds while playing is skipped for the channel's next link (and when no other link has answered yet it moves on as soon as one does). If none of them work, the player says so instead of showing the loading note.
