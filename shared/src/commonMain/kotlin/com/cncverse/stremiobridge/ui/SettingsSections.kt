@@ -99,6 +99,23 @@ fun TunnelSettingsCard() {
             fixedUrl = StableLink.url
             fixedMsg = "New fixed link: $fixedUrl - install the Stremio add-on again with it. Applies the next time the tunnel starts; the old link stops working."
         }
+        var customId by remember { mutableStateOf("") }
+        OutlinedTextField(
+            value = customId,
+            onValueChange = { customId = it.lowercase().filter { c -> c in 'a'..'z' || c in '0'..'9' }.take(12) },
+            label = { Text("Your own id (4-12 letters or digits)") },
+            placeholder = { Text("merimarzi", color = TextMuted) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = amoledFieldColors(),
+        )
+        ActionButton("Use this id", enabled = StableLink.cleanId(customId) != null) {
+            if (StableLink.setCustomId(customId)) {
+                fixedUrl = StableLink.url
+                fixedMsg = "Fixed link: $fixedUrl - install the Stremio add-on again with it. Applies the next time the tunnel starts. The relay is shared by everyone, so pick an id nobody can guess: whoever registers the same id gets that link."
+                customId = ""
+            }
+        }
         fixedMsg?.let { Text(it, color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp) }
         Spacer(Modifier.height(10.dp))
         val valid = token.length > 20 && TunnelSettings.normalizeHostname(hostname).contains('.')

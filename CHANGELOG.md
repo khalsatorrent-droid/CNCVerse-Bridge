@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Your own id for the fixed free-tunnel link:** in Settings, under the fixed link switch, type an id of your choice (4-12 lowercase letters or digits, e.g. `merimarzi`) and press "Use this id": the link becomes `https://merimarzi-tunnel.pencarimovie.com`. The relay is shared by everyone, so pick an id nobody can guess. The random id and the "New fixed link" button still work.
+
 ## 1.7.12
 
 - **Media server, "only links that need headers": the headers are now tested, not assumed:** almost every extension attaches a Referer / User-Agent to its links whether or not the host checks it, so most of a list still went through the media server (150 of 244 links in one list). The bridge now asks the host: it requests the link the way a plain player does, without the extension's headers - for a stream the playlist, the variant playlist and the first segment, for a file a one-byte range - and links of hosts that answer are left to play directly. Hosts that refuse (403, a login page, a refused segment) or do not answer within 3.5 s are still served by the media server, so a check can only cost speed, never a working link. The answer is remembered per host (2 hours when no headers are needed, 20 minutes when they are) and shows in the log as `[Headers] host: no headers needed` or `headers needed`. In "HLS" mode the same test applies to the direct files. The first list after a start may still send more links through the media server while the hosts are being tested.

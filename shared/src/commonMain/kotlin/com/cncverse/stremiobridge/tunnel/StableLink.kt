@@ -30,11 +30,11 @@ object StableLink {
      * Permanent per-install id: "cb" + 10 random hex characters (40 random bits, 12 characters - the longest the relay
      * accepts), made from a secure random source the first time and then kept. Two devices therefore never share an id
      * (the "cb" prefix is the only fixed part; it keeps the id apart from the relay's own six-character ids). Ids made
-     * by earlier versions (cb + 6 characters) stay as they are, so existing links keep working.
+     * by earlier versions (cb + 6 characters) or typed by the user ([setCustomId]) stay as they are, so existing links keep working.
      */
     val id: String
         get() {
-            val saved = getExtensionSetting(KEY_ID)?.takeIf { Regex("^cb[0-9a-f]{6}([0-9a-f]{4})?$").matches(it) }
+            val saved = getExtensionSetting(KEY_ID)?.takeIf { cleanId(it) != null }
             if (saved != null) return saved
             return newId()
         }
@@ -51,6 +51,16 @@ object StableLink {
      * link got out, or someone else is using it. The Stremio add-on has to be installed again with the new address.
      */
     fun reset(): String = newId()
+
+    /** An id the user typed: 4-12 lower-case letters or digits (what the relay accepts), or null. Spaces and capitals are tidied first. */
+    fun cleanId(text: String): String? = text.trim().lowercase().takeIf { Regex("^[a-z0-9]{4,12}$").matches(it) }
+
+    /** Uses an id of the user's own choice (e.g. "merimarzi" gives https://merimarzi-tunnel.pencarimovie.com). Returns false when it is not a valid id. */
+    fun setCustomId(text: String): Boolean {
+        val v = cleanId(text) ?: return false
+        setExtensionSetting(KEY_ID, v)
+        return true
+    }
 
     val url: String get() = "https://$id-tunnel.pencarimovie.com"
 
