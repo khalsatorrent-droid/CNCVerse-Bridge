@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.withLock
 object RepoManager {
     private const val BUNDLED_MARK = "bundled_repos_v1"
     private const val BUNDLED_MARK_V2 = "bundled_repos_v2"
+    private const val BUNDLED_MARK_V3 = "bundled_repos_v3"
 
     /**
      * Load saved repos from persistence and seed the default repo if none exist.
@@ -37,6 +38,14 @@ object RepoManager {
             BUNDLED_REPO_URLS_V2.forEach { if (it !in urls) urls.add(it) }
             if (urls.size != before) saveRepoUrls(urls)
             runCatching { setExtensionSetting(BUNDLED_MARK_V2, "1") }
+        }
+        // The address bundled in 1.7.14 does not work: it is taken out and the working one added, once
+        if (runCatching { getExtensionSetting(BUNDLED_MARK_V3) }.getOrNull() == null) {
+            val before = urls.toList()
+            urls.removeAll(RETIRED_REPO_URLS.toSet())
+            BUNDLED_REPO_URLS_V3.forEach { if (it !in urls) urls.add(it) }
+            if (urls != before) saveRepoUrls(urls)
+            runCatching { setExtensionSetting(BUNDLED_MARK_V3, "1") }
         }
         val cached = runCatching { loadCachedRepoEntries() }.getOrDefault(emptyList()).associateBy { it.url }
         val entries = urls.map { url ->

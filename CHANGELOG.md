@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Default repository eclipsia/cloudstream: working address:** the Gitea address added in 1.7.14 did not work. The default is now `https://cs.eclipsia.dpdns.org/repo.json`; an install that got the old address has it replaced once at the next start (new installs just have the new one).
+
 ## 1.7.14
 
 - **New default repository: eclipsia/cloudstream** (`https://gitea.com/eclipsia/cloudstream/raw/branch/main/repo.json`). New installs have it from the start; an existing install gets it once when it is updated (if you remove it later it stays removed).
