@@ -696,6 +696,9 @@ object MediaServer {
         @Volatile var lastAccess = System.currentTimeMillis()
         @Volatile var lastSaved = 0L
         @Volatile var lastRead = 0L
+        /** Where the extra connections last waited for the player to get going, and since when (see [STARTUP_BYTES]). */
+        @Volatile var gatePos = -1L
+        @Volatile var gateAt = 0L
         /**
          * Players read a file over several connections at once (a TV player: the video at the playing position, another at
          * the end of the file for the index, sometimes a third). Each response being written is a reader: [id] -> [position,
@@ -758,6 +761,11 @@ object MediaServer {
      */
     private const val SEG = 8L * 1024 * 1024
 
+    /** Playback may start with this much on disk; the read-ahead window is filled while it plays. */
+    private const val STARTUP_BYTES = 6L * 1024 * 1024
+    /** The extra connections wait at most this long for [STARTUP_BYTES] (a slow main connection must not hold them back). */
+    private const val STARTUP_WAIT_MS = 3_000L
+
     private fun startBoosters(e: FileEntry) {
         val extra = (connectionsFor(e) - 1).coerceIn(0, 19)
         // also replaces single extra connections that ended after an error (not only when all of them are gone)
@@ -794,6 +802,10 @@ object MediaServer {
                 if (e.boosters.get() > (connectionsFor(e) - 1).coerceIn(0, 19)) break
                 val ahead = prefs.readAheadMb * 1024L * 1024L
                 val from = maxOf(playPos(e), e.floor)
+                // Start-up (or after a seek): the main connection alone gets the whole bandwidth until a first piece is on disk,
+                // so playback starts at once; only then do the extra connections fill the read-ahead window
+                if (e.gatePos < 0 || kotlin.math.abs(from - e.gatePos) > SEG) { e.gatePos = from; e.gateAt = now }
+                if (e.have.contiguousEnd(from) - from < STARTUP_BYTES && now - e.gateAt < STARTUP_WAIT_MS) { Thread.sleep(100); continue }
                 val to = if (ahead > 0) minOf(e.total, from + ahead) else e.total
                 var did = false
                 var i = from / SEG

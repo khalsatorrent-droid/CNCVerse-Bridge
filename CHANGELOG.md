@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: playback starts before the read-ahead is filled:** at the start of a video (and after a seek) the extra download connections used to share the bandwidth with the main one while filling the whole read-ahead window, so the first piece the player needed arrived slowly. Now the main connection gets all the bandwidth until about 6 MB are ready (the others wait at most 3 seconds), playback begins, and the extra connections then fill the read-ahead window while it plays.
+
 ## 1.7.7
 
 - **Media server: the 30-minute home page refresh waits while you watch:** it asks every extension's site for its catalogs at once (35 home pages, many timing out after 15 s), which took bandwidth and CPU from the video. It now waits until nothing has been streamed for 20 seconds (at most 15 minutes).
