@@ -108,10 +108,8 @@ object ServerState {
     }
 
     /** [isOwnAddress] for a whole link (false when it cannot be parsed). */
-    fun isOwnUrl(url: String): Boolean {
-        val u = runCatching { java.net.URI(url) }.getOrNull() ?: return false
-        return isOwnAddress(u.host, u.port)
-    }
+    fun isOwnUrl(url: String): Boolean =
+        isOwnAddress(com.cncverse.stremiobridge.server.LinkUrl.host(url), com.cncverse.stremiobridge.server.LinkUrl.port(url))
 
     val streamBaseUrl: String? = System.getenv("CNC_STREAM_BASE_URL")?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
 

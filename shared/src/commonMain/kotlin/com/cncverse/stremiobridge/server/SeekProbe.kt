@@ -50,7 +50,8 @@ object SeekProbe {
 
     /** True when the link's file name says it is an archive (checked for every request, no network). */
     fun isArchiveUrl(url: String?): Boolean {
-        val path = runCatching { java.net.URI(url ?: return false).path }.getOrNull() ?: return false
+        val path = LinkUrl.path(url ?: return false)
+        if (path.isEmpty()) return false
         return ARCHIVE_PATH.containsMatchIn(path.trimEnd('/'))
     }
 

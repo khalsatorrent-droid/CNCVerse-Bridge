@@ -332,7 +332,7 @@ object MediaServer {
         return files.values.any { !it.stop && !it.complete && now - it.lastAccess < 20_000L }
     }
 
-    private fun hostOf(url: String): String = runCatching { java.net.URI(url).host }.getOrNull() ?: url
+    private fun hostOf(url: String): String = LinkUrl.host(url) ?: url
 
     /**
      * "Heavy" sources: a request costs the origin a lot (a self-hosted add-on that pulls the file from Telegram, a NAS...).
@@ -394,14 +394,14 @@ object MediaServer {
         val webHls = forWeb && looksLikeHls(url, s.info?.linkType)
         // An upstream addon's links are left alone - except those pointing at a private home-network address (a self-hosted addon on
         // 192.168.x.x): a phone away from home cannot open them, so this bridge (which can reach them) serves them
-        val lanUpstream = s.info?.linkType == "UPSTREAM" && isPrivateHost(runCatching { java.net.URI(s.url ?: "").host }.getOrNull())
+        val lanUpstream = s.info?.linkType == "UPSTREAM" && isPrivateHost(LinkUrl.host(s.url))
         if (s.info?.linkType == "UPSTREAM" && !lanUpstream && !webHls) return s
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return s
         if (!url.startsWith("http", true) || OWN_PATH.containsMatchIn(url)) return s
-        val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return s
+        val host = LinkUrl.host(url) ?: return s
         val loop = isLoopbackUrl(url)
         // An extension's own local server (127.0.0.1:port): only its playlists are taken over (below), and never this server itself
-        if (loop && (java.net.URI(url).port == ServerState.serverPort || !looksLikeHls(url, s.info?.linkType))) return s
+        if (loop && (LinkUrl.port(url) == ServerState.serverPort || !looksLikeHls(url, s.info?.linkType))) return s
         if (!loop && ServerState.isOwnUrl(url)) return s
         if (url.substringBefore('?').endsWith(".mpd", true) || url.contains(".mpd?", true)) return s // own DASH proxy
         val headers = s.behaviorHints?.proxyHeaders?.request.orEmpty()
@@ -441,7 +441,7 @@ object MediaServer {
     }
 
     private fun isLoopbackUrl(url: String): Boolean =
-        runCatching { java.net.URI(url).host?.lowercase() }.getOrNull().let { it == "127.0.0.1" || it == "localhost" || it == "[::1]" }
+        LinkUrl.host(url).let { it == "127.0.0.1" || it == "localhost" || it == "::1" }
 
     /**
      * An extension's local HLS link (http://127.0.0.1:port/…/master.m3u8): its playlist is downloaded right away, while the
@@ -475,7 +475,7 @@ object MediaServer {
     }
 
     private fun fileName(url: String): String {
-        val last = runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault("").substringAfterLast('/')
+        val last = LinkUrl.lastSegment(url)
         val clean = last.filter { it.isLetterOrDigit() || it in "._-" }.takeLast(60)
         return if (clean.contains('.')) clean else "video.mp4"
     }
@@ -571,7 +571,7 @@ object MediaServer {
         }
         // A site whose Cloudflare check was solved before: its cookie + the browser User-Agent it was solved with
         val cf = if (src.headers.keys.none { it.equals("cookie", true) })
-            runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(java.net.URI(url).host.orEmpty()) }.getOrNull() else null
+            runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(LinkUrl.host(url).orEmpty()) }.getOrNull() else null
         if (cf != null) { b.header("Cookie", cf.cookie); b.header("User-Agent", cf.userAgent); hasUa = true }
         if (!hasUa) b.header("User-Agent", UA)
         if (range != null) b.header("Range", range)
