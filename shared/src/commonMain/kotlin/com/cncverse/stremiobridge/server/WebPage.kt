@@ -315,10 +315,11 @@ function tvSrc(id){var c=tvCache[id];if(c&&Date.now()-c.t<90000)return c.p;var p
  tvCache[id]={t:Date.now(),p:p};return p}
 function prefetchCh(c){(c.ids||[]).slice(0,3).forEach(tvSrc)}
 function tuneCur(){var c=tvCtx.list[tvCtx.i];if(!c)return;addSeen(c);var run=++streamRun;shell(c.name,'Tuning in');setTvUi(true);
- var seen={},started=false,answered=0,total=c.ids.length;cur={list:[],idx:0,title:c.name,auto:true};
+ var seen={},started=false,answered=0,total=c.ids.length;cur={list:[],idx:0,title:c.name,auto:true,done:false};
  c.ids.forEach(function(id){tvSrc(id).then(function(list){if(run!==streamRun)return;answered++;
-  list.forEach(function(x){if(!seen[x.url]){seen[x.url]=1;cur.list.push(x)}});
-  if(!started&&cur.list.length){started=true;cur.idx=0;play(cur.list[0],c.name)}
+  list.forEach(function(x){if(!seen[x.url]){seen[x.url]=1;cur.list.push(x)}});if(answered===total)cur.done=true;
+  if(started&&cur.stalled&&cur.next){cur.stalled=false;cur.next()}
+  else if(!started&&cur.list.length){started=true;cur.idx=0;play(cur.list[0],c.name)}
   else if(!started&&answered===total){g('pnote').textContent='';g('pmsg').textContent='No link answered for '+c.name+'. Try another channel.'}
   if(cur.list.length>1)g('plinks').classList.remove('hide')})})}
 function setTvUi(on){var many=on&&tvCtx.list.length>1;g('pprev').classList.toggle('hide',!many);g('pnext').classList.toggle('hide',!many);g('plinks').classList.toggle('hide',!on)}
@@ -388,16 +389,17 @@ function audWatch(){audApplied=false;var v=g('v');if(v.audioTracks&&v.audioTrack
 function play(x,title){var v=g('v');stopVideo();g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('player').classList.remove('hide');wake();
  var url=fix(x.url);var tried=false;audWatch();
  (x.subtitles||[]).forEach(function(s,i){if(!s.url||s.url.indexOf('http')!==0)return;var t=document.createElement('track');t.kind='subtitles';t.label=s.lang||('Track '+(i+1));t.srclang=(s.lang||'und').slice(0,3);t.src='/subshift?ms=0&u='+encodeURIComponent(s.url);v.appendChild(t)});
- var useHls=function(){if(window.Hls&&Hls.isSupported()){hls=new Hls(tvMode?{maxBufferLength:20,liveSyncDurationCount:3,manifestLoadingTimeOut:8000,levelLoadingTimeOut:8000,fragLoadingTimeOut:12000,startFragPrefetch:true,capLevelToPlayerSize:true}:{maxBufferLength:60});hls.loadSource(url);hls.attachMedia(v);var netTry=0,medTry=0;hls.on(Hls.Events.ERROR,function(_,d){if(!d.fatal)return;if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&netTry<2){netTry++;hls.startLoad();return}if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&medTry<1){medTry++;hls.recoverMediaError();return}fail()});
+ var useHls=function(){if(window.Hls&&Hls.isSupported()){hls=new Hls(tvMode?{maxBufferLength:20,liveSyncDurationCount:3,manifestLoadingTimeOut:8000,levelLoadingTimeOut:8000,fragLoadingTimeOut:12000,startFragPrefetch:true,capLevelToPlayerSize:true}:{maxBufferLength:60});hls.loadSource(url);hls.attachMedia(v);var netTry=0,medTry=0;hls.on(Hls.Events.ERROR,function(_,d){if(!d.fatal)return;if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&netTry<2){netTry++;hls.startLoad();return}if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&medTry<1){medTry++;hls.recoverMediaError();return}if(tvMode&&cur&&cur.auto)giveUp();else fail()});
    hls.on(Hls.Events.AUDIO_TRACKS_UPDATED,audRefresh);hls.on(Hls.Events.AUDIO_TRACK_SWITCHED,audRefresh);hls.on(Hls.Events.MANIFEST_PARSED,audRefresh)}else{v.src=url}};
  var useFile=function(){v.src=url};
  var fail=function(){if(!tried){tried=true;if(hls){hls.destroy();hls=null}if(isHls(url))useFile();else useHls();v.play().catch(function(){});return}
   if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('pnote').textContent='Trying link '+(cur.idx+1)+' of '+cur.list.length;play(cur.list[cur.idx],cur.title);return}
   g('pnote').textContent='';g('pmsg').textContent=(tvMode?'No link for this channel would play. Try Links or another channel.':'This link will not play in the browser. Go back and pick another one.')};
  var next=function(){if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('pnote').textContent='Trying link '+(cur.idx+1)+' of '+cur.list.length;play(cur.list[cur.idx],cur.title);return true}return false};
- clearTimeout(stallT);if(cur&&cur.auto&&tvMode)stallT=setTimeout(function(){next()},9000);
- v.onerror=fail;v.onplaying=function(){clearTimeout(stallT);clearTimeout(bufT);g('pnote').textContent='';if(cur&&cur.auto)cur.auto=false};
- v.onwaiting=function(){clearTimeout(bufT);bufT=setTimeout(function(){if(!v.paused&&v.readyState<3&&!g('pmsg').textContent)g('pnote').textContent='Buffering. The source is slow, hold on or try another link.'},4000)};
+ var giveUp=function(){clearTimeout(stallT);stallT=null;if(next())return;if(cur){cur.stalled=true;cur.next=next}if(cur&&cur.done){g('pnote').textContent='';g('pmsg').textContent='No link for this channel would play. Try Links or another channel.'}else g('pnote').textContent='Still looking for a working link'};
+ clearTimeout(stallT);stallT=null;if(cur&&cur.auto&&tvMode)stallT=setTimeout(giveUp,8000);
+ v.onerror=function(){if(tvMode&&cur&&cur.auto)giveUp();else fail()};v.onplaying=function(){clearTimeout(stallT);stallT=null;clearTimeout(bufT);g('pnote').textContent='';g('pmsg').textContent=''};
+ v.onwaiting=function(){if(tvMode&&cur&&!stallT)stallT=setTimeout(function(){stallT=null;if(!v.paused&&v.readyState<3){cur.auto=true;giveUp()}},12000);clearTimeout(bufT);bufT=setTimeout(function(){if(!v.paused&&v.readyState<3&&!g('pmsg').textContent)g('pnote').textContent='Buffering. The source is slow, hold on or try another link.'},4000)};
  if(isHls(url))useHls();else useFile();
  v.play().catch(function(){});v.focus()}
 function closePlayer(){stopVideo();g('player').classList.add('hide');g('pnote').textContent='';cur=null}
