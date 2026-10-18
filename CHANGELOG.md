@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.11
 
 - **Self-hosted add-on on the same device now goes through the media server:** a link to another service on this device's own address (the Telegram-backed PencariMovie server at 192.168.x.x:8088 next to the bridge on :8080) was taken for the bridge itself and left untouched, so the media server settings never applied to it. Links are now compared by address and port. The seek check, the quality check and the host label in the link list had the same mistake.
 - **Media server: links with brackets or spaces in the file name were skipped:** a link such as `…/[Fibwatch.Com]VisionQuest.S01E01.1080p.mkv` or `…/VisionQuest S01E01 [Hindi DDP 5.1] x265.mkv` (FibWatch, UHDMovies / Driveseed workers) made Java's strict URL parser fail, so the bridge could not read its host and left it out of the media server even with "every link" set. Hosts are now read with the same parser the downloads use. Not affected by design: DASH (.mpd) links (they use the bridge's own DASH proxy) and links whose address is a placeholder like `hdstream4u.*`.
