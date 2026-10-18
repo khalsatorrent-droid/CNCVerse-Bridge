@@ -984,6 +984,8 @@ object StremioServer {
                 val k = st.url ?: st.infoHash ?: st.hashCode().toString()
                 ownFormatted[k] ?: upstreamTagged[k] ?: st
             }
+            // "Only links that need headers": ask the hosts whether the headers are really needed (the website's growing lists only start the check)
+            if (!fast) runCatching { HeaderNeed.precheck(formatted, if (forWeb) 0L else 3_500L) }
             // "Hide subtitles": no subtitle tracks go out (after formatting, so the description stays truthful)
             val out = (if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted)
                 // Links into an extension's own server that no longer answers (and have no copy here) are left out
