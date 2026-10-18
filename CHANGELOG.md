@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **New default repository: eclipsia/cloudstream** (`https://gitea.com/eclipsia/cloudstream/raw/branch/main/repo.json`). New installs have it from the start; an existing install gets it once when it is updated (if you remove it later it stays removed).
+
 ## 1.7.13
 
 - **Your own id for the fixed free-tunnel link:** in Settings, under the fixed link switch, type an id of your choice (4-12 lowercase letters or digits, e.g. `merimarzi`) and press "Use this id": the link becomes `https://merimarzi-tunnel.pencarimovie.com`. The relay is shared by everyone, so pick an id nobody can guess. The random id and the "New fixed link" button still work.
