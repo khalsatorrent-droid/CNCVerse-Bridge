@@ -1013,6 +1013,9 @@ object StremioServer {
         }
         // Text with a broken emoji (a lone surrogate half) cannot be written as UTF-8 and would fail the whole answer
         val safeOut = out.map { sanitizeStream(it) }
+        // the best direct links are opened now, so their slow start (the source resolving the file) is over when one is chosen
+        // (not for the website's growing lists: their best links change while the search runs)
+        if (!fast && !forWeb) runCatching { MediaServer.prewarm(safeOut) }
         return Prepared(streams, out, safeOut)
     }
 

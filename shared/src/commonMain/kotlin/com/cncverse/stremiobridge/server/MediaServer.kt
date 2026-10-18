@@ -160,7 +160,7 @@ object MediaServer {
         if (!prefs.enabled) return
         val now = System.currentTimeMillis()
         for (e in files.values) {
-            if (now - e.lastAccess > 3 * 60_000L || e.passthrough || !e.ready || e.complete || e.total <= 0 || !e.ranges || e.isPlaylist) continue
+            if (e.warmOnly || now - e.lastAccess > 3 * 60_000L || e.passthrough || !e.ready || e.complete || e.total <= 0 || !e.ranges || e.isPlaylist) continue
             val pos = playPos(e)
             val ahead = if (prefs.readAheadMb > 0) prefs.readAheadMb * 1024L * 1024L else e.total
             val want = minOf(e.total, pos + ahead)
@@ -693,6 +693,8 @@ object MediaServer {
         @Volatile var error: String? = null
         @Volatile var focus = -1L
         @Volatile var stop = false
+        /** Opened ahead of time ([prewarm]): only the first [PREWARM_BYTES] are fetched until a player asks for the file. */
+        @Volatile var warmOnly = false
         @Volatile var lastAccess = System.currentTimeMillis()
         @Volatile var lastSaved = 0L
         @Volatile var lastRead = 0L
@@ -736,11 +738,12 @@ object MediaServer {
         runCatching { e.metaFile.writeText(json.encodeToString(FileMeta(e.total, e.ranges, e.mime, e.have.snapshot()))) }
     }
 
-    private fun ensureWorker(e: FileEntry) {
+    private fun ensureWorker(e: FileEntry, warm: Boolean = false) {
         if (e.passthrough || e.error != null && e.ready && e.total < 0) return
         synchronized(e.lock) {
+            if (!warm) e.warmOnly = false
             if (e.worker != null || e.complete) {
-                if (!e.complete) startBoosters(e)
+                if (!e.complete && !warm) startBoosters(e)
                 return
             }
             e.stop = false
@@ -749,7 +752,34 @@ object MediaServer {
             t.isDaemon = true
             e.worker = t
             t.start()
-            startBoosters(e)
+            if (!warm) startBoosters(e)
+        }
+    }
+
+    /** What an ahead-of-time open fetches: enough for playback to begin from disk while the real download reconnects. */
+    private const val PREWARM_BYTES = 8L * 1024 * 1024
+    private val PREWARM_PATH = Regex("/media/([0-9a-f]{20})/file/")
+
+    /**
+     * Opens the first [max] direct-file links of a list that was just built (best links come first), so the slow part of a start -
+     * the source resolving the file (a Telegram-backed server, a cold CDN node), the redirects, the TLS handshake - is over by the
+     * time one is chosen. Each one downloads its first [PREWARM_BYTES] only, then lets go of the connection. Does nothing while a
+     * video is being streamed or when the file is already on disk.
+     */
+    fun prewarm(streams: List<StremioStream>, max: Int = 2) {
+        if (!prefs.enabled || root == null || max <= 0 || isStreaming()) return
+        var n = 0
+        for (s in streams) {
+            if (n >= max) break
+            val id = PREWARM_PATH.find(s.url ?: continue)?.groupValues?.get(1) ?: continue
+            n++
+            runCatching {
+                val e = fileEntry(id) ?: return@runCatching
+                if (e.worker != null || e.complete || e.passthrough || e.error != null) return@runCatching
+                if (e.ready && e.total > 0 && e.have.contiguousEnd(e.floor) >= minOf(e.total, PREWARM_BYTES)) return@runCatching
+                e.warmOnly = true
+                ensureWorker(e, warm = true)
+            }
         }
     }
 
@@ -765,6 +795,10 @@ object MediaServer {
     private const val STARTUP_BYTES = 6L * 1024 * 1024
     /** The extra connections wait at most this long for [STARTUP_BYTES] (a slow main connection must not hold them back). */
     private const val STARTUP_WAIT_MS = 3_000L
+    /** A heavy source answers slowly: the extra connections wait longer for the main one so a cold file is not asked for by several at once. */
+    private const val HEAVY_STARTUP_WAIT_MS = 10_000L
+    /** How long the first request of a file may wait for the source's first byte, and how long a player is kept waiting for that. */
+    private const val FIRST_ANSWER_S = 100L
 
     private fun startBoosters(e: FileEntry) {
         val extra = (connectionsFor(e) - 1).coerceIn(0, 19)
@@ -805,7 +839,7 @@ object MediaServer {
                 // Start-up (or after a seek): the main connection alone gets the whole bandwidth until a first piece is on disk,
                 // so playback starts at once; only then do the extra connections fill the read-ahead window
                 if (e.gatePos < 0 || kotlin.math.abs(from - e.gatePos) > SEG) { e.gatePos = from; e.gateAt = now }
-                if (e.have.contiguousEnd(from) - from < STARTUP_BYTES && now - e.gateAt < STARTUP_WAIT_MS) { Thread.sleep(100); continue }
+                if (e.have.contiguousEnd(from) - from < STARTUP_BYTES && now - e.gateAt < (if (isHeavy(e)) HEAVY_STARTUP_WAIT_MS else STARTUP_WAIT_MS)) { Thread.sleep(100); continue }
                 val to = if (ahead > 0) minOf(e.total, from + ahead) else e.total
                 var did = false
                 var i = from / SEG
@@ -905,8 +939,12 @@ object MediaServer {
     private fun runWorker(e: FileEntry) {
         var raf: ChunkStore.Rw? = null
         try {
-            val client = clientFor(e.id, e.src)
+            val client = clientFor(e.id, e.src).let { c ->
+                // The first answer of a source that resolves the file first (a Telegram-backed server) can take longer than 45 s on a cold file
+                if (e.ready) c else c.newBuilder().readTimeout(FIRST_ANSWER_S, TimeUnit.SECONDS).build()
+            }
             raf = e.store.rw(true)
+            var warmDone = false
             var cursor = 0L
             var sinceSave = 0L
             var probed = false
@@ -979,6 +1017,8 @@ object MediaServer {
                             return@use
                         }
                         e.ready = true
+                        ServerState.info("[MediaServer] ${hostOf(e.url)} answered HTTP ${r.code} after ${(System.currentTimeMillis() - t0) / 1000.0} s: " +
+                            "${e.total / 1_048_576} MB, ${if (e.ranges) "seekable" else "not seekable"}${if (isHeavy(e)) ", heavy source" else ""}")
                     }
                     val body = r.body ?: throw IOException("empty response")
                     val startAt = if (r.code == 206) (parseStart(r.header("Content-Range")) ?: pos) else 0L
@@ -1011,9 +1051,12 @@ object MediaServer {
                             if (!makeRoom(0, e.id)) throw IOException("the media cache is full (limit ${prefs.maxCacheMb} MB)")
                         }
                         if (e.have.contiguousEnd(off) > off) break // ran into data that is already on disk
+                        // Opened ahead of time and nobody is playing it: stop after the first piece (a seekable source reconnects when asked for)
+                        if (e.warmOnly && e.ranges && e.readers.isEmpty() && off - startAt >= PREWARM_BYTES) { warmDone = true; break }
                     }
                     cursor = off
                 }
+                if (warmDone && e.warmOnly) break
                 if (e.passthrough) break
                 if (!e.stop && e.total >= 0 && !e.ranges && e.have.firstGapFrom(0) < e.total) {
                     throw IOException("the source closed the connection early")
@@ -1065,7 +1108,7 @@ object MediaServer {
         e.lastAccess = System.currentTimeMillis()
         served.incrementAndGet()
         ensureWorker(e)
-        withTimeoutOrNull(45_000) { while (!e.ready) delay(10) }
+        withTimeoutOrNull((FIRST_ANSWER_S + 10) * 1_000) { while (!e.ready) delay(10) }
         if (!e.ready) return call.respondText("The source did not answer in time", status = HttpStatusCode.GatewayTimeout)
         if (e.isPlaylist) return call.respondRedirect("../pl/${token(id, e.url)}.m3u8")
         if (e.passthrough) return passthrough(call, e)
