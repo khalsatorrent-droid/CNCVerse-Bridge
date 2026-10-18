@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.9
 
 - **Website: Live TV no longer loads for ever:** a link that does not start within 8 seconds, fails, or freezes for 12 seconds while playing is skipped for the channel's next link (and when no other link has answered yet it moves on as soon as one does). If none of them work, the player says so instead of showing the loading note.
 
