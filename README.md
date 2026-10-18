@@ -1,117 +1,172 @@
-# CNCVerse Bridge (personal fork)
+# 🌉 CNCVerse Bridge (personal fork)
 
-CNCVerse Bridge runs Cloudstream extensions as a Stremio / Nuvio add-on on your own Android device or computer. Compared with the original it is built for links that start fast, seek well and stay in a sensible order.
+> **In one sentence:** this app turns your phone, tablet or computer into a little **movie-and-TV link finder** that Stremio and Nuvio can use, and this fork makes it faster, tidier and a lot more reliable. 🍿
 
-- **Media server:** links that need headers, a Referer or cookies are downloaded by the device, kept on disk and served to the player with seeking and a read-ahead buffer, so playback keeps going while the source is slow. HLS playlists and segments are cached too.
-- **Better lists:** sorted by real resolution, then fast links first (FSL, Pixeldrain, workers, HLS), with similar links grouped. Names keep their full details; dead and non-seekable links are hidden.
-- **FORCE REFRESH:** the first entry of every list shows how many results were found, how many each extension found and whether the search is still running; click it to clear the saved results of a title and search again.
-- **Subtitles:** your languages first (or only), duplicates removed, optional timing delay.
-- **Anime:** every known title name is searched, with season and episode numbers translated between databases; hardsub / dub / softsub are labelled.
-- **Cloudflare:** checks are solved once in a WebView and the cookie is reused for later requests.
-- **Upstream add-ons:** merge another Stremio add-on, including self-hosted ones on your home network, which are served through the bridge so they play away from home.
-- **Website version:** optional password-protected site at `/home` (TMDB catalog, search, player) served by the bridge itself, for a laptop browser.
-- **Tunnel:** free relay link or your own Cloudflare Tunnel for HTTPS in Stremio.
-- **History tab:** every request, timing and the exact list sent, copyable as text.
-- **Backup & updates:** one-file backup of all settings and extensions; in-app updates from this repository's releases.
+**New here?** Jump to [🚀 Quick start](#-quick-start-5-minutes). **Curious what changed?** Read [✨ What this fork adds](#-what-this-fork-adds-in-plain-words).
 
-Why use it: fewer dead links, less buffering, a tidier list, and one place for Stremio, Nuvio and desktop. See [CHANGELOG.md](CHANGELOG.md) for every change.
-
-> **Personal fork.** This is a personal fork kept for the maintainer's own use. All credit for the original app goes to its original developer, **NivinCNC**: without his CNCVerse Bridge, none of the features added here would have been possible. This fork only builds on his work.
-
-> **Made with AI, no responsibility.** The changes in this fork were written with AI (Claude) and are provided **as is**, with no warranty of any kind. Expect bugs. The maintainer takes no responsibility for any damage, data loss, account problems or other consequences of using it, or for the content of any extension, add-on or website it connects to. Use it at your own risk and only for content you have the right to access.
-
-## Downloads
-
-CNCVerse Bridge is available for Android and Desktop (Windows/Linux).
-
-Go to the **[Releases](../../releases)** page to download:
-- **Android:** Download the `.apk` file.
-- **Desktop:** Download the `.msi`/`.exe` for Windows or the `.deb` for Linux (Debian/Ubuntu and derivatives).
+> 🙏 **Personal fork.** All credit for the original app goes to its original developer, **NivinCNC**: without his CNCVerse Bridge, none of the features added here would have been possible. This fork only builds on his work.
+>
+> 🤖 **Made with AI, no responsibility.** The changes in this fork were written with AI (Claude) and are provided **as is**, with no warranty of any kind. Expect bugs. The maintainer takes no responsibility for any damage, data loss, account problems or other consequences of using it, or for the content of any extension, add-on or website it connects to. Use it at your own risk and only for content you have the right to access.
 
 ---
 
-## Getting Started (Android)
+## 🤔 What is this, really?
 
-1. **Install and Run:** Install the downloaded `.apk` and open the CNCVerse Bridge app.
-2. **Start Server:** The app will run a local server in the background and display an addon URL on the screen (e.g., `http://127.0.0.1:8080/manifest.json`).
+Think of it as a **waiter** 🧑‍🍳:
 
-### Usage with Stremio
+1. You tell Stremio or Nuvio "I want to watch *that movie*".
+2. The Bridge (the waiter) runs many small helper programs, called **extensions**, which each go and look on a different website.
+3. It collects all the links they find, throws away the dead and bad ones, puts the best on top, and hands you a **neat menu** 📋.
+4. You tap one and it plays.
 
-1. Copy the addon URL provided in the CNCVerse Bridge app.
-2. **Important:** Stremio needs HTTPS: set up your Cloudflare Tunnel (see [Stremio Mode](#stremio-mode-https-through-your-own-cloudflare-tunnel)) and enable the "Stremio Mode" toggle.
-3. Open the **Stremio** app and go to the **Addons** section.
-4. Paste the copied URL into the search bar or addon URL field.
-5. Tap **Install** to add the CNCVerse Bridge addon.
-
-### Usage with Nuvio
-
-1. Ensure the CNCVerse Bridge app is running in the background.
-2. Open the **Nuvio** app.
-3. Nuvio will automatically detect the local CNCVerse Bridge addon—no manual URL pasting is required!
+The fork adds a **kitchen** 🍳 (the *media server*) that can prepare a link for you in advance so the video starts fast and does not stutter, plus a **website** 🌐 you can open on a laptop, and many small things that make the menu nicer.
 
 ---
 
-## Getting Started (Desktop — Windows & Linux)
+## 🚀 Quick start (5 minutes)
 
-1. **Install and Run:** Install the `.msi` (Windows) or `.deb` (Linux), or run the desktop app from the distribution folder.
-2. The app will launch and display the server status and the local addon URL.
-3. **Same-Device Streaming:** If you run Stremio on the same computer, you can click the **Add to Stremio** button or manually add `http://127.0.0.1:8080/manifest.json` in Stremio.
-4. **Local Network Streaming:** You can also use the Desktop app to host the bridge for other devices on your Wi-Fi network. Simply use the local IP address shown in the app (e.g., `http://192.168.1.100:8080/manifest.json`) on your TV or phone.
+### 📱 On an Android phone or tablet (the easiest way)
 
-### ⚠️ Desktop Limitations
+1. Open the **[Releases](../../releases)** page and download the `.apk` file. 📥
+2. Install it and open **CNCVerse Bridge**. (Android may ask you to allow installs from your browser: that is normal for apps outside the Play Store.)
+3. Tap **Start**. The app shows an address like `http://127.0.0.1:8080/manifest.json`. That is your "add-on address". 🏠
+4. Add some extensions: open the **Extensions** tab, pick a repository, and install what you like. (Six repositories are already added for you.) 🧩
+5. **Using Nuvio?** Just open it. It finds the Bridge by itself, nothing to paste. ✅
+6. **Using Stremio?** It wants a secure (`https`) address. Turn on **Stremio Mode** on the Server tab. With no setup the app gives you a free temporary `https` link. Copy it into Stremio under **Add-ons**, and tap **Install**. ✅
 
-Currently, the Desktop version lacks full **WebView support**. This means:
-- Features relying on Cloudflare bypass will use the system browser (Chrome/Chromium/Edge/Brave are auto-detected on Linux) instead of a hidden WebView.
-- FebBox / ShowBox login flows that require a web interface open in the system browser.
-For full compatibility with these specific providers, please use the Android version.
+### 💻 On Windows or Linux
+
+Download the `.msi` / `.exe` (Windows) or the `.deb` (Linux) from [Releases](../../releases), install it, and open it. The window shows the address to use. On the same computer, the **Add to Stremio** button does it for you. For a TV or phone on your Wi-Fi, use the computer's local address shown in the app (like `http://192.168.1.100:8080/manifest.json`). 📺
+
+> ⚠️ The desktop version has no built-in web view, so a few things (Cloudflare checks, FebBox / ShowBox logins) use your normal browser instead. For those, the Android app is smoother.
+
+### 🕰️ Keeping it running all day
+
+An old tablet 📱 that stays plugged in is perfect. Turn off battery optimisation for the app, keep it charging, and (if you want to reach it away from home) use the tunnel settings below. The app already asks Android to keep it alive.
 
 ---
 
-## Stremio Mode (HTTPS through your own Cloudflare Tunnel)
+## 🌍 Using it away from home: tunnels
 
-Stremio (especially Stremio Web) needs an HTTPS addon URL. Stremio Mode serves the bridge through **your own** Cloudflare Tunnel and domain:
+A **tunnel** is a private doorway from the internet to your device, so Stremio can reach it anywhere. You have four choices:
+
+| Option | Effort | Link stays the same? |
+|---|---|---|
+| 🆓 **Free temporary tunnel** | none, just turn on *Stremio Mode* | no, it changes every start |
+| 📌 **Free tunnel + fixed link** | one switch | yes, with the relay |
+| 🏷️ **Free tunnel + *your own* name** | one switch and type a name | yes, e.g. `https://merimarzi-tunnel.pencarimovie.com` |
+| 🔐 **Your own Cloudflare Tunnel** | a few steps (below) | yes, on your own domain |
+
+> ℹ️ The fixed-link relay belongs to the pencarimovie-server author and is for **personal use only**. It is shared by everyone, so choose a name nobody can guess.
+
+### 🔐 Your own Cloudflare Tunnel (for people with a domain)
 
 1. Add your domain to Cloudflare (the free plan is enough).
 2. In the Cloudflare dashboard open **Zero Trust → Networks → Tunnels → Create a tunnel** (Cloudflared).
 3. Copy the token from the install command (the long text after `--token`).
 4. Under **Public Hostname** add e.g. `bridge.yourdomain.com` → service **HTTP**, URL `localhost:8080`.
 5. In the app open **Settings → Cloudflare Tunnel**, paste the token and the hostname, and save.
-6. Turn on **Stremio Mode** on the Server tab. Your addon URL is `https://bridge.yourdomain.com/manifest.json`.
+6. Turn on **Stremio Mode** on the Server tab. Your add-on address is `https://bridge.yourdomain.com/manifest.json`.
 
 The app downloads `cloudflared` on first use.
 
 ---
 
-## What's in the app
+## 🧭 A tour of the app
 
-- **Server** — start/stop, addon URLs for Nuvio (LAN) and Stremio (HTTPS), Stremio Mode
-- **Extensions** — repositories, search & install, update all, install a whole repo, switch extensions on/off, per-extension settings
-- **Logs** — live log with copy/clear
-- **Settings** — Cloudflare Tunnel, streams (resolutions, CAM, size limits, non-seekable files, subtitles, sorting, extension priority), catalogs (hide all or pick which ones; genres come from each home page, refreshed every 30 min), stream formatter (on by default, presets and preview), stream cache
+| Tab | What it is for |
+|---|---|
+| 🖥️ **Server** | Start / stop, your add-on addresses, Stremio Mode |
+| 🧩 **Extensions** | Find, install, update and switch extensions on / off; per-extension settings |
+| 📜 **Logs** | A live diary of what the app is doing (copy it when you need help) |
+| 🕘 **History** | Every request, how long it took and exactly what was sent |
+| ⚙️ **Settings** | Everything else: tunnel, streams, subtitles, media server, website, catalogs, formatter, backup |
 
 ---
 
-## What this fork adds
+## ✨ What this fork adds, in plain words
 
-New features compared with the original CNCVerse Bridge (it forked on 10 Oct 2026; releases 1.2.0 → 1.6.0). Bug fixes are not listed here; the full per-release list is in [CHANGELOG.md](CHANGELOG.md).
+### 🍿 Better link lists
+- 🥇 **Sorted by real quality**: the best resolution first, and inside each, the fast kinds of links first. Links that only *claim* to be HD are checked and shown with their real resolution.
+- 🗑️ **Dead links hidden**: broken, download-only and non-seekable files can be hidden, and a "hide links below 720p" setting keeps junk out.
+- 🏷️ **Every link says where it came from**: the extension, the matched title, the file name and the episode, so you can tell similar links apart.
+- 🧹 **No clutter**: the same link is listed once, and giant subtitle lists become a short "63 languages".
+- 🔄 **FORCE REFRESH entry**: the first item of every list shows how many results were found, how many *each* extension found, and whether the search is still running. Tap it to clear that title and search again.
+- 🎛️ **Stream formatter**: choose how every line looks, with presets and a live preview.
+- ⏭️ **Next episode ready in advance** (optional) and **"show results once"** when you prefer one complete list.
 
-- **Media server** - links that need a Referer / cookies / headers are downloaded by the device with those headers, cached on disk and served to the player with seeking while the download runs. HLS playlists and segments are cached and fetched ahead; links are signed (no open proxy). Files are kept in 2 MB pieces and only a window around the playing position stays on disk; read-ahead up to 2 GB (default 512 MB), cache up to 5 GB (default 2 GB), up to 8 parallel connections per file (3 for heavy sources such as a self-hosted Telegram server or a NAS on the home network, with longer requests and fewer restarts so their few workers are not used up). The playback position is checked every 5 s; when half of the read-ahead window or less is ready, every connection is brought back to refill it. Many non-seekable links (Pixeldrain mirrors and others) are made seekable; extension-local m3u8 links (GoTaku hardsub and similar) are cached on the device.
-- **Streams and sorting** - results are sorted by real resolution ("Hide links below", default 720p); adaptive HLS links get their real resolution (or their best rendition); every link shows where it came from (matched extension title, file name, episode used); the resolution is also read from the file name in the link; long subtitle lists are counted; Sub / Dub / Hardsub labels for anime (not shown for other titles) with hardsub first and an *Anime audio* setting; identical links listed once; new formatter fields and reworked default layouts; Upstream add-on links keep their own names.
-- **FORCE REFRESH entry** - first entry of every list: shows the number of results found (and shown), how many each extension / upstream add-on found, and whether the search is complete or still running (so you know if a reload is needed); click it to clear the saved results of that title and search again (can be hidden in Settings).
-- **Anime** - every known name of a show (AniList, Kitsu, MyAnimeList, TMDB) is searched with fuzzy matching and season checks; TMDB season / episode numbers are translated to AniList numbers; faster lookup that no longer cuts the search short.
-- **Cloudflare and network** - Cloudflare checks are solved in a hidden WebView (shown in a window when you need to tap), the cookie is saved with its User-Agent and reused; sites with a challenge are queued and listed in Settings with their status; real DNS-over-HTTPS fallback (Cloudflare, Google, Quad9); free Cloudflare quick tunnel without a token; optional **fixed link** through the pencarimovie relay (`<id>-tunnel.pencarimovie.com`) with a random per-device id and a reset button. Challenges are recognised the way the Raghav Nepu extension does (cf-mitigated header or the "Just a moment" page), the saved cookie is sent on every request to the site and shared by its other hosts, and the link probes use it too.
-- **Pixeldrain** - file links go through the fast mirror, and its redirect is resolved to the real CDN link before sharing.
-- **Upstream add-ons** - merge the streams of another Stremio add-on (for example your pencarimovie server for Telegram). Links to a home-network address (192.168.x.x and the like) are served through the bridge so they also play away from home, and the add-on's full descriptions are kept.
-- **History tab** - every request with counts, timing and extensions; open one to see the exact list that was sent, with links; long press a result to copy it as text.
-- **Backup & import** - every setting, repository and installed extension in one JSON file.
-- **Updates and releases** - update dialog that follows this fork's releases (Update / Later / Skip); a one-click Release workflow builds APK, MSI, EXE and DEB; a Check workflow compiles both apps and runs the tests on pull requests; six extension repositories are added by default; the Android server is kept alive (wake locks, battery-optimisation exemption, restart after swipe-away).
-- **Switches** - "Hide links that need headers", "Load the next episode in advance", "Show results once", "Show refresh results button", "Hide non-seekable / non-playable files".
+### ⚡ The media server: smooth playback
+Many links only play with special "headers" or cookies, and many websites are slow. The Bridge can fetch the video **for** your player:
+- 💾 It downloads ahead (a "read-ahead" buffer) and keeps only what is needed on disk, so seeking and skipping work.
+- 🚦 **Playback starts after the first few MB**, then the buffer keeps filling while you watch.
+- 🔌 Several connections download at once, and it speeds up by itself when the buffer runs low.
+- 🧪 **It tests whether a link really needs headers.** Most extensions attach headers to everything, so the Bridge now asks the website with a plain request; only links that really need help go through the media server.
+- 🏠 Slow self-hosted sources (a Telegram server, a NAS at home) get gentler settings so they don't choke.
+- 🔥 The first couple of links in a list are "warmed up" in the background so they start sooner.
+- 🔐 Links are signed, so it is not an open proxy for strangers.
 
-## Building the APK on GitHub
+### 🌐 The website version (`/home`)
+Don't want an app on the laptop? The Bridge can host its **own website** 💻:
+- 🔑 Switch it on in **Settings → Website version** and set a password.
+- 🎬 Browse a TMDB catalogue, search, open a title and play it in the browser.
+- ⏱️ **Links appear as each extension answers**, with a "Still searching: 12 of 30 sources" line.
+- 📺 **Live TV tab**: every TV channel from all your catalogues in one A-Z list, with favourites, recently watched, letters, search, channel up / down, and quick start. If a link is stuck, it moves on to the next by itself.
+- 🔊 **Audio language picker** for streams with several languages.
+- 📱 Works on phones too (with a proper search button).
+- 🎨 A cleaner look: featured title, rows you scroll, "recently opened", season tabs and episode cards.
+- ⌨️ Keys: space, arrows, F (full screen), M (mute), A (audio), N / P (next / previous channel), Esc.
+
+### 📺 Live TV in the add-on
+- 📺 **"All TV channels (A-Z)"**: one catalogue that merges the channels of every TV catalogue.
+
+### 💬 Subtitles
+- 🌍 Pick your languages (e.g. `English, Hindi`): they come first, or are the *only* ones.
+- 🧽 Duplicates removed.
+- ⏲️ Optional **delay** if subtitles are out of sync.
+
+### 🎌 Anime made easier
+- 🔎 Every known name of a show (AniList, Kitsu, MyAnimeList, TMDB) is searched, with fuzzy matching and season checks.
+- 🔢 Season and episode numbers are translated between databases, so "S2 E5" finds the right episode.
+- 🏷️ **Sub / Dub / Hardsub** labels (only for anime), hardsub first, and an *Anime audio* setting.
+
+### 🛡️ Cloudflare and network
+- 🧩 Cloudflare "checking your browser" pages are solved once in a hidden web view, and the cookie is reused for later requests (also across a site's other hosts).
+- 🌐 A real **DNS-over-HTTPS** fallback (Cloudflare, Google, Quad9) when your network's DNS fails.
+
+### 🔗 Other add-ons and special hosts
+- ➕ **Upstream add-ons**: merge another Stremio add-on (like your own Telegram server). Links to a home-network address are served through the Bridge so they also play away from home.
+- 💧 **Pixeldrain** links use the fast mirror and are made seekable.
+
+### 🧰 Handy extras
+- 🗂️ **Backup & import**: all settings, repositories and extensions in one file.
+- 🔔 **In-app updates**: a dialog shows the release notes with *Update / Later / Skip*.
+- 🕘 **History tab** with a long-press "copy as text".
+- 🔋 Android: the server is kept alive (wake locks, battery-optimisation exemption, restarts after swipe-away).
+- 🤖 One-click release workflow and automatic checks for every change (for the maintainer).
+
+> 📚 Want every detail, release by release? See **[CHANGELOG.md](CHANGELOG.md)**.
+
+---
+
+## 🆘 Something is wrong?
+
+| Problem | Try this |
+|---|---|
+| 🟡 List is empty or short | Wait a little (some sites answer late), then tap **FORCE REFRESH** |
+| 🧩 Extension finds nothing | Update extensions; check the **Logs** tab for errors |
+| 🐢 A video starts slowly | Turn on the **media server** in Settings; pick *"links that need headers"* |
+| 🔁 Buffering on a slow source | Raise the read-ahead a bit in the media server settings |
+| 🔒 Stremio refuses the address | It needs `https`: turn on **Stremio Mode** |
+| 🌐 Website won't open | The device must be awake and the tunnel running; use the address shown in *Website version* |
+| 🧯 Anything else | Open **Logs**, copy the lines, and share them when you ask for help |
+
+---
+
+## 🛠️ For developers: building the APK on GitHub
 
 Upload the project to a GitHub repository (branch `main`). The *Build APK* workflow (`.github/workflows/build-apk.yml`) builds an installable APK; get it from the run's *Artifacts* or from the *latest* release. To sign with your own key, add the repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; without them the sideload key in `ci/` is used.
 
-## Building from source
+## 🛠️ Building from source
 
 ```bash
 ./gradlew :androidApp:assembleRelease                        # Android apk (signed when a keystore is configured)
@@ -136,7 +191,7 @@ On start the app looks at the releases of this repository. If a newer version wi
 
 ---
 
-## License
+## 📄 License
 
 The original CNCVerse Bridge code is **all rights reserved** by its original author (see the [LICENSE](LICENSE) file). This fork does not change that license and grants no extra rights: it is shared only as a personal project, and any use, copying or redistribution of the original code needs the original author's permission.
 
