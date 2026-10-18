@@ -50,7 +50,8 @@ object SeekProbe {
 
     /** True when the link's file name says it is an archive (checked for every request, no network). */
     fun isArchiveUrl(url: String?): Boolean {
-        val path = runCatching { java.net.URI(url ?: return false).path }.getOrNull() ?: return false
+        val path = LinkUrl.path(url ?: return false)
+        if (path.isEmpty()) return false
         return ARCHIVE_PATH.containsMatchIn(path.trimEnd('/'))
     }
 
@@ -69,7 +70,7 @@ object SeekProbe {
         val host = uri.host?.lowercase() ?: return false
         // The bridge's own relay links (proxy, decrypt, local relay) are never filtered
         if (RELAY_PATH.containsMatchIn(uri.rawPath ?: "")) return false
-        if (host in ServerState.ownHosts) return false
+        if (ServerState.isOwnUrl(url)) return false
         ServerState.streamBaseUrl?.let { b -> if (runCatching { java.net.URI(b).host }.getOrNull() == host) return false }
         return true
     }
