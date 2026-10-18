@@ -33,4 +33,11 @@ val BUNDLED_REPO_URLS: List<String> = listOf(
     "https://raw.githubusercontent.com/KSHITIJ8473/raghav/builds/repo.json",
     "https://raw.githubusercontent.com/RVRBEAST76/allforu-repo/builds/repo.json",
     "https://raw.githubusercontent.com/Faisal0786/Desi/main/repo.json",
+    ECLIPSIA_REPO_URL,
 )
+
+/** Added to the bundle after the first six: an existing install gets it once ([BUNDLED_REPO_URLS_V2]), a new one with the rest. */
+const val ECLIPSIA_REPO_URL = "https://gitea.com/eclipsia/cloudstream/raw/branch/main/repo.json"
+
+/** Repositories added to the bundle after the first version of it: existing installs get just these, once. */
+val BUNDLED_REPO_URLS_V2: List<String> = listOf(ECLIPSIA_REPO_URL)

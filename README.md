@@ -30,7 +30,7 @@ The fork adds a **kitchen** 🍳 (the *media server*) that can prepare a link fo
 1. Open the **[Releases](../../releases)** page and download the `.apk` file. 📥
 2. Install it and open **CNCVerse Bridge**. (Android may ask you to allow installs from your browser: that is normal for apps outside the Play Store.)
 3. Tap **Start**. The app shows an address like `http://127.0.0.1:8080/manifest.json`. That is your "add-on address". 🏠
-4. Add some extensions: open the **Extensions** tab, pick a repository, and install what you like. (Six repositories are already added for you.) 🧩
+4. Add some extensions: open the **Extensions** tab, pick a repository, and install what you like. (Seven repositories are already added for you.) 🧩
 5. **Using Nuvio?** Just open it. It finds the Bridge by itself, nothing to paste. ✅
 6. **Using Stremio?** It wants a secure (`https`) address. Turn on **Stremio Mode** on the Server tab. With no setup the app gives you a free temporary `https` link. Copy it into Stremio under **Add-ons**, and tap **Install**. ✅
 
