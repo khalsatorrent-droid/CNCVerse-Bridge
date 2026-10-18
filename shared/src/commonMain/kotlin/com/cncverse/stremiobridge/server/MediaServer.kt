@@ -413,6 +413,9 @@ object MediaServer {
         if (hls && !p.cacheHls && !lanUpstream && !webHls) return s
         if (!hls && !p.cacheFiles && !lanUpstream) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
+        // The extension declares headers, but the host answered a plain request (see HeaderNeed): the link needs no help from this server
+        if (!loop && !lanUpstream && !webHls && !needsCf && headers.isNotEmpty() && (p.mode == "headers" || (p.mode == "hls" && !hls)) &&
+            HeaderNeed.verdict(url, headers) == false) return s
         val id = register(url, headers)
         // The extension's server may stop at any time: its playlists (and the first segments) are fetched and kept now
         if (loop && !warmLocal(id, url)) return s
