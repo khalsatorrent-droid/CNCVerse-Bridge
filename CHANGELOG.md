@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.19
 
 - **Website player: "no sound" notice:** some Cloudflare R2 and Pixeldrain files carry audio the browser cannot decode (AC3, EAC3, DTS), so they played silently. The player now notices this a few seconds in and shows a notice with Open in VLC and Copy link buttons, so you can play the file with sound in a media player.
 - **Switch link while playing:** the player now has a Links button for movies and episodes too. Pick another link and it carries on from the same point.
