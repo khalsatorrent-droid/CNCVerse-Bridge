@@ -77,8 +77,13 @@ object AnimeResolver {
             ).execute().use { r -> if (r.code == 200) r.body?.string() else null }
         }.getOrNull() ?: return null
         val media = (json.parseToJsonElement(text).jsonObject["data"] as? JsonObject)?.get("Media") as? JsonObject ?: return null
+        return hitOf(media)
+    }
+
+    /** The AniList Media object as a [Hit] (every title it is known by on AniList). */
+    private fun hitOf(media: JsonObject): Hit? {
         val t = media["title"] as? JsonObject
-        val titles = listOfNotNull(t?.str("english"), t?.str("romaji")) + media.strList("synonyms").take(6) + listOfNotNull(t?.str("native"))
+        val titles = listOfNotNull(t?.str("english"), t?.str("romaji")) + media.strList("synonyms").take(12) + listOfNotNull(t?.str("native"))
         if (titles.isEmpty()) return null
         val year = (media["seasonYear"] as? JsonPrimitive)?.intOrNull
             ?: ((media["startDate"] as? JsonObject)?.get("year") as? JsonPrimitive)?.intOrNull
@@ -97,6 +102,23 @@ object AnimeResolver {
     private fun aniListById(field: String, id: Int): Hit? = aniListHit("Int", "$field:\$v", JsonPrimitive(id))
 
     private fun aniListSearch(term: String): Hit? = aniListHit("String", "search:\$v", JsonPrimitive(term))
+
+    /** The first few AniList anime a search finds, best first (the right one is not always the first). */
+    private fun aniListSearchAll(term: String): List<Hit> {
+        val query = "query(\$v:String){Page(perPage:6){media(search:\$v,type:ANIME){id idMal title{english romaji native}synonyms seasonYear startDate{year}episodes format}}}"
+        val body = JsonObject(mapOf("query" to JsonPrimitive(query), "variables" to JsonObject(mapOf("v" to JsonPrimitive(term))))).toString()
+        val text = runCatching {
+            client.newCall(
+                okhttp3.Request.Builder().url("https://graphql.anilist.co")
+                    .header("Accept", "application/json")
+                    .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body))
+                    .build()
+            ).execute().use { r -> if (r.code == 200) r.body?.string() else null }
+        }.getOrNull() ?: return emptyList()
+        val list = ((json.parseToJsonElement(text).jsonObject["data"] as? JsonObject)?.get("Page") as? JsonObject)?.get("media") as? JsonArray
+            ?: return emptyList()
+        return list.mapNotNull { (it as? JsonObject)?.let { m -> hitOf(m) } }
+    }
 
     private fun aniList(field: String, id: Int): AnimeInfo? = aniListById(field, id)?.info
 
@@ -129,7 +151,7 @@ object AnimeResolver {
         }.getOrNull() ?: return null
         val media = (json.parseToJsonElement(text).jsonObject["data"] as? JsonObject)?.get("Media") as? JsonObject ?: return null
         val t = media["title"] as? JsonObject
-        val titles = listOfNotNull(t?.str("english"), t?.str("romaji")) + media.strList("synonyms").take(6) + listOfNotNull(t?.str("native"))
+        val titles = listOfNotNull(t?.str("english"), t?.str("romaji")) + media.strList("synonyms").take(12) + listOfNotNull(t?.str("native"))
         if (titles.isEmpty()) return null
         val year = (media["seasonYear"] as? JsonPrimitive)?.intOrNull
             ?: ((media["startDate"] as? JsonObject)?.get("year") as? JsonPrimitive)?.intOrNull
@@ -247,7 +269,7 @@ object AnimeResolver {
         if (extra.isNotEmpty()) {
             val seen = info.titles.map { AnimeMatcher.normalize(it) }.toMutableSet()
             val add = extra.filter { it.isNotBlank() && seen.add(AnimeMatcher.normalize(it)) }
-            info = info.copy(titles = info.titles + add.take(8))
+            info = info.copy(titles = info.titles + add.take(14))
         }
         return info
     }
@@ -261,10 +283,14 @@ object AnimeResolver {
         cache[key]?.let { return it }
         val info = withContext(Dispatchers.IO) {
             try {
-                val hit = aniListSearch(title) ?: return@withContext null
+                val raw = aniListSearchAll(title)
                 val nt = AnimeMatcher.normalize(title)
-                val ok = hit.info.titles.any { AnimeMatcher.dice(AnimeMatcher.normalize(it), nt) >= 0.85 }
-                if (!ok) null else enrich(hit).let { found ->
+                val fits = raw.filter { h -> h.info.titles.any { AnimeMatcher.dice(AnimeMatcher.normalize(it), nt) >= 0.85 } }
+                // the entry of the same year when there is one; otherwise the first hit, as before (it must fit the name)
+                val hit = fits.firstOrNull { h -> year != null && h.info.year != null && kotlin.math.abs(h.info.year - year) <= 1 }
+                    ?: raw.firstOrNull()?.takeIf { it in fits }
+                    ?: return@withContext null
+                enrich(hit).let { found ->
                     // The id's own title stays first: that is what the extensions were already searched with
                     found.copy(titles = (listOf(title) + found.titles).distinct(), seasonHint = null)
                 }
@@ -438,14 +464,16 @@ object AnimeMatcher {
     }
 
     /** Search terms to try, most promising first (an extension's search can be picky about the spelling). */
-    fun searchTerms(info: AnimeInfo, season: Int? = null, max: Int = 12): List<String> {
+    fun searchTerms(info: AnimeInfo, season: Int? = null, max: Int = 18): List<String> {
         val out = ArrayList<String>()
         fun add(t: String?) {
             val c = t?.trim().orEmpty()
             if (c.length >= 2 && out.none { it.equals(c, true) }) out += c
         }
-        // 1. every known title as it is (romaji, English, synonyms)
-        for (t in info.titles) add(t)
+        // 1. every known title as it is (romaji, English, synonyms) - the first ones, then their usual respellings, then the rest
+        for (t in info.titles.take(8)) add(t)
+        for (t in info.titles.take(4)) for (v in variants(t)) add(v)
+        for (t in info.titles.drop(8)) add(t)
         // 2. without season / part words: sites often list "Title" and "Title 2nd Season" under the plain name
         for (t in info.titles) add(base(normalize(t)))
         // 3. before the subtitle ("Title: Long Subtitle" -> "Title")
@@ -526,6 +554,24 @@ object AnimeMatcher {
             if (sc > bestScore) { bestScore = sc; best = r }
         }
         return if (bestScore >= minScore) best else null
+    }
+
+    private val LETTERS_DIGITS = Regex("(\\p{L}{2,})(\\d{2,})")
+    private val LV_NUMBER = Regex("\\blv\\.?\\s*(\\d+)", RegexOption.IGNORE_CASE)
+    private val LEVEL_NUMBER = Regex("\\blevel\\s*(\\d+)", RegexOption.IGNORE_CASE)
+
+    /**
+     * How sites usually respell a title: "Lv999 no Murabito" / "Lv 999 no Murabito" / "Level 999 no Murabito", and without a
+     * leading "The". Only different spellings are returned.
+     */
+    fun variants(title: String): List<String> {
+        val t = title.trim()
+        val out = LinkedHashSet<String>()
+        if (t.startsWith("the ", true) && t.length > 8) out += t.substring(4).trim()
+        out += LETTERS_DIGITS.replace(t) { it.groupValues[1] + " " + it.groupValues[2] }
+        out += LV_NUMBER.replace(t) { "Level " + it.groupValues[1] }
+        out += LEVEL_NUMBER.replace(t) { "Lv" + it.groupValues[1] }
+        return out.filter { it != t && it.length >= 3 }
     }
 
     /** Other ways to type a title for the site's own search box. */

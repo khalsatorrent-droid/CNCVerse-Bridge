@@ -1792,6 +1792,36 @@ object StremioServer {
         } catch (e: Throwable) { null }
     }
 
+    private val tmdbAltTitles = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+
+    /**
+     * The other names TMDB knows a series by (its "alternative titles": the regional and English spellings), for the anime lookup:
+     * only Latin-script ones, since the extensions' sites are searched in romaji / English. Empty when TMDB does not answer.
+     */
+    private suspend fun tmdbAlternativeTitles(ext: ExternalId): List<String> {
+        val key = "${ext.scheme}:${ext.key}"
+        tmdbAltTitles[key]?.let { return it }
+        return try {
+            val tvId = when (ext.scheme) {
+                "tmdb" -> ext.key
+                "imdb", "tvdb" -> fetchTmdbJson("find/${ext.key}?external_source=" + (if (ext.scheme == "imdb") "imdb_id" else "tvdb_id"))
+                    ?.get("tv_results")?.let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                    ?.get("id")?.jsonPrimitive?.contentOrNull
+                else -> null
+            } ?: return emptyList()
+            val results = fetchTmdbJson("tv/$tvId/alternative_titles")?.get("results") as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+            val names = results.mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull?.trim() }
+                .filter { n -> n.length >= 3 && n.count { c -> c.code < 0x250 } * 10 >= n.length * 8 }
+                .distinctBy { AnimeMatcher.normalize(it) }
+                .take(10)
+            if (tmdbAltTitles.size > 2_000) tmdbAltTitles.clear()
+            tmdbAltTitles[key] = names
+            names
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) { emptyList() }
+    }
+
     /** Title + year for any supported id; null when the source has no such item. */
     private suspend fun resolveExternal(type: String, ext: ExternalId): Pair<String, Int?>? {
         if (ext.scheme == "imdb" || ext.scheme == "tmdb") return resolveGenericMedia(type, ext.key)
@@ -2291,19 +2321,19 @@ object StremioServer {
      * cancelled and whatever has accumulated is returned — ensuring Stremio always
      * gets a response well within its 60-second addon timeout.
      */
-    private val STREAM_DEADLINE_MS = 90_000L
+    private val STREAM_DEADLINE_MS = 170_000L
     /** Answer with what has loaded after this long; the rest load into the cache until STREAM_DEADLINE_MS. */
     private val streamRequestStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val STREAM_SOFT_DEADLINE_MS = 8_000L
     /** Never keep a client waiting longer than this for the first answer. */
-    private val STREAM_ANSWER_CAP_MS = 32_000L
+    private val STREAM_ANSWER_CAP_MS = 45_000L
     /** Hard limit for the whole search part of a stream request. */
-    private val RESPONSE_CAP_MS = 38_000L
+    private val RESPONSE_CAP_MS = 52_000L
     /** Time budget for the anime name / episode mapping lookups before the providers are started. */
     private val ANIME_RESOLVE_BUDGET_MS = 25_000L
     /** The providers are always given at least this long before the answer cap can end the wait. */
-    private val STREAM_MIN_WINDOW_MS = 12_000L
-    private val PROVIDER_TIMEOUT_MS = 80_000L
+    private val STREAM_MIN_WINDOW_MS = 20_000L
+    private val PROVIDER_TIMEOUT_MS = 150_000L
     private val streamSearchScope = CoroutineScope(pluginDispatcher + SupervisorJob())
 
     /** Live state of one title's search: how many sources there are, how many finished, what each one found. */
@@ -2514,7 +2544,15 @@ object StremioServer {
                         ext.season != null && ext.episode != null && names.aniListId != null) {
                         tmdbAllSeasonCounts(ext)?.let { counts -> AnimeResolver.mapEpisode(names, ext.season, ext.episode, counts) }
                     } else null
-                    names to target
+                    // TMDB's own alternative titles of the series join the names (after AniList / Kitsu / MyAnimeList ones)
+                    val named = if (names != null && ext.scheme in setOf("imdb", "tmdb", "tvdb") && type != "movie") {
+                        val more = tmdbAlternativeTitles(ext)
+                        if (more.isEmpty()) names else {
+                            val seen = names.titles.map { AnimeMatcher.normalize(it) }.toMutableSet()
+                            names.copy(titles = names.titles + more.filter { seen.add(AnimeMatcher.normalize(it)) })
+                        }
+                    } else names
+                    named to target
                 }
                 var animeTimedOut = false
                 val (animeNames, animeTarget) = withTimeoutOrNull(ANIME_RESOLVE_BUDGET_MS) { animeResolution.await() }
