@@ -2321,19 +2321,19 @@ object StremioServer {
      * cancelled and whatever has accumulated is returned — ensuring Stremio always
      * gets a response well within its 60-second addon timeout.
      */
-    private val STREAM_DEADLINE_MS = 90_000L
+    private val STREAM_DEADLINE_MS = 170_000L
     /** Answer with what has loaded after this long; the rest load into the cache until STREAM_DEADLINE_MS. */
     private val streamRequestStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val STREAM_SOFT_DEADLINE_MS = 8_000L
     /** Never keep a client waiting longer than this for the first answer. */
-    private val STREAM_ANSWER_CAP_MS = 32_000L
+    private val STREAM_ANSWER_CAP_MS = 45_000L
     /** Hard limit for the whole search part of a stream request. */
-    private val RESPONSE_CAP_MS = 38_000L
+    private val RESPONSE_CAP_MS = 52_000L
     /** Time budget for the anime name / episode mapping lookups before the providers are started. */
     private val ANIME_RESOLVE_BUDGET_MS = 25_000L
     /** The providers are always given at least this long before the answer cap can end the wait. */
-    private val STREAM_MIN_WINDOW_MS = 12_000L
-    private val PROVIDER_TIMEOUT_MS = 80_000L
+    private val STREAM_MIN_WINDOW_MS = 20_000L
+    private val PROVIDER_TIMEOUT_MS = 150_000L
     private val streamSearchScope = CoroutineScope(pluginDispatcher + SupervisorJob())
 
     /** Live state of one title's search: how many sources there are, how many finished, what each one found. */
