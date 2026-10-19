@@ -905,14 +905,23 @@ object StremioServer {
         val out = prep.out
         val safeOut = prep.safeOut
         val p = streamPrefs
+        // The history entry is written whatever happens to the connection (a player that hung up must not lose it)
         try {
-            respond(StremioStreamResponse(safeOut))
-        } catch (e: Throwable) {
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            ServerState.warn("[Request] $type/$id: sending the list failed (${e.javaClass.simpleName}: ${e.message}) - sending it without subtitles")
-            respond(StremioStreamResponse(safeOut.map { it.copy(subtitles = null) }))
+            try {
+                respond(StremioStreamResponse(safeOut))
+            } catch (e: Throwable) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                ServerState.warn("[Request] $type/$id: sending the list failed (${e.javaClass.simpleName}: ${e.message}) - sending it without subtitles")
+                respond(StremioStreamResponse(safeOut.map { it.copy(subtitles = null) }))
+            }
+            ServerState.info("[Request] sent ${out.size} link(s) for $type/$id (${(System.currentTimeMillis() - requestStart) / 1000.0}s)")
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable) { recordHistory(type, id, streams, out, requestStart) }
         }
-        ServerState.info("[Request] sent ${out.size} link(s) for $type/$id (${(System.currentTimeMillis() - requestStart) / 1000.0}s)")
+        if (p.prefetchNext) prefetchNextEpisode(type, id)
+    }
+
+    private fun recordHistory(type: String, id: String, streams: List<StremioStream>, out: List<StremioStream>, requestStart: Long) {
         runCatching {
             val parts = id.split(':')
             val ep = if ((type == "series" || type == "anime") && parts.size >= 3) {
@@ -932,7 +941,6 @@ object StremioServer {
                 )
             )
         }
-        if (p.prefetchNext) prefetchNextEpisode(type, id)
     }
 
     private class Prepared(val streams: List<StremioStream>, val out: List<StremioStream>, val safeOut: List<StremioStream>)
@@ -2326,13 +2334,13 @@ object StremioServer {
     private val streamRequestStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val STREAM_SOFT_DEADLINE_MS = 8_000L
     /** Never keep a client waiting longer than this for the first answer. */
-    private val STREAM_ANSWER_CAP_MS = 45_000L
+    private val STREAM_ANSWER_CAP_MS = 32_000L
     /** Hard limit for the whole search part of a stream request. */
-    private val RESPONSE_CAP_MS = 52_000L
+    private val RESPONSE_CAP_MS = 38_000L
     /** Time budget for the anime name / episode mapping lookups before the providers are started. */
     private val ANIME_RESOLVE_BUDGET_MS = 25_000L
     /** The providers are always given at least this long before the answer cap can end the wait. */
-    private val STREAM_MIN_WINDOW_MS = 20_000L
+    private val STREAM_MIN_WINDOW_MS = 12_000L
     private val PROVIDER_TIMEOUT_MS = 150_000L
     private val streamSearchScope = CoroutineScope(pluginDispatcher + SupervisorJob())
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **History tab fixed:** the History entry is now always written, even when the player hangs up before the answer. The first answer is back to waiting at most 38 s (the longer wait of 1.7.16 made players give up first, so nothing was recorded); extensions still search up to 150 s and keep loading in the background.
+
 ## 1.7.16
 
 - **Anime: many more names searched:** an anime is now looked up under all its names - more AniList synonyms, the best few AniList matches (not just the first), TMDB's alternative titles, and the usual respellings ("Lv999" / "Lv 999" / "Level 999", without a leading "The"). Titles known by many spellings (e.g. The Villager of Level 999) now find far more links.
