@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Anime: many more names searched:** an anime is now looked up under all its names - more AniList synonyms, the best few AniList matches (not just the first), TMDB's alternative titles, and the usual respellings ("Lv999" / "Lv 999" / "Level 999", without a leading "The"). Titles known by many spellings (e.g. The Villager of Level 999) now find far more links.
+
 ## 1.7.15
 
 - **Default repository eclipsia/cloudstream: working address:** the Gitea address added in 1.7.14 did not work. The default is now `https://cs.eclipsia.dpdns.org/repo.json`; an install that got the old address has it replaced once at the next start (new installs just have the new one).
