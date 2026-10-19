@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.16
 
 - **Anime: many more names searched:** an anime is now looked up under all its names - more AniList synonyms, the best few AniList matches (not just the first), TMDB's alternative titles, and the usual respellings ("Lv999" / "Lv 999" / "Level 999", without a leading "The"). Titles known by many spellings (e.g. The Villager of Level 999) now find far more links.
 - **Extensions get more time to search:** each extension may now search up to 150 s (was 80 s) and finishes on its own; the first answer waits a little longer (up to 45 s, at least 20 s for the extensions), and slower extensions keep loading in the background for up to 170 s so their links show on the next refresh.
