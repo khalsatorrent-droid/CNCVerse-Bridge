@@ -323,10 +323,10 @@ function tuneCur(){var c=tvCtx.list[tvCtx.i];if(!c)return;addSeen(c);var run=++s
   else if(!started&&cur.list.length){started=true;cur.idx=0;play(cur.list[0],c.name)}
   else if(!started&&answered===total){g('pnote').textContent='';g('pmsg').textContent='No link answered for '+c.name+'. Try another channel.'}
   if(cur.list.length>1)g('plinks').classList.remove('hide')})})}
-function setTvUi(on){var many=on&&tvCtx.list.length>1;g('pprev').classList.toggle('hide',!many);g('pnext').classList.toggle('hide',!many);g('plinks').classList.toggle('hide',!on)}
+function setTvUi(on){var many=on&&tvCtx.list.length>1;g('pprev').classList.toggle('hide',!many);g('pnext').classList.toggle('hide',!many);g('plinks').classList.toggle('hide',!(on||(cur&&cur.list&&cur.list.length>1)))}
 function zap(d){if(!tvMode)return;var n=tvCtx.i+d;if(n<0||n>=tvCtx.list.length)return;tvCtx.i=n;tuneCur()}
 g('pprev').onclick=function(){zap(-1)};g('pnext').onclick=function(){zap(1)};
-g('plinks').onclick=function(){if(cur&&cur.list.length){render(cur.list,cur.title,tuneCur,true);g('pht').textContent=cur.title;g('phs').textContent='Choose another link';g('panel').classList.add('on');g('shade').classList.add('on')}};
+g('plinks').onclick=function(){if(cur&&cur.list.length){render(cur.list,cur.title,tvMode?tuneCur:null,tvMode);g('pht').textContent=cur.title;g('phs').textContent='Choose another link';g('panel').classList.add('on');g('shade').classList.add('on')}};
 
 /* links panel */
 function closePanel(){streamRun++;g('panel').classList.remove('on');g('shade').classList.remove('on')}
@@ -361,7 +361,7 @@ var keepSel='';function render(list,title,again,live,refresh){var pl=g('pl'),chi
  draw();pl.scrollTop=top}
 
 /* player */
-function pick(list,x,title,live){tvMode=!!live;cur={list:list,idx:list.indexOf(x),title:title,auto:false};setTvUi(tvMode);play(x,title)}
+function pick(list,x,title,live){var v=g('v'),t=(!live&&!g('player').classList.contains('hide')&&v.currentTime>5)?v.currentTime:0;tvMode=!!live;cur={list:list,idx:list.indexOf(x),title:title,auto:false};setTvUi(tvMode);play(x,title);if(t){var go=function(){v.removeEventListener('loadedmetadata',go);try{v.currentTime=t}catch(e){}};v.addEventListener('loadedmetadata',go)}}
 function shell(title,note){stopVideo();g('pmsg').textContent='';g('pnote').textContent=note||'';g('ptitle').textContent=title;g('player').classList.remove('hide');wake()}
 function isHls(u){return /\.m3u8(\?|#|${'$'})/i.test(u)||(u.indexOf('/media/')>=0&&u.indexOf('/pl/')>0)}
 var stallT=null,bufT=null;
