@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Website player upgrade:** new Quality menu (Auto or a fixed resolution such as 1080p / 720p, remembered), Captions menu with English subtitles switched on automatically when the link has them (or your last choice; `C` toggles them), Audio menu as before, and a Speed menu. Volume is remembered. Buffering is faster to start and reads further ahead (up to 90 s, retries on slow segments) and plain video files preload.
+
 ## 1.7.17
 
 - **History tab fixed:** the History entry is now always written, even when the player hangs up before the answer. The first answer is back to waiting at most 38 s (the longer wait of 1.7.16 made players give up first, so nothing was recorded); extensions still search up to 150 s and keep loading in the background.
