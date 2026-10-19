@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Website player: "no sound" notice:** some Cloudflare R2 and Pixeldrain files carry audio the browser cannot decode (AC3, EAC3, DTS), so they played silently. The player now notices this a few seconds in and shows a notice with Open in VLC and Copy link buttons, so you can play the file with sound in a media player.
+
 ## 1.7.18
 
 - **Website player upgrade:** new Quality menu (Auto or a fixed resolution such as 1080p / 720p, remembered), Captions menu with English subtitles switched on automatically when the link has them (or your last choice; `C` toggles them), Audio menu as before, and a Speed menu. Volume is remembered. Buffering is faster to start and reads further ahead (up to 90 s, retries on slow segments) and plain video files preload.

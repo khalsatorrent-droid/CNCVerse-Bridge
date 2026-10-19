@@ -177,6 +177,7 @@ video::cue{color:#fff;background:transparent;font-weight:700;font-size:1.3em;tex
 #amenu button:hover{background:var(--s2);filter:none}
 #amenu button[aria-checked=true]{color:var(--lamp)}
 #amenu .h{color:var(--mut);font-size:12px;padding:6px 12px 4px}
+#pfix{position:absolute;bottom:90px;left:0;right:0;text-align:center;padding:0 20px;color:#d6e2de;text-shadow:0 1px 6px #000;z-index:3}#pfix button,#pfix a{display:inline-block;margin:8px 4px 0;padding:8px 14px;border-radius:8px;border:1px solid #ffffff55;background:#000a;color:#fff;text-decoration:none;font:inherit;cursor:pointer}
 #pnote{position:absolute;top:50%;left:0;right:0;text-align:center;color:#d6e2de;padding:0 20px;pointer-events:none;text-shadow:0 1px 6px #000}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
 </style></head>
@@ -208,7 +209,7 @@ video::cue{color:#fff;background:transparent;font-weight:700;font-size:1.3em;tex
 <div id="player" class="hide"><video id="v" controls autoplay playsinline></video>
  <div id="ptop"><button class="quiet" id="pclose">Back</button><span id="ptitle"></span>
   <div class="pbtns"><button class="quiet hide" id="pprev" aria-label="Previous channel">Prev</button><button class="quiet hide" id="pnext" aria-label="Next channel">Next</button><button class="quiet hide" id="plinks">Links</button><button class="quiet hide" id="pspd" aria-haspopup="true">Speed</button><button class="quiet hide" id="pq" aria-haspopup="true">Quality</button><button class="quiet hide" id="paud" aria-haspopup="true">Audio</button><button class="quiet hide" id="pcc" aria-haspopup="true">Captions</button></div></div>
- <div id="amenu" class="hide" role="menu"></div><div id="pnote"></div><div id="pmsg"></div></div>
+ <div id="amenu" class="hide" role="menu"></div><div id="pnote"></div><div id="pmsg"></div><div id="pfix" class="hide"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <script>
@@ -364,7 +365,7 @@ function pick(list,x,title,live){tvMode=!!live;cur={list:list,idx:list.indexOf(x
 function shell(title,note){stopVideo();g('pmsg').textContent='';g('pnote').textContent=note||'';g('ptitle').textContent=title;g('player').classList.remove('hide');wake()}
 function isHls(u){return /\.m3u8(\?|#|${'$'})/i.test(u)||(u.indexOf('/media/')>=0&&u.indexOf('/pl/')>0)}
 var stallT=null,bufT=null;
-function stopVideo(){clearTimeout(stallT);var v=g('v');if(hls){hls.destroy();hls=null}v.pause();v.removeAttribute('src');while(v.firstChild)v.removeChild(v.firstChild);v.load();['pq','paud','pcc','pspd'].forEach(function(i){g(i).classList.add('hide')});g('amenu').classList.add('hide')}
+function stopVideo(){clearTimeout(stallT);clearTimeout(silT);g('pfix').classList.add('hide');var v=g('v');if(hls){hls.destroy();hls=null}v.pause();v.removeAttribute('src');while(v.firstChild)v.removeChild(v.firstChild);v.load();['pq','paud','pcc','pspd'].forEach(function(i){g(i).classList.add('hide')});g('amenu').classList.add('hide')}
 var idleT=null;function wake(){var p=g('player');p.classList.remove('idle');clearTimeout(idleT);idleT=setTimeout(function(){if(!g('v').paused&&g('amenu').classList.contains('hide'))p.classList.add('idle')},2800)}
 g('player').addEventListener('mousemove',wake);g('player').addEventListener('touchstart',wake,{passive:true});
 
@@ -427,6 +428,18 @@ function audWatch(){audApplied=false;ccApplied=false;var v=g('v');
  v.addEventListener('loadedmetadata',function(){audRefresh();ccRefresh()},{once:true})}
 function ccToggle(){var l=ccTracks();if(!l.length)return;var on=l.some(function(x){return x.on});if(on){ccOff();lsSet('cncSub','off')}else{lsSet('cncSub','');ccApplied=false;ccAuto();if(!l.some(function(x){return x.on}))l[0].set()}updateBtns()}
 
+var silT=null;
+function noSound(v){if(v.paused||v.currentTime<2||v.muted||v.volume===0)return false;
+ if(typeof v.webkitAudioDecodedByteCount==='number')return v.webkitAudioDecodedByteCount===0;
+ if(typeof v.mozHasAudio==='boolean')return !v.mozHasAudio;
+ if(v.audioTracks&&typeof v.audioTracks.length==='number')return v.audioTracks.length===0;return false}
+function silentWatch(url,tries){clearTimeout(silT);silT=setTimeout(function(){var v=g('v');if(!v.src&&!hls)return;
+ if(noSound(v)){var f=g('pfix');f.textContent='';var t=document.createElement('div');t.textContent='No sound: this file uses an audio format the browser cannot play (usually AC3, EAC3 or DTS). Play it in a media player instead.';f.appendChild(t);
+  var abs=url.indexOf('http')===0?url:location.origin+url;var android=/Android/i.test(navigator.userAgent);
+  var a=document.createElement('a');a.textContent='Open in VLC';a.href=android?('intent://'+abs.replace(/^https?:\/\//,'')+'#Intent;scheme='+(abs.indexOf('https')===0?'https':'http')+';package=org.videolan.vlc;type=video/*;end'):('vlc://'+abs);f.appendChild(a);
+  var b=document.createElement('button');b.textContent='Copy link';b.onclick=function(){try{navigator.clipboard.writeText(abs);b.textContent='Copied'}catch(e){window.prompt('Link',abs)}};f.appendChild(b);
+  var c=document.createElement('button');c.textContent='Hide';c.onclick=function(){f.classList.add('hide')};f.appendChild(c);f.classList.remove('hide');return}
+ if(tries>0)silentWatch(url,tries-1)},tries===3?4000:3000)}
 function play(x,title){var v=g('v');stopVideo();g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('player').classList.remove('hide');wake();
  var url=fix(x.url);var tried=false;audWatch();
  (x.subtitles||[]).forEach(function(s,i){if(!s.url||s.url.indexOf('http')!==0)return;var t=document.createElement('track');t.kind='subtitles';t.label=s.lang||('Track '+(i+1));t.srclang=(s.lang||'und').slice(0,3);t.src='/subshift?ms=0&u='+encodeURIComponent(s.url);v.appendChild(t)});ccRefresh();
@@ -439,7 +452,7 @@ function play(x,title){var v=g('v');stopVideo();g('pmsg').textContent='';g('pnot
  var next=function(){if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('pnote').textContent='Trying link '+(cur.idx+1)+' of '+cur.list.length;play(cur.list[cur.idx],cur.title);return true}return false};
  var giveUp=function(){clearTimeout(stallT);stallT=null;if(next())return;if(cur){cur.stalled=true;cur.next=next}if(cur&&cur.done){g('pnote').textContent='';g('pmsg').textContent='No link for this channel would play. Try Links or another channel.'}else g('pnote').textContent='Still looking for a working link'};
  clearTimeout(stallT);stallT=null;if(cur&&cur.auto&&tvMode)stallT=setTimeout(giveUp,8000);
- v.onerror=function(){if(tvMode&&cur&&cur.auto)giveUp();else fail()};v.onplaying=function(){clearTimeout(stallT);stallT=null;clearTimeout(bufT);g('pnote').textContent='';g('pmsg').textContent=''};
+ v.onerror=function(){if(tvMode&&cur&&cur.auto)giveUp();else fail()};v.onplaying=function(){silentWatch(url,3);clearTimeout(stallT);stallT=null;clearTimeout(bufT);g('pnote').textContent='';g('pmsg').textContent=''};
  v.onwaiting=function(){if(tvMode&&cur&&!stallT)stallT=setTimeout(function(){stallT=null;if(!v.paused&&v.readyState<3){cur.auto=true;giveUp()}},12000);clearTimeout(bufT);bufT=setTimeout(function(){if(!v.paused&&v.readyState<3&&!g('pmsg').textContent)g('pnote').textContent='Buffering. The source is slow, hold on or try another link.'},4000)};
  if(isHls(url))useHls();else useFile();
  v.play().catch(function(){});v.focus()}
