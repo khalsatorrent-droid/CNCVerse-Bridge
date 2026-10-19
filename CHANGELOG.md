@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.18
 
 - **Website player upgrade:** new Quality menu (Auto or a fixed resolution such as 1080p / 720p, remembered), Captions menu with English subtitles switched on automatically when the link has them (or your last choice; `C` toggles them), Audio menu as before, and a Speed menu. Volume is remembered. Buffering is faster to start and reads further ahead (up to 90 s, retries on slow segments) and plain video files preload.
 
