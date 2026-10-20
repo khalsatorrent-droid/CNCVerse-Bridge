@@ -1,7 +1,6 @@
 package com.cncverse.stremiobridge.tunnel
 
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -38,9 +37,9 @@ class TunnelHealthTest {
 
     @Test fun restartsAreSpacedOut() {
         assertNotNull(h.check(false, false, null))
-        now += 30_000; assertNull(h.check(false, false, null))
-        now += 31_000; assertNotNull(h.check(false, false, null))
-        now += 90_000; assertNull(h.check(false, false, null))   // gap doubled to 2 min
+        now += 90_000; assertNull(h.check(false, false, null))       // next one only after 2 min
         now += 40_000; assertNotNull(h.check(false, false, null))
+        now += 200_000; assertNull(h.check(false, false, null))      // then 4 min
+        now += 50_000; assertNotNull(h.check(false, false, null))
     }
 }

@@ -8,7 +8,7 @@ package com.cncverse.stremiobridge.tunnel
  *  - its process is gone, or
  *  - it has no public link [NO_LINK_MS] after it was started, or
  *  - it has a link but the link has not answered [PROBE_FAILS] checks in a row while the internet itself is reachable.
- * Restarts are spaced out (1, 2, 4 ... up to 10 minutes) so a long outage does not turn into a restart loop.
+ * Restarts are spaced out (2, 4, 8 ... up to 10 minutes) so a long outage does not turn into a restart loop.
  */
 class TunnelHealth(private val nowMs: () -> Long = { System.currentTimeMillis() }) {
     companion object {

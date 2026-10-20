@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Stremio Mode repairs itself:** while Stremio Mode is on, the bridge checks the Cloudflare tunnel every 30 s. If the tunnel process has stopped, never got a link, or its link stops answering (3 checks in a row while the internet works), it switches Stremio Mode off and on again by itself. Restarts are spaced out (1, 2, 4 ... up to 10 minutes) so a long outage does not cause a restart loop. With a free temporary link the address changes after a restart, as with a manual restart.
+- **Stremio Mode repairs itself:** while Stremio Mode is on, the bridge checks the Cloudflare tunnel every 30 s. If the tunnel process has stopped, never got a link, or its link stops answering (3 checks in a row while the internet works), it switches Stremio Mode off and on again by itself. Restarts are spaced out (2, 4, 8 ... up to 10 minutes) so a long outage does not cause a restart loop. With a free temporary link the address changes after a restart, as with a manual restart.
 
 ## 1.7.21
 
