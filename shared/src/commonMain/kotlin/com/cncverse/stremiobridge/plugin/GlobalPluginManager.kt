@@ -52,7 +52,15 @@ object GlobalPluginManager {
         }
 
         ServerState.info("GlobalPluginManager: Loading ${sitePlugins.size} plugins...")
-        val loadedInfos = currentLoader.loadPlugins(sitePlugins, cs3Files)
+        val loadedInfos = try {
+            currentLoader.loadPlugins(sitePlugins, cs3Files)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Never leave the manager half-way: report it and let the watchdog try again
+            ServerState.warn("GlobalPluginManager: plugin load failed (${e.javaClass.simpleName}: ${e.message})")
+            emptyList()
+        }
         ServerState.updateGlobalLoadedPlugins(loadedInfos)
         ServerState.info("GlobalPluginManager: ${loadedInfos.size} plugins loaded successfully")
         isPluginsLoaded.value = true
