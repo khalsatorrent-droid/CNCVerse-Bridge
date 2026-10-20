@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Warm-up is now optional:** the bridge no longer opens the first 2 links of every result list on its own. It only does so when the new "Warm up the first links" switch (Settings, Media server) is on, which it is not by default.
+
 ## 1.7.20
 
 - **Stays working overnight:** a watchdog now checks every 2 minutes. If extensions are installed but none is loaded (which left a tablet running overnight with a working website but dead extensions), it reloads them by itself, and it restarts the web server if that ever stops. A failed plugin load no longer leaves things half-way, and the "N plugins" count on the Server screen now follows what is really loaded.
