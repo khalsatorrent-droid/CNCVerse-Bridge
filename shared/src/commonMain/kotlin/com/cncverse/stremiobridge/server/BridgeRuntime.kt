@@ -116,6 +116,47 @@ object BridgeRuntime {
         GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
         StremioServer.initFastCatalogs()
         startSeenClock(installed)
+        refreshRunningStatus()
+    }
+
+    /** Keeps the plugin list shown on the Server screen in step with what is really loaded. */
+    private fun refreshRunningStatus() {
+        val st = ServerState.status.value as? ServerStatus.Running ?: return
+        val now = ServerState.globalLoadedPlugins.value
+        if (now != st.loadedPlugins) ServerState.updateStatus(st.copy(loadedPlugins = now))
+    }
+
+    private var watchdogJob: Job? = null
+    private var lastHeal = 0L
+
+    /**
+     * Self-healing for unattended runs (a tablet left on overnight): every 2 minutes, if extensions are installed but
+     * none is loaded, or the web server has stopped, they are brought back without anybody touching the app.
+     */
+    private fun startWatchdog(port: Int) {
+        watchdogJob?.cancel()
+        watchdogJob = appScope?.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(2 * 60 * 1000L)
+                runCatching {
+                    if (ServerState.status.value !is ServerStatus.Running) return@runCatching
+                    if (!StremioServer.isRunning) {
+                        ServerState.warn("Watchdog: web server was down, starting it again")
+                        StremioServer.start(port, cacheDir)
+                    }
+                    val installed = PluginInstaller.loadInstalledPlugins(cacheDir)
+                    val active = ServerState.globalLoadedPlugins.value.count { it.apiRegistered }
+                    val since = System.currentTimeMillis() - lastHeal
+                    if (installed.isNotEmpty() && active == 0 && GlobalPluginManager.isPluginsLoaded.value && since > 4 * 60 * 1000L) {
+                        lastHeal = System.currentTimeMillis()
+                        ServerState.warn("Watchdog: ${installed.size} extension(s) installed but none loaded, reloading them")
+                        forceReloadPlugins()
+                        runCatching { StremioServer.preWarmHomepages() }
+                    }
+                    refreshRunningStatus()
+                }.onFailure { e -> ServerState.warn("Watchdog error: ${e.message}") }
+            }
+        }
     }
 
     /** Starts the "installed since" clock used by auto-uninstall. */
@@ -348,6 +389,7 @@ object BridgeRuntime {
 
         // Start 30-min extension update checker
         startPeriodicUpdateCheck()
+        startWatchdog(boundPort)
 
     }
 
@@ -388,6 +430,8 @@ object BridgeRuntime {
     fun stopBridge() {
         periodicUpdateJob?.cancel()
         periodicUpdateJob = null
+        watchdogJob?.cancel()
+        watchdogJob = null
         StremioServer.stop()
         ServerState.updateStatus(ServerStatus.Stopped)
         ServerState.info("Server stopped by user")

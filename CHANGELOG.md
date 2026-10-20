@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Stays working overnight:** a watchdog now checks every 2 minutes. If extensions are installed but none is loaded (which left a tablet running overnight with a working website but dead extensions), it reloads them by itself, and it restarts the web server if that ever stops. A failed plugin load no longer leaves things half-way, and the "N plugins" count on the Server screen now follows what is really loaded.
+
 ## 1.7.19
 
 - **Website player: "no sound" notice:** some Cloudflare R2 and Pixeldrain files carry audio the browser cannot decode (AC3, EAC3, DTS), so they played silently. The player now notices this a few seconds in and shows a notice with Open in VLC and Copy link buttons, so you can play the file with sound in a media player.
