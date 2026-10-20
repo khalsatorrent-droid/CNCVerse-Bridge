@@ -159,6 +159,59 @@ object BridgeRuntime {
         }
     }
 
+    private var tunnelGuardJob: Job? = null
+
+    /**
+     * While Stremio Mode is on, a failed Cloudflare tunnel (process gone, no link, or the link no longer answers) is fixed by
+     * switching Stremio Mode off and on again - the same as doing it by hand on the Server tab.
+     */
+    private fun startTunnelGuard(port: Int) {
+        tunnelGuardJob?.cancel()
+        val health = com.cncverse.stremiobridge.tunnel.TunnelHealth()
+        var wasOn = false
+        tunnelGuardJob = appScope?.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(30_000L)
+                runCatching {
+                    val on = ServerState.isStremioMode.value && ServerState.status.value is ServerStatus.Running
+                    if (!on) { wasOn = false; return@runCatching }
+                    if (!wasOn) { wasOn = true; health.started() }
+                    val link = ServerState.activeTunnelUrl.value
+                    val answers = if (link.isNullOrBlank()) null else probeTunnel(link)
+                    val why = health.check(CloudflaredManager.isRunning(), !link.isNullOrBlank(), answers) ?: return@runCatching
+                    ServerState.warn("Tunnel guard: $why - turning Stremio Mode off and on again")
+                    ServerState.isStremioMode.value = false
+                    CloudflaredManager.stopTunnel()
+                    delay(2_000L)
+                    if (ServerState.status.value is ServerStatus.Running) {
+                        ServerState.isStremioMode.value = true
+                        if (!CloudflaredManager.startTunnel(port)) ServerState.isStremioMode.value = false
+                        health.started()
+                    }
+                }.onFailure { e -> ServerState.warn("Tunnel guard error: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * Does the public tunnel link answer? null when the device itself has no working internet (then the tunnel is not to
+     * blame and nothing is restarted).
+     */
+    private fun probeTunnel(link: String): Boolean? {
+        fun reach(u: String): Boolean = try {
+            val c = java.net.URL(u).openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 8_000; c.readTimeout = 8_000; c.instanceFollowRedirects = false
+            c.requestMethod = "GET"
+            val code = c.responseCode
+            c.disconnect()
+            // Cloudflare answers 530 / 502 / 503 / 504 when the tunnel behind a link is down
+            code !in listOf(502, 503, 504, 530)
+        } catch (e: Exception) { false }
+        if (reach(link.trimEnd('/') + "/manifest.json")) return true
+        // Not answering: only the tunnel's fault when the internet itself works
+        return if (reach("https://www.cloudflare.com/cdn-cgi/trace")) false else null
+    }
+
     /** Starts the "installed since" clock used by auto-uninstall. */
     private fun startSeenClock(installed: List<com.cncverse.stremiobridge.state.InstalledPlugin>) {
         installed.forEach { com.cncverse.stremiobridge.state.StreamTracker.ensureSeen(it.internalName, it.displayName) }
@@ -390,6 +443,7 @@ object BridgeRuntime {
         // Start 30-min extension update checker
         startPeriodicUpdateCheck()
         startWatchdog(boundPort)
+        startTunnelGuard(boundPort)
 
     }
 
@@ -432,6 +486,8 @@ object BridgeRuntime {
         periodicUpdateJob = null
         watchdogJob?.cancel()
         watchdogJob = null
+        tunnelGuardJob?.cancel()
+        tunnelGuardJob = null
         StremioServer.stop()
         ServerState.updateStatus(ServerStatus.Stopped)
         ServerState.info("Server stopped by user")

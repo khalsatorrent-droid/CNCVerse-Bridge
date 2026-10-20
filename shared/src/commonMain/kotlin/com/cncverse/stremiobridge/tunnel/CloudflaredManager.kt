@@ -308,6 +308,9 @@ object CloudflaredManager {
         null
     }
 
+    /** True while the cloudflared process is running. */
+    fun isRunning(): Boolean = tunnelProcess?.isAlive == true
+
     fun stopTunnel() {
         tunnelScope?.cancel()
         tunnelScope = null
