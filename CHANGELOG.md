@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.21
 
 - **Warm-up is now optional:** the bridge no longer opens the first 2 links of every result list on its own. It only does so when the new "Warm up the first links" switch (Settings, Media server) is on, which it is not by default.
 
