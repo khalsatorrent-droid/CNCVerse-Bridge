@@ -56,6 +56,8 @@ data class MediaServerPrefs(
     val mode: String = "all",
     /** Download direct video files (mp4/mkv/...) to this device first, then serve them from disk. */
     val cacheFiles: Boolean = true,
+    /** Open the first 2 direct-file links of every result list ahead of time (first 8 MB each). Off by default: it costs data and connections. */
+    val prewarm: Boolean = false,
     /** Cache HLS playlists and segments on this device. */
     val cacheHls: Boolean = true,
     /** HLS segments fetched ahead of the player. */
@@ -770,7 +772,7 @@ object MediaServer {
      * video is being streamed or when the file is already on disk.
      */
     fun prewarm(streams: List<StremioStream>, max: Int = 2) {
-        if (!prefs.enabled || root == null || max <= 0 || isStreaming()) return
+        if (!prefs.enabled || !prefs.prewarm || root == null || max <= 0 || isStreaming()) return
         var n = 0
         for (s in streams) {
             if (n >= max) break
