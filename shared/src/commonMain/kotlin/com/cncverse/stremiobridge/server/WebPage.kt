@@ -100,6 +100,7 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 .grid .card{flex:initial}
 .sk-card{flex:0 0 var(--w,150px);aspect-ratio:2/3;border-radius:var(--r);background:linear-gradient(100deg,var(--s1) 30%,var(--s2) 50%,var(--s1) 70%) 0 0/300% 100%;animation:sh 1.4s linear infinite}
 @keyframes sh{to{background-position:-300% 0}}
+.xhead{display:flex;gap:20px;padding:20px 4vw 8px;flex-wrap:wrap}.xhead img{width:150px;border-radius:10px;align-self:flex-start}.xhead h1{margin:0 0 4px;font:700 28px var(--disp)}.xhead .msg{padding:0;margin:4px 0 10px}.xd{max-width:70ch;color:var(--mut);line-height:1.5;margin:0}.xhead>div{flex:1;min-width:240px}.xeps{padding:6px 4vw 40px;max-width:900px}#sm{white-space:nowrap}
 .msg{color:var(--mut);padding:0 4vw;margin:26px 0}
 
 /* title page */
@@ -227,7 +228,7 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 <div id="app" class="hide">
  <header id="hd"><button class="logo" id="home">CNC<i>Verse</i></button>
   <button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navbr" type="button">Browse</button><button class="nav" id="navtv" type="button">Live TV</button>
-  <form class="sbox" id="sf" role="search"><input id="q" type="search" list="rs" autocomplete="off" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><datalist id="rs"></datalist><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
+  <form class="sbox" id="sf" role="search"><input id="q" type="search" list="rs" autocomplete="off" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><datalist id="rs"></datalist><button class="quiet" id="sm" type="button" aria-pressed="false" title="Where to search">In: Catalog</button><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
   <button class="quiet gear" id="cfgb" type="button" aria-label="Settings">Settings</button><button class="quiet" id="out" type="button">Log out</button>
  </header>
  <main id="main"></main>
@@ -281,13 +282,13 @@ function searches(){return store('cncSearches')}
 function fillSearches(){var d=g('rs');d.textContent='';searches().forEach(function(s){var o=document.createElement('option');o.value=s;d.appendChild(o)})}
 function addSearch(s){if(!s)return;var l=searches().filter(function(x){return x.toLowerCase()!==s.toLowerCase()});l.unshift(s);put('cncSearches',l.slice(0,8));fillSearches()}
 g('q').addEventListener('focus',fillSearches);
-g('sf').addEventListener('submit',function(e){e.preventDefault();var s=g('q').value.trim();g('q').blur();addSearch(s);if(location.hash==='#/s/'+encodeURIComponent(s))route();else location.hash=s?('#/s/'+encodeURIComponent(s)):'#/'});
+g('sf').addEventListener('submit',function(e){e.preventDefault();var s=g('q').value.trim();g('q').blur();addSearch(s);if(location.hash==='#/'+(xget()?'x':'s')+'/'+encodeURIComponent(s))route();else location.hash=s?((xget()?'#/x/':'#/s/')+encodeURIComponent(s)):'#/'});
 window.addEventListener('scroll',function(){g('hd').classList.toggle('solid',window.scrollY>40)},{passive:true});
 window.addEventListener('hashchange',function(){if(!g('app').classList.contains('hide'))route()});
 
 function route(){var h=location.hash.replace(/^#\/?/,'').split('/');window.scrollTo(0,0);closePanel();
  g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navbr').setAttribute('aria-current',h[0]==='browse'?'page':'false');g('navmov').setAttribute('aria-current',(h[0]==='tv'||h[0]==='browse')?'false':'page');
- if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else goHome()}
+ if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else if(h[0]==='x'&&h[1])xsearch(decodeURIComponent(h[1]));else if(h[0]==='xt'&&h[2])xtitle(decodeURIComponent(h[1]),decodeURIComponent(h[2]));else goHome()}
 
 function recent(){try{return JSON.parse(localStorage.getItem('cncRecent')||'[]')}catch(e){return[]}}
 function remember(t){try{var l=recent().filter(function(x){return !(x.id===t.id&&x.type===t.type)});l.unshift({id:t.id,type:t.type,title:t.title,year:t.year,poster:t.poster});localStorage.setItem('cncRecent',JSON.stringify(l.slice(0,20)))}catch(e){}}
@@ -331,9 +332,9 @@ var cwHost=null;
 function cwRow(){var l=cwEntries();if(!l.length)return null;var m=el('div');m.appendChild(el('h2','rt','Continue watching'));var w=el('div','rowwrap cw');var row=el('div','row');
  l.forEach(function(e){var c=el('button','card');c.type='button';var pw=el('div','pw');if(e.poster){var i=el('img','p');i.loading='lazy';i.alt='';i.src=e.poster;pw.appendChild(i)}else pw.appendChild(el('div','p noimg',e.title));
   var pb=el('div','pgb');pb.appendChild(el('i'));pb.firstChild.style.width=Math.min(100,e.t/e.d*100)+'%';pw.appendChild(pb);c.appendChild(pw);
-  c.appendChild(el('div','t',e.title));c.appendChild(el('div','s',(e.type==='tv'?('S'+e.s+' E'+e.e+'  '):'')+fmt(e.d-e.t)+' left'));
+  c.appendChild(el('div','t',e.title));c.appendChild(el('div','s',(e.type==='tv'?('S'+e.s+' E'+e.e+'  '):(e.sub2?e.sub2+'  ':''))+fmt(e.d-e.t)+' left'));
   var x=el('button','x','×');x.type='button';x.title='Remove from this list';x.onclick=function(ev){ev.stopPropagation();var o=posAll();delete o[e.k];posPut(o);refreshMarks()};c.appendChild(x);
-  c.onclick=function(){streams(e.type,e.id,e.type==='tv'?e.s:null,e.type==='tv'?e.e:null,e.title,e.year)};row.appendChild(c)});
+  c.onclick=function(){if(e.type==='x'){xlinks(e.id,e.data,e.title,e.sub2,e.poster);return}streams(e.type,e.id,e.type==='tv'?e.s:null,e.type==='tv'?e.e:null,e.title,e.year)};row.appendChild(c)});
  w.appendChild(row);m.appendChild(w);return m}
 function listRow(){var l=myList();if(!l.length)return null;var m=el('div');m.appendChild(el('h2','rt','My list'));var w=el('div','rowwrap');var row=el('div','row');l.forEach(function(it){row.appendChild(card(it))});w.appendChild(row);m.appendChild(w);return m}
 function refreshMarks(){if(cwHost&&document.body.contains(cwHost)){var n=cwRow();cwHost.textContent='';if(n)cwHost.appendChild(n)}
@@ -472,6 +473,38 @@ function streams(type,id,s,e,title,year,auto){var sid='tmdb:'+id+(s!=null?(':'+s
     if(!fin)setTimeout(poll,first?400:1500)
    }).catch(function(e){if(my!==streamRun||e.message==='auth')return;if(!sig){pl.textContent='';pl.appendChild(el('div','wait','The search failed. Try again.'));var b=el('button',null,'Search again');b.onclick=go;pl.appendChild(b)}else setTimeout(poll,3000)})};
   poll()};
+ go()}
+
+/* ----- search inside every extension: their own catalogs, and their own links ----- */
+function xget(){try{return localStorage.getItem('cncXS')==='1'}catch(e){return false}}
+function xset(v){try{localStorage.setItem('cncXS',v?'1':'0')}catch(e){}}
+function xui(){var on=xget();g('sm').textContent=on?'In: Extensions':'In: Catalog';g('sm').setAttribute('aria-pressed',String(on));g('q').placeholder=on?'Search inside every extension':'Search movies and series'}
+g('sm').onclick=function(){xset(!xget());xui();var s=g('q').value.trim();if(s)g('sbtn').click()};xui();
+var xrun=0;
+function xcard(x,it){var c=card({poster:it.poster,title:it.title,year:it.year,type:(it.type==='movie'||it.type==='Movie')?'movie':'tv'});c.onclick=function(){location.hash='#/xt/'+encodeURIComponent(x.id)+'/'+encodeURIComponent(it.url)};return c}
+function xsearch(s){var my=++xrun;document.title=s+' - CNCVerse';var m=g('main');m.textContent='';m.appendChild(el('div','top-gap'));m.appendChild(el('h2','rt','"'+s+'" in the extensions'));
+ var st=el('p','msg','Asking the extensions...');m.appendChild(st);var box=el('div');m.appendChild(box);
+ api('/web/api/xexts').then(function(list){if(my!==xrun)return;if(!list.length){st.textContent='No extension is loaded yet. Open the app and check the Extensions screen.';return}
+  var n=list.length,done=0,found=0,i=0;
+  var upd=function(){st.textContent=done<n?('Asked '+done+' of '+n+' extensions, '+found+' result(s) so far. Open any title to get its links from that extension.'):(found?('Done: '+found+' result(s) from '+n+' extensions.'):('Nothing found in '+n+' extensions. Try a shorter title.'))};
+  var section=function(x,res){box.appendChild(el('h2','rt',x.name+'  ('+res.length+')'));var row=el('div','row');res.forEach(function(it){row.appendChild(xcard(x,it))});var w=el('div','rowwrap');w.appendChild(row);box.appendChild(w)};
+  var one=function(){if(my!==xrun||i>=n)return;var x=list[i++];api('/web/api/xsearch?ext='+encodeURIComponent(x.id)+'&q='+encodeURIComponent(s)).catch(function(){return[]}).then(function(res){if(my!==xrun)return;done++;if(res&&res.length){found+=res.length;section(x,res)}upd();one()})};
+  upd();one();one();one();one()}).catch(function(e){if(e.message!=='auth')st.textContent='Could not read the extensions. Try again.'})}
+function xtitle(ext,url){var my=++xrun;skeleton();api('/web/api/xtitle?ext='+encodeURIComponent(ext)+'&url='+encodeURIComponent(url)).then(function(t){if(my!==xrun)return;document.title=t.title+' - CNCVerse';var m=g('main');m.textContent='';m.appendChild(el('div','top-gap'));
+  var hd=el('div','xhead');if(t.poster){var im=el('img');im.alt='';im.src=t.poster;hd.appendChild(im)}var tx=el('div');tx.appendChild(el('h1',null,t.title));tx.appendChild(el('p','msg',[t.year,(t.genres||[]).join(', '),'Links from this extension only'].filter(Boolean).join('  ·  ')));if(t.desc)tx.appendChild(el('p','xd',t.desc));hd.appendChild(tx);m.appendChild(hd);
+  var eps=t.episodes||[];
+  if(eps.length<2&&!(eps.length===1&&t.type!=='movie'&&eps[0].e)){var b=el('button',null,'Get links');b.type='button';b.style.margin='6px 4vw';b.onclick=function(){xlinks(ext,eps.length?eps[0].data:t.data,t.title,'',t.poster)};m.appendChild(b);return}
+  var seasons={};eps.forEach(function(e){var k=e.s||'0';(seasons[k]=seasons[k]||[]).push(e)});var keys=Object.keys(seasons).sort(function(a,b){return a-b});var cur0=keys[0];
+  var chips=el('div','chips');chips.style.padding='0 4vw';var list=el('div','xeps');m.appendChild(chips);m.appendChild(list);
+  var draw=function(){chips.textContent='';if(keys.length>1)keys.forEach(function(k){var c=el('button','chip',k==='0'?'Episodes':'Season '+k);c.type='button';c.setAttribute('aria-pressed',String(k===cur0));c.onclick=function(){cur0=k;draw()};chips.appendChild(c)});
+   list.textContent='';seasons[cur0].forEach(function(e,n){var row=el('button','st');row.type='button';var h=el('div','h');h.appendChild(el('span','res',e.e?('E'+e.e):String(n+1)));h.appendChild(el('span','nm',(e.name||('Episode '+(n+1)))+(e.variant?'  ('+e.variant+')':'')));row.appendChild(h);if(e.desc)row.appendChild(el('pre',null,e.desc));
+    row.onclick=function(){xlinks(ext,e.data,t.title,(e.s&&e.s!=='0'?'S'+e.s+' ':'')+(e.e?'E'+e.e:(e.name||'')),e.poster||t.poster)};list.appendChild(row)})};
+  draw()}).catch(function(e){if(e.message!=='auth'){var m=g('main');m.textContent='';m.appendChild(el('div','top-gap'));m.appendChild(el('p','msg','This extension could not open that title. Go back and try another.'))}})}
+function xlinks(ext,data,title,sub2,poster){subPool=[];P.localSubs=[];pendingCtx={type:'x',id:ext,key:'x:'+ext+':'+data,title:title,poster:poster||'',sub2:sub2||'',data:data};
+ g('pht').textContent=title+(sub2?'  '+sub2:'');g('phs').textContent='Links from this extension only';g('pst').textContent='';g('chips').textContent='';var pl=g('pl');g('panel').classList.add('on');g('shade').classList.add('on');
+ var go=function(){var my=++streamRun;g('chips').textContent='';pl.textContent='';var w=el('div','wait','Asking the extension for links');w.appendChild(el('div','bar')).appendChild(el('i'));pl.appendChild(w);
+  api('/web/api/xlinks?ext='+encodeURIComponent(ext)+'&data='+encodeURIComponent(data)).then(function(d){if(my!==streamRun)return;addSubs(d.subs);(d.streams||[]).forEach(function(x){addSubs(x.subtitles)});
+   var list=orderList((d.streams||[]).filter(function(x){return x.url&&!SKIP.test((x.name||'')+' '+(x.description||x.title||''))}));g('pst').textContent=list.length+' link(s)';render(list,title,go)}).catch(function(e){if(my!==streamRun||e.message==='auth')return;pl.textContent='';pl.appendChild(el('div','wait','The extension did not answer. Try again.'));var b=el('button',null,'Try again');b.onclick=go;pl.appendChild(b)})};
  go()}
 var keepSel='';function render(list,title,again,live,refresh){var pl=g('pl'),chips=g('chips');var top=pl.scrollTop;pl.textContent='';chips.textContent='';
  if(!list.length){var w=el('div','wait','No playable links yet. Some sources answer late, so search again in a few seconds.');pl.appendChild(w);var b=el('button',null,'Search again');b.onclick=again;w.appendChild(el('br'));w.appendChild(b);return}

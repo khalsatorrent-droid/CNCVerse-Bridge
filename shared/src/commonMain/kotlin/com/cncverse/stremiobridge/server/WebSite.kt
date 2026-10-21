@@ -326,6 +326,33 @@ object WebSite {
             if ((type != "movie" && type != "series") || !ID_OK.matches(id)) return@get call.respond(HttpStatusCode.BadRequest)
             call.json(StremioServer.webStreamsJson(type, id, call.request.queryParameters["start"] == "1"))
         }
+        // Search mode "all extensions": the list of extensions, one extension's results, one title, one movie / episode's links
+        get("/web/api/xexts") {
+            if (!call.guard()) return@get
+            call.json(StremioServer.webExtListJson())
+        }
+        get("/web/api/xsearch") {
+            if (!call.guard()) return@get
+            val q = call.request.queryParameters["q"]?.trim().orEmpty().take(100)
+            val ext = call.request.queryParameters["ext"].orEmpty().take(200)
+            if (q.isEmpty() || ext.isEmpty()) return@get call.json("[]")
+            call.json(StremioServer.webExtSearchJson(ext, q))
+        }
+        get("/web/api/xtitle") {
+            if (!call.guard()) return@get
+            val ext = call.request.queryParameters["ext"].orEmpty().take(200)
+            val url = call.request.queryParameters["url"].orEmpty().take(4000)
+            if (ext.isEmpty() || url.isEmpty()) return@get call.respond(HttpStatusCode.BadRequest)
+            val r = StremioServer.webExtTitleJson(ext, url) ?: return@get call.respond(HttpStatusCode.NotFound)
+            call.json(r)
+        }
+        get("/web/api/xlinks") {
+            if (!call.guard()) return@get
+            val ext = call.request.queryParameters["ext"].orEmpty().take(200)
+            val data = call.request.queryParameters["data"].orEmpty().take(8000)
+            if (ext.isEmpty() || data.isEmpty()) return@get call.respond(HttpStatusCode.BadRequest)
+            call.json(StremioServer.webExtLinksJson(ext, data))
+        }
         // One source of a live channel: its links only, no slow checks
         get("/web/api/tvstreams") {
             if (!call.guard()) return@get

@@ -36,6 +36,8 @@ import kotlinx.serialization.json.intOrNull
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -1028,6 +1030,77 @@ object StremioServer {
         // (not for the website's growing lists: their best links change while the search runs)
         if (!fast && !forWeb) runCatching { MediaServer.prewarm(safeOut) }
         return Prepared(streams, out, safeOut)
+    }
+
+    // ── Website: search straight in the extensions (their own catalogs and their own links) ──
+    private fun webExtApi(id: String): MainApiWrapper? = loadedApis.firstOrNull { it.internalName == id && !isGloballyDisabled(it) }
+
+    private val extGate = kotlinx.coroutines.sync.Semaphore(4)
+
+    /** The extensions the website can search one by one. */
+    fun webExtListJson(): String {
+        val a = kotlinx.serialization.json.buildJsonArray {
+            loadedApis.filter { !isGloballyDisabled(it) }.sortedBy { it.name.lowercase() }.forEach { api ->
+                add(kotlinx.serialization.json.buildJsonObject {
+                    put("id", api.internalName); put("name", api.name)
+                    put("lang", api.pluginLanguage ?: api.apiLang ?: "")
+                })
+            }
+        }
+        return a.toString()
+    }
+
+    /** What one extension finds for [q] (its own catalog). */
+    suspend fun webExtSearchJson(ext: String, q: String): String {
+        val api = webExtApi(ext) ?: return "[]"
+        val res = extGate.withPermit {
+            withTimeoutOrNull(20_000L) { withContext(pluginDispatcher) { runCatching { api.search(q) }.getOrDefault(emptyList()) } }
+        } ?: emptyList()
+        return kotlinx.serialization.json.buildJsonArray {
+            res.take(60).forEach { r ->
+                add(kotlinx.serialization.json.buildJsonObject {
+                    put("title", r.name); put("url", r.url); put("poster", r.posterUrl ?: "")
+                    put("type", r.type); put("year", r.year?.toString() ?: "")
+                })
+            }
+        }.toString()
+    }
+
+    /** The page of one title of an extension: details, and the episodes (or the movie's own link data). */
+    suspend fun webExtTitleJson(ext: String, url: String): String? {
+        val api = webExtApi(ext) ?: return null
+        val info = extGate.withPermit {
+            withTimeoutOrNull(25_000L) { withContext(pluginDispatcher) { runCatching { api.load(url) }.getOrNull() } }
+        } ?: return null
+        return kotlinx.serialization.json.buildJsonObject {
+            put("title", info.name); put("poster", info.posterUrl ?: info.backgroundUrl ?: "")
+            put("desc", info.description ?: ""); put("type", info.type); put("year", info.year?.toString() ?: "")
+            put("data", info.dataUrl)
+            put("genres", kotlinx.serialization.json.buildJsonArray { info.genres.orEmpty().take(8).forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+            put("episodes", kotlinx.serialization.json.buildJsonArray {
+                info.episodes.orEmpty().forEach { e ->
+                    add(kotlinx.serialization.json.buildJsonObject {
+                        put("name", e.name ?: ""); put("s", e.season?.toString() ?: ""); put("e", e.episode?.toString() ?: "")
+                        put("data", e.dataUrl); put("poster", e.posterUrl ?: ""); put("desc", e.description ?: "")
+                        put("variant", e.variant ?: "")
+                    })
+                }
+            })
+        }.toString()
+    }
+
+    /** The streaming links ONE extension gives for a movie / episode, prepared like the website's other lists (no slow checks). */
+    suspend fun webExtLinksJson(ext: String, data: String): String {
+        val api = webExtApi(ext) ?: return serverJson.encodeToJsonElement(StremioStreamResponse(emptyList())).toString()
+        val built = extGate.withPermit {
+            withTimeoutOrNull(40_000L) { withContext(pluginDispatcher) { runCatching { api.loadLinks(data) }.getOrDefault(emptyList()) } }
+        } ?: emptyList()
+        val prep = prepareStreams("movie", "cncx:" + ext, built, System.currentTimeMillis(), fast = true, forWeb = true)
+        val base = serverJson.encodeToJsonElement(StremioStreamResponse(prep.safeOut)).jsonObject
+        val pool = runCatching {
+            SubtitleTools.process(built.flatMap { it.subtitles.orEmpty() }, streamPrefs.copy(subtitleOnlyPreferred = false, subtitleOffsetMs = 0), "")
+        }.getOrDefault(emptyList()).take(300)
+        return JsonObject(base + mapOf("subs" to serverJson.encodeToJsonElement(pool))).toString()
     }
 
     /** One live channel source for the website: the links of that source only, without the slow checks, so the first one can start playing at once. */
