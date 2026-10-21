@@ -4,6 +4,8 @@
 
 - **Server starts at once:** the web server no longer waits for the extensions to load (that took up to a minute). It starts first, the extensions load in the background and the plugin count and home pages fill in as they finish; a search that arrives meanwhile waits for them. The DNS warm-up of every extension's site no longer holds the loading back either (it runs in the background, 8 at a time), and 6 extensions load at once instead of 4.
 - **History tab:** it stays light with long result lists: a request keeps at most 120 results, only the 12 newest keep their links, the list in an open card shows 30 at a time ("Show more"), and the history file is written in the background (before, every request wrote the whole file while answering).
+- **Website player: links without sound or picture switch by themselves.** When the player finds that a movie / episode link has no sound or no picture in this browser (AC3, EAC3, DTS, HEVC ...), or HLS reports a format it cannot play, it takes the same title from another link that this browser can play (same language and resolution if there is one), keeps your place and shows "Switched to another link" with an Undo button. It can be turned off in Settings. A plain file still plays only one audio track in most browsers, so other languages are other links (Audio menu).
+- **Website player: live TV is sturdier.** A live link is tried as HLS, MPEG-TS and plain file in turn (for links without a file ending), a picture that freezes for 15 seconds or ends is reopened up to three times before the next link of the channel is tried.
 
 ## 1.7.22
 
