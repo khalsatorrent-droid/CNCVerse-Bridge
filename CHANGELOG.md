@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.22
 
 - **Website: a new video player.** Its own control bar with a seek bar that shows what is buffered, a time preview, +/-10 s buttons (double-tap the sides of the picture on a phone), volume, speed, quality, audio, subtitles, picture in picture, full screen, a "Stats for nerds" box, lock-screen / media-key controls and many keyboard keys. Streams (HLS / DASH / live) keep only about 30 seconds buffered ahead. Where you stopped is remembered and offered next time ("Resumed at ...", "Start over").
 - **Website: subtitles from all extensions for every video.** The subtitle menu lists every language any extension found for the title (versions of the same language can be tried one after another), with delay, size, colour and background settings, your last language is chosen automatically, and you can load your own .srt / .vtt file. ASS / SSA subtitles (used by many anime releases) are converted so they show too.
