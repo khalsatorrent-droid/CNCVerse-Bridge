@@ -179,9 +179,13 @@ var audApplied=false;
 function audRefresh(){var l=audList();updateBtns();if(l.length<2)return;if(!audApplied){audApplied=true;var want=lsGet('cncAudio');if(want){for(var k=0;k<l.length;k++){if(l[k].key===want&&!l[k].on){l[k].set();return}}}}}
 
 /* ----- quality ----- */
+function otherRes(){if(P.live||!cur||!cur.list||!P.x)return[];var mine=langsOf(P.x),me=resOf(P.x),by={};
+ cur.list.forEach(function(x){var r=resOf(x);if(!r)return;var l=langsOf(x);if(mine.length&&l.length&&!l.some(function(k){return mine.indexOf(k)>=0}))return;
+  var o=by[r];if(!o||(x===P.x)||(o!==P.x&&risks(x).length<risks(o).length))by[r]=x});
+ return Object.keys(by).sort(function(a,b){return parseInt(b)-parseInt(a)}).map(function(r){return {res:r,link:by[r],here:by[r]===P.x||r===me}})}
 function qList(){var out=[];
  if(dash&&dash.getBitrateInfoListFor){var bl=dash.getBitrateInfoListFor('video');if(bl.length>1){var auto=dash.getSettings().streaming.abr.autoSwitchBitrate.video;out.push({label:'Auto',on:auto,set:function(){dash.updateSettings({streaming:{abr:{autoSwitchBitrate:{video:true}}}})}});bl.slice().reverse().forEach(function(b){out.push({label:(b.height||Math.round(b.bitrate/1000)+' kbps')+(b.height?'p':''),on:!auto&&dash.getQualityFor('video')===b.qualityIndex,set:function(){dash.updateSettings({streaming:{abr:{autoSwitchBitrate:{video:false}}}});dash.setQualityFor('video',b.qualityIndex)}})})}return out}
- if(!hls||!hls.levels||hls.levels.length<2)return out;
+ if(!hls||!hls.levels||hls.levels.length<2){var orr=otherRes();return orr.length<2?out:orr.map(function(o){return {label:o.res,sub:o.here?'':'switches the link, keeps your place',on:o.here,set:function(){if(!o.here)switchLink(o.link)}}})}
  var best={};hls.levels.forEach(function(L,i){var h=L.height||0;if(!h)return;if(best[h]==null||(L.bitrate||0)>(hls.levels[best[h]].bitrate||0))best[h]=i});
  var hs=Object.keys(best).map(Number).sort(function(a,b){return b-a});
  if(hs.length<2){var ids=[];hls.levels.forEach(function(L,i){if(L.bitrate)ids.push(i)});ids.sort(function(a,b){return hls.levels[b].bitrate-hls.levels[a].bitrate});
@@ -192,7 +196,7 @@ function qApply(){var want=lsGet('cncQuality');if(!hls||!want||want==='auto'||!h
  hls.levels.forEach(function(L,i){var lh=L.height||0;if(lh&&lh<=h&&(lh>ph||(lh===ph&&(L.bitrate||0)>(hls.levels[pk].bitrate||0)))){ph=lh;pk=i}});
  if(pk<0){var lo=1e9;hls.levels.forEach(function(L,i){if(L.height&&L.height<lo){lo=L.height;pk=i}})}
  if(pk>=0)hls.currentLevel=pk}
-function qLabel(){var l=qList(),o=l.filter(function(x){return x.on})[0];return o?o.label:'Auto'}
+function qLabel(){var l=qList(),o=l.filter(function(x){return x.on})[0];return o?o.label:(P.x&&resOf(P.x))||'Auto'}
 
 /* ----- menus ----- */
 var SPEEDS=[0.5,0.75,1,1.25,1.5,1.75,2];
@@ -276,14 +280,14 @@ g('pintro').onclick=function(){skip(85)};g('pgolive').onclick=function(){var r=s
 g('pstat').onclick=function(){P.stats=!P.stats;g('pstats').classList.toggle('hide',!P.stats);statsTick()};
 g('pprev').onclick=function(){zap(-1)};g('pnext').onclick=function(){zap(1)};
 g('plinks').onclick=function(){if(cur&&cur.list.length){closePanel();render(cur.list,cur.title,tvMode?tuneCur:null,tvMode);g('pht').textContent=cur.title;g('phs').textContent='Choose another link';g('pst').textContent='';g('panel').classList.add('on');g('shade').classList.add('on')}};
-function wake(){var p=g('player');p.classList.remove('idle');clearTimeout(idleT);idleT=setTimeout(function(){var v=g('v');if(!v.paused&&g('amenu').classList.contains('hide')&&!seeking)p.classList.add('idle')},3000)}
+function wake(){var p=g('player');p.classList.remove('idle');clearTimeout(idleT);idleT=setTimeout(function(){var v=g('v');if(!v.paused&&g('amenu').classList.contains('hide')&&!seeking&&!g('pbar').matches(':hover')&&!g('ptop').matches(':hover'))p.classList.add('idle');else if(!v.paused)wake()},7000)}
 g('player').addEventListener('mousemove',wake);g('player').addEventListener('touchstart',wake,{passive:true});
 
 /* taps: one click plays / pauses (touch: shows the controls), a double tap on a side skips 10 s, in the middle it goes full screen */
 (function(){var last=0,lx=0,tm=null,c=g('pclick');
  c.addEventListener('click',function(e){var now=Date.now(),w=c.clientWidth,x=e.clientX,touch=e.pointerType==='touch'||(e.pointerType==null&&window.matchMedia&&matchMedia('(pointer:coarse)').matches);
   if(now-last<320){clearTimeout(tm);last=0;var f=x/w;if(f<.34)skip(-10);else if(f>.66)skip(10);else toggleFs();return}
-  last=now;lx=x;clearTimeout(tm);tm=setTimeout(function(){last=0;if(touch){var p=g('player');if(p.classList.contains('idle'))wake();else{p.classList.add('idle')}}else togglePlay()},300)})})();
+  last=now;lx=x;clearTimeout(tm);tm=setTimeout(function(){last=0;if(touch){var p=g('player');wake()}else togglePlay()},300)})})();
 
 /* ----- stats ----- */
 var stT=null;function statsTick(){clearTimeout(stT);if(!P.stats){return}var v=g('v'),q=v.getVideoPlaybackQuality?v.getVideoPlaybackQuality():null,lv=hls&&hls.levels&&hls.levels[hls.currentLevel],L=[];

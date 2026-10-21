@@ -19,6 +19,8 @@ import com.cncverse.stremiobridge.server.StremioServer
 import com.cncverse.stremiobridge.state.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.distinctUntilChanged
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -89,9 +91,29 @@ class StremioForegroundService : Service() {
         Log.i(TAG, "Service created")
     }
 
+    private var liveJob: Job? = null
+
+    /** Keeps the notification text true: extensions loaded now, and whether the Stremio link is online. */
+    private fun startLiveNotification() {
+        if (liveJob?.isActive == true) return
+        liveJob = serviceScope.launch {
+            kotlinx.coroutines.flow.combine(
+                ServerState.status, ServerState.globalLoadedPlugins,
+                ServerState.isStremioMode, ServerState.activeTunnelUrl,
+            ) { st, plugins, stremio, tunnel ->
+                val running = st as? ServerStatus.Running ?: return@combine null
+                val n = plugins.count { it.apiRegistered }
+                val ext = if (n == 0 && plugins.isEmpty()) "loading extensions…" else "$n extensions"
+                val link = if (!stremio) "" else if (tunnel.isNullOrBlank()) " · link starting…" else " · link online"
+                "Running on ${running.ipAddress}:${running.port} · $ext$link"
+            }.filterNotNull().distinctUntilChanged().collect { updateNotification(it) }
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand")
         acquireLocks()
+        startLiveNotification()
         if (ServerState.status.value is ServerStatus.Running && StremioServer.isRunning) {
             Log.i(TAG, "Server is already running, skipping restart.")
             val ipAddress = getLocalIpAddress() ?: "localhost"
