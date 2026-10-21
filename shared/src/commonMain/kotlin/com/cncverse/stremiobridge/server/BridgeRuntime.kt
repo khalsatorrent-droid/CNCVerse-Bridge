@@ -348,25 +348,9 @@ object BridgeRuntime {
             }
         }
 
-        // Initial plugin load (no-op if already loaded at app startup)
-        ServerState.updateStatus(ServerStatus.Starting("Loading plugins…"))
-        runCatching { ensurePluginsLoaded() }
-            .onFailure { e -> ServerState.warn("Plugin load failed: ${e.message}") }
-
-        // Bounded safety wait for a load kicked off elsewhere
-        ServerState.updateStatus(ServerStatus.Starting("Waiting for plugins…"))
-        val pluginsReady = withTimeoutOrNull(30_000) {
-            GlobalPluginManager.isPluginsLoaded.first { it }
-        }
-        if (pluginsReady == null) {
-            ServerState.warn("Timed out waiting for plugin load — starting server with whatever is available")
-        }
-        val loadedInfos = ServerState.globalLoadedPlugins.value
-
-        // Strip any stale alias entries from disabledPlugins so that the admin toggle
-        // UI can reliably enable extensions (ghost entries from legacy saves are removed).
-        StremioServer.cleanupDisabledPlugins()
-
+        // The server starts at once: extensions load in the background (that is what used to hold the start back for a minute).
+        // Requests that arrive before they are loaded wait for them (see the stream search), the Server screen's plugin count
+        // follows the load (refreshRunningStatus).
         val ipAddress = getLocalIpAddress() ?: "127.0.0.1"
         CloudflaredManager.deviceIp = ipAddress
         val boundPort = StremioServer.start(preferredPort, cacheDir)
@@ -374,18 +358,30 @@ object BridgeRuntime {
         ServerState.updateStatus(
             ServerStatus.Running(
                 port          = boundPort,
-                loadedPlugins = loadedInfos,
+                loadedPlugins = ServerState.globalLoadedPlugins.value,
                 ipAddress     = ipAddress,
             )
         )
         ServerState.info("🎬 Bridge running at http://$ipAddress:$boundPort/manifest.json")
 
-        // Load every home page (genres + items) once the server is ready; StremioServer
-        // refreshes them every 30 minutes after that
-        appScope?.launch(Dispatchers.IO) {
+        val afterStart: suspend () -> Unit = {
+            runCatching { ensurePluginsLoaded() }
+                .onFailure { e -> ServerState.warn("Plugin load failed: ${e.message}") }
+            if (!GlobalPluginManager.isPluginsLoaded.value) {
+                withTimeoutOrNull(60_000) { GlobalPluginManager.isPluginsLoaded.first { it } }
+                    ?: ServerState.warn("Timed out waiting for plugin load - the watchdog will try again")
+            }
+            // Strip any stale alias entries from disabledPlugins so that the admin toggle
+            // UI can reliably enable extensions (ghost entries from legacy saves are removed).
+            StremioServer.cleanupDisabledPlugins()
+            refreshRunningStatus()
+            // Load every home page (genres + items) once the extensions are there; StremioServer
+            // refreshes them every 30 minutes after that
             runCatching { StremioServer.preWarmHomepages() }
                 .onFailure { e -> ServerState.warn("Startup pre-warm error: ${e.message}") }
         }
+        val bgScope = appScope
+        if (bgScope != null) bgScope.launch(Dispatchers.IO) { afterStart() } else afterStart()
 
         // Start 30-min extension update checker
         startPeriodicUpdateCheck()

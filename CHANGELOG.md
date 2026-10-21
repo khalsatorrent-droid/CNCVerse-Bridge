@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Server starts at once:** the web server no longer waits for the extensions to load (that took up to a minute). It starts first, the extensions load in the background and the plugin count and home pages fill in as they finish; a search that arrives meanwhile waits for them. The DNS warm-up of every extension's site no longer holds the loading back either (it runs in the background, 8 at a time), and 6 extensions load at once instead of 4.
+- **History tab:** it stays light with long result lists: a request keeps at most 120 results, only the 12 newest keep their links, the list in an open card shows 30 at a time ("Show more"), and the history file is written in the background (before, every request wrote the whole file while answering).
+
 ## 1.7.22
 
 - **Website: a new video player.** Its own control bar with a seek bar that shows what is buffered, a time preview, +/-10 s buttons (double-tap the sides of the picture on a phone), volume, speed, quality, audio, subtitles, picture in picture, full screen, a "Stats for nerds" box, lock-screen / media-key controls and many keyboard keys. Streams (HLS / DASH / live) keep only about 30 seconds buffered ahead. Where you stopped is remembered and offered next time ("Resumed at ...", "Start over").
