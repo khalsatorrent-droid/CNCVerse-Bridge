@@ -31,7 +31,10 @@ data class HistoryEntry(
 
 object StreamHistory {
     private const val MAX = 150
-    private const val KEEP_LINKS = 40
+    private const val KEEP_LINKS = 12
+    /** Most results (and links) kept per entry, and the longest link kept: a request with hundreds of long links must stay light */
+    private const val MAX_LINES = 120
+    private const val MAX_URL = 700
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _entries = MutableStateFlow<List<HistoryEntry>>(emptyList())
     val entries: StateFlow<List<HistoryEntry>> = _entries
@@ -55,12 +58,33 @@ object StreamHistory {
 
     fun titleFor(id: String): String? = titles[id]
 
-    @Synchronized
-    fun add(e: HistoryEntry) {
-        // Links are long (some are over a kilobyte): only the newest entries keep them, so the file stays small
-        val older = _entries.value.mapIndexed { i, old -> if (i + 1 >= KEEP_LINKS && old.urls.isNotEmpty()) old.copy(urls = emptyList()) else old }
-        _entries.value = (listOf(e) + older).take(MAX)
-        runCatching { file?.writeText(json.encodeToString(_entries.value)) }
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "history-writer").apply { isDaemon = true } }
+    private val writePending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun add(e0: HistoryEntry) {
+        val e = e0.copy(
+            lines = e0.lines.take(MAX_LINES),
+            urls = e0.urls.take(MAX_LINES).map { if (it.length > MAX_URL) "" else it },
+        )
+        synchronized(this) {
+            // Links are long (some are over a kilobyte): only the newest entries keep them, so the file stays small
+            val older = _entries.value.mapIndexed { i, old -> if (i + 1 >= KEEP_LINKS && old.urls.isNotEmpty()) old.copy(urls = emptyList()) else old }
+            _entries.value = (listOf(e) + older).take(MAX)
+        }
+        save()
+    }
+
+    /** The file is written on its own thread (and once for a burst of requests), never while a request is being answered */
+    private fun save() {
+        if (!writePending.compareAndSet(false, true)) return
+        writer.execute {
+            try {
+                Thread.sleep(500)
+                writePending.set(false)
+                val text = json.encodeToString(_entries.value)
+                file?.writeText(text)
+            } catch (_: Throwable) { writePending.set(false) }
+        }
     }
 
     @Synchronized

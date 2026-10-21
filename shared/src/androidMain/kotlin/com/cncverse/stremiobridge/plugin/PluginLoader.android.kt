@@ -27,6 +27,7 @@ import dalvik.system.PathClassLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -56,7 +57,7 @@ actual class PluginLoader(private val context: Context) {
         configureAppClientNetwork()
         val pluginContext = awaitForegroundActivity()
         // Load several plugins at once; each one's APIs are told apart by class loader
-        val gate = kotlinx.coroutines.sync.Semaphore(4)
+        val gate = kotlinx.coroutines.sync.Semaphore(6)
         val loadedList = kotlinx.coroutines.coroutineScope {
             plugins.map { plugin ->
                 async {
@@ -72,7 +73,8 @@ actual class PluginLoader(private val context: Context) {
                 }
             }.awaitAll()
         }
-        preWarmPluginHosts()
+        // DNS warm-up of every extension's site is not needed to start: it runs on in the background
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { preWarmPluginHosts() }
         loadedList
     }
 
@@ -106,15 +108,13 @@ actual class PluginLoader(private val context: Context) {
     private suspend fun preWarmPluginHosts() {
         withContext(Dispatchers.IO) {
             try {
-                registeredApis.forEach { api ->
-                    val mainUrlField = api.javaClass.methods.firstOrNull { it.name == "getMainUrl" }
-                    val mainUrl = mainUrlField?.invoke(api) as? String
-                    if (!mainUrl.isNullOrBlank()) {
-                        val host = runCatching { java.net.URI(mainUrl).host }.getOrNull()
-                        if (!host.isNullOrBlank()) {
-                            com.cncverse.stremiobridge.network.AdaptiveHostDns.preWarmHost(host)
-                        }
-                    }
+                val hosts = registeredApis.toList().mapNotNull { api ->
+                    val mainUrl = api.javaClass.methods.firstOrNull { it.name == "getMainUrl" }?.invoke(api) as? String
+                    if (mainUrl.isNullOrBlank()) null else runCatching { java.net.URI(mainUrl).host }.getOrNull()?.takeIf { it.isNotBlank() }
+                }.distinct()
+                val gate = kotlinx.coroutines.sync.Semaphore(8)
+                kotlinx.coroutines.coroutineScope {
+                    hosts.map { h -> async { gate.withPermit { com.cncverse.stremiobridge.network.AdaptiveHostDns.preWarmHost(h) } } }.awaitAll()
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "Pre-warming plugin hosts encountered an error: ${t.message}")

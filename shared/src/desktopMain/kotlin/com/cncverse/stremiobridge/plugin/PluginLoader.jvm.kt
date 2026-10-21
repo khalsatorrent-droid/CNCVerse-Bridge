@@ -26,6 +26,7 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -81,7 +82,8 @@ actual class PluginLoader {
         // Patch plugin-specific classes once every plugin's classloader is active
         // (it scans all classloaders, so running it per plugin was O(n²)).
         configurePluginNetworkPostLoad()
-        preWarmPluginHosts()
+        // DNS warm-up is not needed to start: it runs on in the background
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { preWarmPluginHosts() }
         loadedList
     }
 

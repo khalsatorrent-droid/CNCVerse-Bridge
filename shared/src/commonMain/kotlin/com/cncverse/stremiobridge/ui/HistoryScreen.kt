@@ -51,7 +51,7 @@ fun HistoryScreen(onCopy: (String) -> Unit = {}) {
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(entries, key = { it.time.toString() + it.id }) { e -> HistoryCard(e, open == e.time, { open = if (open == e.time) null else e.time }, onCopy) }
+                itemsIndexed(entries, key = { i, it -> "${it.time}|${it.id}|$i" }) { _, e -> HistoryCard(e, open == e.time, { open = if (open == e.time) null else e.time }, onCopy) }
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
@@ -99,7 +99,8 @@ private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, 
             Spacer(Modifier.height(8.dp))
             if (e.lines.isEmpty()) Text("No links were sent.", color = TextMuted, fontSize = 12.sp)
             if (e.lines.isNotEmpty()) Text("Long-press a result to copy it with its link", color = TextMuted, fontSize = 10.sp)
-            e.lines.forEachIndexed { i, l ->
+            var shown by remember(e.time) { mutableStateOf(30) }
+            e.lines.take(shown).forEachIndexed { i, l ->
                 val url = e.urls.getOrNull(i).orEmpty()
                 Column(
                     Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onCopy(if (url.isNotEmpty()) "$l\n$url" else l) })
@@ -109,6 +110,7 @@ private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, 
                     if (url.isNotEmpty()) Text(url, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
             }
+            if (e.lines.size > shown) TextButton(onClick = { shown += 60 }) { Text("Show more (${e.lines.size - shown} left)") }
             TextButton(onClick = { onCopy(listText(e)) }) { Text("Copy list") }
         } else {
             Text("Tap to see the list as shown - long press to copy it all", color = TextMuted, fontSize = 10.sp)
