@@ -287,7 +287,7 @@ g('player').addEventListener('mousemove',wake);g('player').addEventListener('tou
 (function(){var last=0,lx=0,tm=null,c=g('pclick');
  c.addEventListener('click',function(e){var now=Date.now(),w=c.clientWidth,x=e.clientX,touch=e.pointerType==='touch'||(e.pointerType==null&&window.matchMedia&&matchMedia('(pointer:coarse)').matches);
   if(now-last<320){clearTimeout(tm);last=0;var f=x/w;if(f<.34)skip(-10);else if(f>.66)skip(10);else toggleFs();return}
-  last=now;lx=x;clearTimeout(tm);tm=setTimeout(function(){last=0;if(touch){var p=g('player');wake()}else togglePlay()},300)})})();
+  last=now;lx=x;clearTimeout(tm);tm=setTimeout(function(){last=0;if(touch){var p=g('player');if(p.classList.contains('idle')){wake()}else{clearTimeout(idleT);g('amenu').classList.add('hide');p.classList.add('idle')}}else togglePlay()},300)})})();
 
 /* ----- stats ----- */
 var stT=null;function statsTick(){clearTimeout(stT);if(!P.stats){return}var v=g('v'),q=v.getVideoPlaybackQuality?v.getVideoPlaybackQuality():null,lv=hls&&hls.levels&&hls.levels[hls.currentLevel],L=[];
