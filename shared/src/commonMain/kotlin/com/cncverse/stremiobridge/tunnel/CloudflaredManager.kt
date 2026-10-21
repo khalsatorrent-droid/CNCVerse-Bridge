@@ -82,6 +82,68 @@ object CloudflaredManager {
      * Returns false (and logs why) only when nothing could be started.
      */
     fun startTunnel(port: Int): Boolean {
+        lastPort = port
+        startGuard()
+        return startTunnelInner(port)
+    }
+
+    // ── Keeping the tunnel alive ─────────────────────────────────────────────────
+    // While Stremio Mode is on, a guard checks the tunnel every 30 s: the process must be running, a link must exist and the
+    // link must really lead to this bridge. When it does not (cloudflared died, the link went stale after a network change,
+    // no link after 2 minutes) Stremio Mode is switched off, the tunnel stopped and everything is switched on again,
+    // waiting a little longer after each failed try (5 s, 15 s, 45 s ... at most 5 minutes) and only while the internet works.
+    private var lastPort = 0
+    private var guardJob: Job? = null
+    private val guardScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val probeClient by lazy {
+        okhttp3.OkHttpClient.Builder().connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS).readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
+
+    private fun reachable(url: String): Boolean = runCatching {
+        probeClient.newCall(okhttp3.Request.Builder().url(url).header("Cache-Control", "no-cache").build()).execute().use { it.code in 200..299 }
+    }.getOrDefault(false)
+
+    private fun internetUp(): Boolean = reachable("https://www.cloudflare.com/cdn-cgi/trace") || reachable("https://1.1.1.1/cdn-cgi/trace")
+
+    private fun startGuard() {
+        if (guardJob?.isActive == true) return
+        guardJob = guardScope.launch {
+            var bad = 0
+            var failedRestarts = 0
+            var sinceUrl = 0L
+            while (isActive) {
+                delay(30_000)
+                if (!ServerState.isStremioMode.value || lastPort <= 0) { bad = 0; sinceUrl = 0; continue }
+                val url = ServerState.activeTunnelUrl.value
+                val alive = tunnelProcess?.isAlive == true
+                var why: String? = null
+                if (!alive) why = "cloudflared is not running"
+                else if (url == null) {
+                    sinceUrl += 30_000
+                    if (sinceUrl >= 120_000) why = "no tunnel link after 2 minutes"
+                } else {
+                    sinceUrl = 0
+                    // the bridge itself must answer, otherwise restarting the tunnel would not help
+                    val local = reachable("http://127.0.0.1:$lastPort/manifest.json")
+                    if (local && !reachable("$url/manifest.json")) { bad++; if (bad >= 3) why = "the tunnel link does not answer" } else bad = 0
+                }
+                if (why == null) { if (alive && url != null) failedRestarts = 0; continue }
+                if (!internetUp()) { ServerState.warn("Tunnel check: $why, but there is no internet right now - waiting"); continue }
+                val wait = minOf(300L, 5L * Math.pow(3.0, failedRestarts.toDouble()).toLong())
+                ServerState.warn("Tunnel check: $why - switching Stremio Mode off and on again (try ${failedRestarts + 1}, waiting ${wait}s)")
+                ServerState.isStremioMode.value = false
+                stopInternal()
+                delay(wait * 1000)
+                if (!isActive) break
+                if (ServerState.status.value !is com.cncverse.stremiobridge.state.ServerStatus.Running) { bad = 0; continue }
+                ServerState.isStremioMode.value = true
+                if (!startTunnelInner(lastPort)) { ServerState.isStremioMode.value = false; failedRestarts++ } else failedRestarts++
+                bad = 0; sinceUrl = 0
+            }
+        }
+    }
+
+    private fun startTunnelInner(port: Int): Boolean {
         if (tunnelProcess != null && tunnelProcess?.isAlive == true) {
             ServerState.info("Cloudflare Tunnel is already running")
             return true
@@ -92,7 +154,7 @@ object CloudflaredManager {
         val quick = token == null || publicUrl == null
         if (quick) ServerState.info("No Cloudflare token set - starting a free quick tunnel (temporary https link)")
 
-        stopTunnel()
+        stopInternal()
 
         val binaryPath = getCloudflaredBinaryPath()
         setFileExecutable(binaryPath)
@@ -308,7 +370,14 @@ object CloudflaredManager {
         null
     }
 
+    /** Stopped on purpose (a switch, a new token): the guard stops too. */
     fun stopTunnel() {
+        guardJob?.cancel()
+        guardJob = null
+        stopInternal()
+    }
+
+    private fun stopInternal() {
         tunnelScope?.cancel()
         tunnelScope = null
 

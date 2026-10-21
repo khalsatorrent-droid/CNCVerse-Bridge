@@ -25,6 +25,9 @@ import com.cncverse.stremiobridge.state.LoadedPluginInfo
 import com.cncverse.stremiobridge.state.ServerState
 import dalvik.system.PathClassLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -42,8 +45,9 @@ private val manifestJson = Json { ignoreUnknownKeys = true }
  */
 actual class PluginLoader(private val context: Context) {
 
-    private val loadedPlugins: MutableMap<String, Any> = mutableMapOf()
-    private val registeredApis: MutableList<Any> = mutableListOf()
+    private val loadedPlugins: MutableMap<String, Any> = java.util.concurrent.ConcurrentHashMap()
+    private val registeredApis: MutableList<Any> = java.util.Collections.synchronizedList(mutableListOf())
+    private val regLock = Any()
 
     actual suspend fun loadPlugins(
         plugins: List<SitePlugin>,
@@ -51,12 +55,22 @@ actual class PluginLoader(private val context: Context) {
     ): List<LoadedPluginInfo> = withContext(Dispatchers.IO) {
         configureAppClientNetwork()
         val pluginContext = awaitForegroundActivity()
-        val loadedList = plugins.mapNotNull { plugin ->
-            val file = cs3Files[plugin.internalName] ?: run {
-                ServerState.warn("No .cs3 file for '${plugin.name}', skipping")
-                return@mapNotNull plugin.toLoadedPluginInfo(apiRegistered = false)
-            }
-            loadSinglePlugin(file, plugin, pluginContext)
+        // Load several plugins at once; each one's APIs are told apart by class loader
+        val gate = kotlinx.coroutines.sync.Semaphore(4)
+        val loadedList = kotlinx.coroutines.coroutineScope {
+            plugins.map { plugin ->
+                async {
+                    gate.withPermit {
+                        val file = cs3Files[plugin.internalName]
+                        if (file == null) {
+                            ServerState.warn("No .cs3 file for '${plugin.name}', skipping")
+                            plugin.toLoadedPluginInfo(apiRegistered = false)
+                        } else {
+                            loadSinglePlugin(file, plugin, pluginContext)
+                        }
+                    }
+                }
+            }.awaitAll()
         }
         preWarmPluginHosts()
         loadedList
@@ -116,7 +130,7 @@ actual class PluginLoader(private val context: Context) {
                 java.util.zip.ZipFile(file).use { zip ->
                     val dexEntry = zip.getEntry("classes.dex") ?: run {
                         ServerState.error("No classes.dex inside ${file.name}")
-                        StremioServer.loadedApis.add(MetadataOnlyWrapper(data))
+                        synchronized(regLock) { StremioServer.loadedApis.add(MetadataOnlyWrapper(data)) }
                         return data.toLoadedPluginInfo(apiRegistered = false)
                     }
                     java.nio.file.Files.copy(
@@ -149,17 +163,17 @@ actual class PluginLoader(private val context: Context) {
                 null
             } ?: run {
                 ServerState.error("No manifest.json in '${data.name}'")
-                StremioServer.loadedApis.add(MetadataOnlyWrapper(data))
+                synchronized(regLock) { StremioServer.loadedApis.add(MetadataOnlyWrapper(data)) }
                 return data.toLoadedPluginInfo(apiRegistered = false)
             }
 
             val pluginClassName = manifest.pluginClassName ?: run {
                 ServerState.error("No pluginClassName in manifest for '${data.name}'")
-                StremioServer.loadedApis.add(MetadataOnlyWrapper(data))
+                synchronized(regLock) { StremioServer.loadedApis.add(MetadataOnlyWrapper(data)) }
                 return data.toLoadedPluginInfo(apiRegistered = false)
             }
 
-            val apisBefore = getApiHolderProviders(loader).toSet()
+            val apisBefore = getApiHolderProviders(loader).toList().toSet()
 
             val pluginClass = loader.loadClass(pluginClassName)
             val pluginInstance = pluginClass.getDeclaredConstructor().newInstance()
@@ -195,16 +209,17 @@ actual class PluginLoader(private val context: Context) {
 
             val hasSettings = getOpenSettings(pluginInstance) != null
 
-            val newApis = getApiHolderProviders(loader)
-                .filterNot { apisBefore.contains(it) }
+            val all = getApiHolderProviders(loader).toList()
+            val newApis = all.filter { it.javaClass.classLoader === loader }
+                .ifEmpty { all.filterNot { apisBefore.contains(it) } }
 
             if (newApis.isEmpty()) {
                 ServerState.warn("Plugin '${data.name}' loaded but registered no providers")
-                StremioServer.loadedApis.add(MetadataOnlyWrapper(data))
+                synchronized(regLock) { StremioServer.loadedApis.add(MetadataOnlyWrapper(data)) }
                 return data.toLoadedPluginInfo(apiRegistered = false, hasSettings = hasSettings)
             }
 
-            newApis.forEach { api ->
+            synchronized(regLock) { newApis.forEach { api ->
                 registeredApis.add(api)
                 val wrapper = if (api is com.lagradost.cloudstream3.MainAPI) {
                     DirectMainApiWrapper(api, data)
@@ -212,7 +227,7 @@ actual class PluginLoader(private val context: Context) {
                     ReflectionMainApiWrapper(api, data)
                 }
                 StremioServer.loadedApis.add(wrapper)
-            }
+            } }
 
             ServerState.info("Loaded '${data.name}' on Android (${newApis.size} API(s))")
             data.toLoadedPluginInfo(apiRegistered = true, hasSettings = hasSettings)
@@ -224,7 +239,7 @@ actual class PluginLoader(private val context: Context) {
             val trace = Log.getStackTraceString(actualException).take(150).replace("\n", " ")
             ServerState.error("Failed to load '${data.name}': ${actualException::class.simpleName} - ${actualException.message} | $trace")
             Log.e(TAG, "Plugin load failed for ${data.name}", actualException)
-            StremioServer.loadedApis.add(MetadataOnlyWrapper(data))
+            synchronized(regLock) { StremioServer.loadedApis.add(MetadataOnlyWrapper(data)) }
             data.toLoadedPluginInfo(apiRegistered = false)
         }
     }
@@ -240,7 +255,11 @@ actual class PluginLoader(private val context: Context) {
         if (PluginUIContext.currentActivity == null) {
             ServerState.info("Waiting for the app screen before loading UI-dependent plugins")
         }
-        return PluginUIContext.awaitActivity()
+        // Never wait forever: with the app in the background (service only) no screen exists,
+        // and waiting here is what left the app with 0 extensions.
+        val act = kotlinx.coroutines.withTimeoutOrNull(4000L) { PluginUIContext.awaitActivity() }
+        if (act == null) ServerState.info("No app screen yet, loading extensions with the app context")
+        return act ?: context
     }
 
     private fun getApiHolderProviders(loader: ClassLoader): List<Any> {
@@ -254,7 +273,11 @@ actual class PluginLoader(private val context: Context) {
             val companion = companionField.get(null)
             val method = companion.javaClass.getMethod("getAllProviders")
             @Suppress("UNCHECKED_CAST")
-            method.invoke(companion) as? List<Any> ?: emptyList()
+            val live = method.invoke(companion) as? List<Any> ?: emptyList()
+            // Another plugin may be registering right now: copy with retries
+            var copy: List<Any>? = null
+            repeat(5) { if (copy == null) copy = try { ArrayList(live) } catch (_: ConcurrentModificationException) { null } }
+            copy ?: emptyList()
         } catch (_: Exception) {
             emptyList()
         }

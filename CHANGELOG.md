@@ -7,6 +7,8 @@
 - **Website: audio and codecs.** The Audio menu switches the audio tracks inside HLS / DASH streams and, for plain files (where a browser can only play one track), lists the other links of the same title by language (Hindi, English, Tamil ...) and switches to one while keeping your place. Links that mention formats this browser cannot play (HEVC, DTS, Dolby Digital Plus, AV1) are tagged "May not play here" and listed after the others of the same resolution (a switch in Settings); if a file still has no sound or no picture, the player says why and offers VLC. Live .ts / .flv streams are played with mpegts.js and .mpd with dash.js (both loaded only when needed).
 - **Website: live TV.** A LIVE badge, a "Go live" button and a 90 second rewind window, a channel list inside the player, and links that stall are skipped for the next one.
 - **Website: library.** "Continue watching" and "My list" rows, Resume / Continue buttons, watched marks and progress bars on episodes, the next episode starts by itself after a 10 second countdown (Settings), a trailer button, cast, "More like this", more home shelves (genres, anime, Hindi cinema, new releases) and a Settings window.
+- **Stremio Mode fixes itself.** A watchdog checks the Cloudflare tunnel every 30 seconds. If it dies, never gets a link or stops answering, Stremio Mode is switched off and on again (with longer waits after repeated failures).
+- **Extensions load faster and no longer stay at 0.** On Android four extensions load at a time instead of one by one, and the app no longer waits forever for a screen when it runs in the background (that wait was what left it at 0 extensions).
 
 ## 1.7.21
 
