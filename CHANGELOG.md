@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.23
 
 - **Server starts at once:** the web server no longer waits for the extensions to load (that took up to a minute). It starts first, the extensions load in the background and the plugin count and home pages fill in as they finish; a search that arrives meanwhile waits for them. The DNS warm-up of every extension's site no longer holds the loading back either (it runs in the background, 8 at a time), and 6 extensions load at once instead of 4.
 - **History tab:** it stays light with long result lists: a request keeps at most 120 results, only the 12 newest keep their links, the list in an open card shows 30 at a time ("Show more"), and the history file is written in the background (before, every request wrote the whole file while answering).
