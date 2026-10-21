@@ -252,6 +252,7 @@ function openSettings(){var d=el('div');d.appendChild(el('h3',null,'Settings'));
  function toggle(label,sub,key,def){var r=el('label','setr');var t=el('div');t.appendChild(el('b',null,label));if(sub)t.appendChild(el('small',null,sub));r.appendChild(t);var c=document.createElement('input');c.type='checkbox';c.checked=!!S(key,def);c.onchange=function(){Sset(key,c.checked)};r.appendChild(c);d.appendChild(r)}
  function choose(label,sub,key,def,opts){var r=el('div','setr');var t=el('div');t.appendChild(el('b',null,label));if(sub)t.appendChild(el('small',null,sub));r.appendChild(t);var s=document.createElement('select');opts.forEach(function(o){var op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(String(S(key,def))===o[0])op.selected=true;s.appendChild(op)});s.onchange=function(){Sset(key,s.value);subStyle()};r.appendChild(s);d.appendChild(r)}
  toggle('Play the next episode by itself','Shows a 10 second countdown when an episode ends','autonext',true);
+ toggle('Switch link by itself when the sound or picture cannot play','Takes the same title from another link in the same language (movies and episodes)','autoswitch',true);
  toggle('Put links that play here first','Links that mention HEVC, DTS or other formats this browser cannot play go below the others','compat',true);
  var langs=[['off','Off']].concat(LANGS.map(function(l){return [l,l]}));
  choose('Subtitle language','Used when a title has subtitles in this language','sublang','English',langs);
