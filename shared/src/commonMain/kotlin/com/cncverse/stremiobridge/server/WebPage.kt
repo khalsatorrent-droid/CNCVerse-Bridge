@@ -172,6 +172,15 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 
     private val STYLE_END = """
 /* library features */
+.brbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;padding:0 4vw 18px}
+.brf{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--mut)}
+.brf select{background:var(--s1);color:var(--tx);border:1px solid var(--line);border-radius:var(--r);padding:9px 12px;min-width:130px}
+.eptools{padding:6px 4vw 0}
+.sm{padding:6px 14px;font-size:13px}
+.ep .wt{position:absolute;right:8px;top:8px;width:30px;height:30px;border-radius:50%;background:rgba(10,18,21,.75);color:var(--mut);display:flex;align-items:center;justify-content:center;font-size:15px;opacity:0;transition:opacity .15s}
+.ep:hover .wt,.ep .wt:focus-visible,.ep .wt.on{opacity:1}
+.ep .wt.on{color:var(--lamp)}
+@media(pointer:coarse){.ep .wt{opacity:1}}
 .pgb{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.22)}
 .pgb i{display:block;height:100%;background:var(--lamp)}
 .card .pw{position:relative;border-radius:var(--r);overflow:hidden}
@@ -217,8 +226,8 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 
 <div id="app" class="hide">
  <header id="hd"><button class="logo" id="home">CNC<i>Verse</i></button>
-  <button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navtv" type="button">Live TV</button>
-  <form class="sbox" id="sf" role="search"><input id="q" type="search" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
+  <button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navbr" type="button">Browse</button><button class="nav" id="navtv" type="button">Live TV</button>
+  <form class="sbox" id="sf" role="search"><input id="q" type="search" list="rs" autocomplete="off" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><datalist id="rs"></datalist><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
   <button class="quiet gear" id="cfgb" type="button" aria-label="Settings">Settings</button><button class="quiet" id="out" type="button">Log out</button>
  </header>
  <main id="main"></main>
@@ -267,14 +276,18 @@ g('cfgb').onclick=openSettings;
 
 g('out').onclick=function(){fetch('/web/logout',{method:'POST',credentials:'same-origin'}).then(showLogin)};
 g('home').onclick=function(){g('q').value='';location.hash='#/'};
-g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};
-g('sf').addEventListener('submit',function(e){e.preventDefault();var s=g('q').value.trim();g('q').blur();if(location.hash==='#/s/'+encodeURIComponent(s))route();else location.hash=s?('#/s/'+encodeURIComponent(s)):'#/'});
+g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};g('navbr').onclick=function(){location.hash='#/browse'};
+function searches(){return store('cncSearches')}
+function fillSearches(){var d=g('rs');d.textContent='';searches().forEach(function(s){var o=document.createElement('option');o.value=s;d.appendChild(o)})}
+function addSearch(s){if(!s)return;var l=searches().filter(function(x){return x.toLowerCase()!==s.toLowerCase()});l.unshift(s);put('cncSearches',l.slice(0,8));fillSearches()}
+g('q').addEventListener('focus',fillSearches);
+g('sf').addEventListener('submit',function(e){e.preventDefault();var s=g('q').value.trim();g('q').blur();addSearch(s);if(location.hash==='#/s/'+encodeURIComponent(s))route();else location.hash=s?('#/s/'+encodeURIComponent(s)):'#/'});
 window.addEventListener('scroll',function(){g('hd').classList.toggle('solid',window.scrollY>40)},{passive:true});
 window.addEventListener('hashchange',function(){if(!g('app').classList.contains('hide'))route()});
 
 function route(){var h=location.hash.replace(/^#\/?/,'').split('/');window.scrollTo(0,0);closePanel();
- g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navmov').setAttribute('aria-current',h[0]==='tv'?'false':'page');
- if(h[0]==='tv')liveTv();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else goHome()}
+ g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navbr').setAttribute('aria-current',h[0]==='browse'?'page':'false');g('navmov').setAttribute('aria-current',(h[0]==='tv'||h[0]==='browse')?'false':'page');
+ if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else goHome()}
 
 function recent(){try{return JSON.parse(localStorage.getItem('cncRecent')||'[]')}catch(e){return[]}}
 function remember(t){try{var l=recent().filter(function(x){return !(x.id===t.id&&x.type===t.type)});l.unshift({id:t.id,type:t.type,title:t.title,year:t.year,poster:t.poster});localStorage.setItem('cncRecent',JSON.stringify(l.slice(0,20)))}catch(e){}}
@@ -290,6 +303,28 @@ function rowEl(title,items,big){var m=g('main');m.appendChild(el('h2','rt',title
  w.appendChild(l);w.appendChild(row);w.appendChild(r);m.appendChild(w)}
 function skeleton(){var m=g('main');m.textContent='';m.appendChild(el('div','hero sk'));var row=el('div','row');for(var i=0;i<9;i++)row.appendChild(el('div','sk-card'));m.appendChild(row)}
 
+/* browse: genre / year / sort, and a random pick */
+var brs={type:'movie',genre:'',year:'',sort:'popular'},brGenres=null;
+function browse(){document.title='Browse - CNCVerse';var m=g('main');m.textContent='';m.appendChild(el('div','top-gap'));
+ var head=el('div','tvh');head.appendChild(el('h2',null,'Browse'));m.appendChild(head);
+ var bar=el('div','brbar');m.appendChild(bar);var info=el('p','msg');m.appendChild(info);var gr=el('div','grid');m.appendChild(gr);var more=el('button','quiet more','Show more');more.type='button';more.classList.add('hide');m.appendChild(more);
+ var page=1,pages=1,run=0;
+ function sel(label,opts,get,set){var l=el('label','brf');l.appendChild(el('span',null,label));var s=document.createElement('select');opts.forEach(function(o){var op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(String(get())===o[0])op.selected=true;s.appendChild(op)});s.onchange=function(){set(s.value);load(true)};l.appendChild(s);return l}
+ function drawBar(){bar.textContent='';
+  bar.appendChild(sel('Show',[['movie','Movies'],['tv','Series']],function(){return brs.type},function(v){brs.type=v;brs.genre=''}));
+  var gl=((brGenres||{})[brs.type]||[]).map(function(x){return [String(x.id),x.name]});bar.appendChild(sel('Genre',[['','Any']].concat(gl),function(){return brs.genre},function(v){brs.genre=v}));
+  var yrs=[['','Any']],y=new Date().getFullYear();for(var i=0;i<45;i++)yrs.push([String(y-i),String(y-i)]);bar.appendChild(sel('Year',yrs,function(){return brs.year},function(v){brs.year=v}));
+  bar.appendChild(sel('Sort by',[['popular','Most popular'],['new','Newest'],['rating','Top rated']],function(){return brs.sort},function(v){brs.sort=v}));
+  var sp=el('button','quiet','Surprise me');sp.type='button';sp.onclick=surprise;bar.appendChild(sp)}
+ function qs(p){return 'type='+brs.type+'&genre='+brs.genre+'&year='+brs.year+'&sort='+brs.sort+'&page='+p}
+ function surprise(){sp_(brs.type)}
+ function sp_(type){info.textContent='Picking something for you';var p=1+Math.floor(Math.random()*5);
+  api('/web/api/discover?type='+type+'&genre='+brs.genre+'&year='+brs.year+'&sort=rating&page='+p).then(function(d){var l=d.items||[];if(!l.length){info.textContent='Nothing to pick from. Try other filters.';return}var it=l[Math.floor(Math.random()*l.length)];location.hash='#/t/'+it.type+'/'+it.id}).catch(function(e){if(e.message!=='auth')info.textContent='Could not pick. Try again.'})}
+ function load(reset){if(reset){page=1;gr.textContent=''}var my=++run;info.textContent='Loading';more.classList.add('hide');
+  api('/web/api/discover?'+qs(page)).then(function(d){if(my!==run)return;pages=d.pages||1;(d.items||[]).forEach(function(it){gr.appendChild(card(it))});info.textContent=gr.children.length?'':'Nothing matches these filters.';if(page<pages)more.classList.remove('hide')}).catch(function(e){if(e.message!=='auth')info.textContent='Could not load. Reload in a moment.'})}
+ more.onclick=function(){page++;load(false)};
+ drawBar();if(!brGenres){api('/web/api/genres').then(function(d){brGenres=d;if(document.body.contains(bar))drawBar()}).catch(function(){})}load(true)}
+
 /* what you watched, what you saved */
 function cwEntries(){var o=posAll();return Object.keys(o).map(function(k){var e=o[k];e.k=k;return e}).filter(function(e){return e.id&&e.t&&e.d}).sort(function(a,b){return b.at-a.at}).slice(0,16)}
 var cwHost=null;
@@ -303,7 +338,8 @@ function cwRow(){var l=cwEntries();if(!l.length)return null;var m=el('div');m.ap
 function listRow(){var l=myList();if(!l.length)return null;var m=el('div');m.appendChild(el('h2','rt','My list'));var w=el('div','rowwrap');var row=el('div','row');l.forEach(function(it){row.appendChild(card(it))});w.appendChild(row);m.appendChild(w);return m}
 function refreshMarks(){if(cwHost&&document.body.contains(cwHost)){var n=cwRow();cwHost.textContent='';if(n)cwHost.appendChild(n)}
  Array.prototype.forEach.call(document.querySelectorAll('.ep[data-k]'),epMark);if(window.contUpd)window.contUpd()}
-function epMark(r){var k=r.dataset.k,p=posAll()[k],dn=(S('done',{})||{})[k];r.classList.toggle('seen',!!dn);var th=r.querySelector('.th'),o=r.querySelector('.pgb'),ok=r.querySelector('.ok');if(o)o.remove();if(ok)ok.remove();
+function toggleDone(k){var d=S('done',{})||{};if(d[k])delete d[k];else d[k]=1;Sset('done',d)}
+function epMark(r){var k=r.dataset.k,p=posAll()[k],dn=(S('done',{})||{})[k];r.classList.toggle('seen',!!dn);var th=r.querySelector('.th'),o=r.querySelector('.pgb'),ok=r.querySelector('.ok'),wt=r.querySelector('.wt');if(wt)wt.classList.toggle('on',!!dn);if(o)o.remove();if(ok)ok.remove();
  if(p&&p.d){var pb=el('div','pgb');pb.appendChild(el('i'));pb.firstChild.style.width=Math.min(100,p.t/p.d*100)+'%';th.appendChild(pb)}else if(dn){th.appendChild(el('span','ok','Watched'))}}
 function goHome(){skeleton();document.title='CNCVerse';api('/web/api/rows').then(function(rows){var m=g('main');m.textContent='';
  if(!rows.length){m.appendChild(el('div','top-gap'));m.appendChild(el('p','msg','The catalog did not load because TMDB did not answer. Reload in a moment.'));return}
@@ -348,9 +384,12 @@ function openTitle(type,id){skeleton();api('/web/api/title?type='+type+'&id='+id
  if(t.trailer){var tb=el('button','quiet','Trailer');tb.type='button';tb.onclick=function(){trailer(t)};bt.appendChild(tb)}
  in_.appendChild(inf);tp.appendChild(in_);m.appendChild(tp);
  if(t.type==='tv'){var tabs=el('div','tabs');tabs.setAttribute('role','tablist');var list=el('div','eps');m.appendChild(tabs);m.appendChild(list);var seasons=t.seasons||[];
-  var pk=function(n){Array.prototype.forEach.call(tabs.children,function(x){x.setAttribute('aria-selected',String(+x.dataset.n===n))});list.textContent='';list.appendChild(el('p','msg','Loading episodes'));
-   epList(t.id,n).then(function(eps){list.textContent='';if(!eps.length)list.appendChild(el('p','msg','This season has no episodes listed yet.'));
-    eps.forEach(function(e){var r=el('button','ep');r.type='button';r.dataset.k=key+':'+n+':'+e.e;var th=el('div','th');if(e.still)th.style.backgroundImage='url('+e.still+')';th.appendChild(el('b',null,String(e.e)));r.appendChild(th);
+  var tools=el('div','eptools');m.insertBefore(tools,list);
+  var pk=function(n){Array.prototype.forEach.call(tabs.children,function(x){x.setAttribute('aria-selected',String(+x.dataset.n===n))});list.textContent='';tools.textContent='';list.appendChild(el('p','msg','Loading episodes'));
+   epList(t.id,n).then(function(eps){list.textContent='';
+    if(eps.length){var mk=el('button','quiet sm');mk.type='button';var allDone=function(){var d=S('done',{})||{};return eps.every(function(e){return d[key+':'+n+':'+e.e]})};var lab=function(){mk.textContent=allDone()?'Mark season not watched':'Mark season watched'};lab();
+     mk.onclick=function(){var d=S('done',{})||{},all=allDone();eps.forEach(function(e){var k=key+':'+n+':'+e.e;if(all)delete d[k];else d[k]=1});Sset('done',d);lab();refreshMarks()};tools.appendChild(mk)}if(!eps.length)list.appendChild(el('p','msg','This season has no episodes listed yet.'));
+    eps.forEach(function(e){var r=el('button','ep');r.type='button';r.dataset.k=key+':'+n+':'+e.e;var th=el('div','th');var wt=el('span','wt','\u2713');wt.setAttribute('role','button');wt.tabIndex=0;wt.title='Mark watched / not watched';wt.onclick=function(ev){ev.stopPropagation();ev.preventDefault();toggleDone(r.dataset.k);epMark(r)};th.appendChild(wt);if(e.still)th.style.backgroundImage='url('+e.still+')';th.appendChild(el('b',null,String(e.e)));r.appendChild(th);
      r.appendChild(el('div','en',e.name));if(e.overview)r.appendChild(el('small',null,e.overview));r.onclick=function(){streams('tv',t.id,n,e.e,t.title,t.year)};list.appendChild(r);epMark(r)})}).catch(function(){})};
   seasons.forEach(function(s){var b=el('button','tab',s.name);b.type='button';b.setAttribute('role','tab');b.dataset.n=s.n;b.onclick=function(){pk(s.n)};tabs.appendChild(b)});
   if(seasons.length){var cs=seasons[0].n,o=posAll(),bs=null;Object.keys(o).forEach(function(k){if(k.indexOf(key+':')===0&&(!bs||o[k].at>bs.at))bs=o[k]});if(bs&&seasons.some(function(s){return s.n===bs.s}))cs=bs.s;pk(cs)}}

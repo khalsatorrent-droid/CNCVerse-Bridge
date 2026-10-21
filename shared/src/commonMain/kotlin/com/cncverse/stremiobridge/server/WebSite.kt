@@ -140,6 +140,26 @@ object WebSite {
         return body
     }
 
+    private val SORTS = setOf("popular", "new", "rating")
+    private var genresCache: Cached? = null
+
+    private suspend fun genres(): String {
+        genresCache?.let { if (System.currentTimeMillis() - it.at < 24 * 3600_000L) return it.body }
+        val m = StremioServer.tmdb("genre/movie/list")
+        val t = StremioServer.tmdb("genre/tv/list")
+        fun list(o: JsonObject?) = buildJsonArray {
+            o?.arr("genres")?.forEach { e ->
+                val g = e as? JsonObject ?: return@forEach
+                val id = g.str("id") ?: return@forEach
+                val name = g.str("name") ?: return@forEach
+                add(buildJsonObject { put("id", id); put("name", name) })
+            }
+        }
+        val body = buildJsonObject { put("movie", list(m)); put("tv", list(t)) }.toString()
+        if (m != null && t != null) genresCache = Cached(System.currentTimeMillis(), body)
+        return body
+    }
+
     private suspend fun ApplicationCall.json(body: String) = respondText(body, ContentType.Application.Json)
 
     private suspend fun ApplicationCall.guard(): Boolean {
@@ -263,6 +283,42 @@ object WebSite {
             }.toString())
         }
         // Live results of a title: start=1 begins the search, later calls return the links found so far (and how far the search is)
+        // Browse: TMDB's genre lists, and "discover" with genre / year / sort
+        get("/web/api/genres") {
+            if (!call.guard()) return@get
+            call.json(genres())
+        }
+        get("/web/api/discover") {
+            if (!call.guard()) return@get
+            val q = call.request.queryParameters
+            val type = q["type"]
+            val genre = q["genre"].orEmpty()
+            val year = q["year"].orEmpty()
+            val sort = q["sort"].orEmpty()
+            val page = q["page"]?.toIntOrNull()?.coerceIn(1, 20) ?: 1
+            if ((type != "movie" && type != "tv") || (genre.isNotEmpty() && !DIGITS.matches(genre)) ||
+                (year.isNotEmpty() && !Regex("[0-9]{4}").matches(year)) || (sort.isNotEmpty() && sort !in SORTS)) {
+                return@get call.respond(HttpStatusCode.BadRequest)
+            }
+            val sortBy = when (sort) {
+                "new" -> if (type == "movie") "primary_release_date.desc" else "first_air_date.desc"
+                "rating" -> "vote_average.desc"
+                else -> "popularity.desc"
+            }
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+            val path = buildString {
+                append("discover/$type?include_adult=false&sort_by=$sortBy&page=$page")
+                if (genre.isNotEmpty()) append("&with_genres=$genre")
+                if (year.isNotEmpty()) append(if (type == "movie") "&primary_release_year=$year" else "&first_air_date_year=$year")
+                if (sort == "rating") append("&vote_count.gte=300")
+                if (sort == "new") append("&vote_count.gte=5" + if (type == "movie") "&primary_release_date.lte=$today" else "&first_air_date.lte=$today")
+            }
+            val r = StremioServer.tmdb(path) ?: return@get call.respond(HttpStatusCode.BadGateway)
+            call.json(buildJsonObject {
+                put("items", items(r, type))
+                put("pages", r.str("total_pages")?.toIntOrNull()?.coerceAtMost(20) ?: 1)
+            }.toString())
+        }
         get("/web/api/streams") {
             if (!call.guard()) return@get
             val type = call.request.queryParameters["type"]

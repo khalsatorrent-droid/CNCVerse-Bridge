@@ -6,6 +6,10 @@
 - **History tab:** it stays light with long result lists: a request keeps at most 120 results, only the 12 newest keep their links, the list in an open card shows 30 at a time ("Show more"), and the history file is written in the background (before, every request wrote the whole file while answering).
 - **Website player: links without sound or picture switch by themselves.** When the player finds that a movie / episode link has no sound or no picture in this browser (AC3, EAC3, DTS, HEVC ...), or HLS reports a format it cannot play, it takes the same title from another link that this browser can play (same language and resolution if there is one), keeps your place and shows "Switched to another link" with an Undo button. It can be turned off in Settings. A plain file still plays only one audio track in most browsers, so other languages are other links (Audio menu).
 - **Website player: live TV is sturdier.** A live link is tried as HLS, MPEG-TS and plain file in turn (for links without a file ending), a picture that freezes for 15 seconds or ends is reopened up to three times before the next link of the channel is tried.
+- **Website: Browse page.** New "Browse" tab with Movies / Series, genre, year and sort (most popular, newest, top rated) filters, "Show more", and a "Surprise me" button that opens a random well-rated title for the filters you set.
+- **Website: recent searches.** The search box suggests your last 8 searches.
+- **Website: watched marks.** Every episode has a tick (hover, or always on touch screens) to mark it watched or not, and each season has "Mark season watched / not watched".
+- **Website player: sleep timer** (15 / 30 / 45 / 60 minutes or end of the episode), **Skip intro** button for the first 5 minutes of an episode (+85 s, also the S key and in the More menu) and **Cast to a TV or speaker** in the More menu where the browser supports it (Chrome / Edge).
 
 ## 1.7.22
 
