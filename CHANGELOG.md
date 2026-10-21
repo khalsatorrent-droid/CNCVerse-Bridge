@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Website: a new video player.** Its own control bar with a seek bar that shows what is buffered, a time preview, +/-10 s buttons (double-tap the sides of the picture on a phone), volume, speed, quality, audio, subtitles, picture in picture, full screen, a "Stats for nerds" box, lock-screen / media-key controls and many keyboard keys. Streams (HLS / DASH / live) keep only about 30 seconds buffered ahead. Where you stopped is remembered and offered next time ("Resumed at ...", "Start over").
+- **Website: subtitles from all extensions for every video.** The subtitle menu lists every language any extension found for the title (versions of the same language can be tried one after another), with delay, size, colour and background settings, your last language is chosen automatically, and you can load your own .srt / .vtt file. ASS / SSA subtitles (used by many anime releases) are converted so they show too.
+- **Website: audio and codecs.** The Audio menu switches the audio tracks inside HLS / DASH streams and, for plain files (where a browser can only play one track), lists the other links of the same title by language (Hindi, English, Tamil ...) and switches to one while keeping your place. Links that mention formats this browser cannot play (HEVC, DTS, Dolby Digital Plus, AV1) are tagged "May not play here" and listed after the others of the same resolution (a switch in Settings); if a file still has no sound or no picture, the player says why and offers VLC. Live .ts / .flv streams are played with mpegts.js and .mpd with dash.js (both loaded only when needed).
+- **Website: live TV.** A LIVE badge, a "Go live" button and a 90 second rewind window, a channel list inside the player, and links that stall are skipped for the next one.
+- **Website: library.** "Continue watching" and "My list" rows, Resume / Continue buttons, watched marks and progress bars on episodes, the next episode starts by itself after a 10 second countdown (Settings), a trailer button, cast, "More like this", more home shelves (genres, anime, Hindi cinema, new releases) and a Settings window.
+
 ## 1.7.21
 
 - **Warm-up is now optional:** the bridge no longer opens the first 2 links of every result list on its own. It only does so when the new "Warm up the first links" switch (Settings, Media server) is on, which it is not by default.

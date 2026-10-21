@@ -101,10 +101,27 @@ object WebSite {
 
     private class Cached(val at: Long, val body: String)
     private var rowsCache: Cached? = null
+    private var moreCache: Cached? = null
 
-    private suspend fun rows(): String {
-        rowsCache?.let { if (System.currentTimeMillis() - it.at < 10 * 60_000) return it.body }
-        val defs = listOf(
+    /** The first rows of the home page (fast), or with [more] the extra shelves (new releases, genres, anime, Indian cinema) that load afterwards. */
+    private suspend fun rows(more: Boolean = false): String {
+        val cache = if (more) moreCache else rowsCache
+        cache?.let { if (System.currentTimeMillis() - it.at < 10 * 60_000) return it.body }
+        val defs = if (more) listOf(
+            Triple("In cinemas now", "movie/now_playing", "movie"),
+            Triple("Coming soon", "movie/upcoming", "movie"),
+            Triple("On the air this week", "tv/on_the_air", "tv"),
+            Triple("Anime", "discover/tv?with_genres=16&with_original_language=ja&sort_by=popularity.desc", "tv"),
+            Triple("Hindi cinema", "discover/movie?with_original_language=hi&sort_by=popularity.desc&vote_count.gte=50", "movie"),
+            Triple("Action", "discover/movie?with_genres=28&sort_by=popularity.desc&vote_count.gte=200", "movie"),
+            Triple("Comedy", "discover/movie?with_genres=35&sort_by=popularity.desc&vote_count.gte=200", "movie"),
+            Triple("Science fiction", "discover/movie?with_genres=878&sort_by=popularity.desc&vote_count.gte=200", "movie"),
+            Triple("Thrillers", "discover/movie?with_genres=53&sort_by=popularity.desc&vote_count.gte=200", "movie"),
+            Triple("Horror", "discover/movie?with_genres=27&sort_by=popularity.desc&vote_count.gte=200", "movie"),
+            Triple("Animation", "discover/movie?with_genres=16&sort_by=popularity.desc&vote_count.gte=200", "movie"),
+            Triple("Crime series", "discover/tv?with_genres=80&sort_by=popularity.desc&vote_count.gte=100", "tv"),
+            Triple("Documentaries", "discover/movie?with_genres=99&sort_by=popularity.desc&vote_count.gte=50", "movie"),
+        ) else listOf(
             Triple("Trending movies", "trending/movie/week", "movie"),
             Triple("Trending series", "trending/tv/week", "tv"),
             Triple("Popular movies", "movie/popular", "movie"),
@@ -119,7 +136,7 @@ object WebSite {
                 if (list.isNotEmpty()) add(buildJsonObject { put("title", d.first); put("items", list) })
             }
         }.toString()
-        if (body != "[]") rowsCache = Cached(System.currentTimeMillis(), body)
+        if (body != "[]") { if (more) moreCache = Cached(System.currentTimeMillis(), body) else rowsCache = Cached(System.currentTimeMillis(), body) }
         return body
     }
 
@@ -214,7 +231,7 @@ object WebSite {
         }
         get("/web/api/rows") {
             if (!call.guard()) return@get
-            call.json(rows())
+            call.json(rows(call.request.queryParameters["more"] == "1"))
         }
         get("/web/api/search") {
             if (!call.guard()) return@get
@@ -265,7 +282,7 @@ object WebSite {
             val type = call.request.queryParameters["type"]
             val id = call.request.queryParameters["id"].orEmpty()
             if ((type != "movie" && type != "tv") || !DIGITS.matches(id)) return@get call.respond(HttpStatusCode.BadRequest)
-            val o = StremioServer.tmdb("$type/$id") ?: return@get call.respond(HttpStatusCode.BadGateway)
+            val o = StremioServer.tmdb("$type/$id?append_to_response=videos,credits,recommendations") ?: return@get call.respond(HttpStatusCode.BadGateway)
             val date = o.str("release_date") ?: o.str("first_air_date") ?: ""
             val runtime = o.str("runtime")?.toIntOrNull()
                 ?: (o.arr("episode_run_time")?.firstOrNull() as? JsonPrimitive)?.intOrNull
@@ -279,6 +296,20 @@ object WebSite {
                 o.str("vote_average")?.toDoubleOrNull()?.takeIf { it > 0 }?.let { put("rating", Math.round(it * 10) / 10.0) }
                 runtime?.takeIf { it > 0 }?.let { put("runtime", it) }
                 put("genres", buildJsonArray { o.arr("genres")?.forEach { g -> (g as? JsonObject)?.str("name")?.let { add(it) } } })
+                o.str("tagline")?.takeIf { it.isNotBlank() }?.let { put("tagline", it) }
+                // the official trailer (a YouTube key), the main cast and what to watch next
+                val vids = (o["videos"] as? JsonObject)?.arr("results")?.mapNotNull { it as? JsonObject }.orEmpty()
+                    .filter { it.str("site") == "YouTube" && it.str("key")?.matches(Regex("[A-Za-z0-9_-]{6,20}")) == true }
+                (vids.firstOrNull { it.str("type") == "Trailer" && it.str("official") == "true" } ?: vids.firstOrNull { it.str("type") == "Trailer" } ?: vids.firstOrNull())
+                    ?.str("key")?.let { put("trailer", it) }
+                put("cast", buildJsonArray {
+                    ((o["credits"] as? JsonObject)?.arr("cast"))?.take(14)?.forEach { c ->
+                        val co = c as? JsonObject ?: return@forEach
+                        val nm = co.str("name") ?: return@forEach
+                        add(buildJsonObject { put("name", nm); co.str("character")?.takeIf { it.isNotBlank() }?.let { put("as", it) }; img(co.str("profile_path"), "w185")?.let { put("photo", it) } })
+                    }
+                })
+                put("similar", items(o["recommendations"] as? JsonObject, type))
                 if (type == "tv") put("seasons", buildJsonArray {
                     o.arr("seasons")?.forEach { s ->
                         val so = s as? JsonObject ?: return@forEach

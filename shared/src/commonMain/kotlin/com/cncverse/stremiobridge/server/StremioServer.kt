@@ -1067,7 +1067,12 @@ object StremioServer {
         val finished = if (status != null) status.finished else (job == null || job.isCompleted)
         val prep = prepareStreams(type, id, raw, System.currentTimeMillis(), forWeb = true)
         val base = serverJson.encodeToJsonElement(StremioStreamResponse(prep.safeOut)).jsonObject
+        // Every subtitle track any extension found for this title, once each, for any video of the list (the "Hide subtitles" setting is for Stremio / Nuvio only)
+        val pool = runCatching {
+            SubtitleTools.process(raw.flatMap { it.subtitles.orEmpty() }, streamPrefs.copy(subtitleOnlyPreferred = false, subtitleOffsetMs = 0), "")
+        }.getOrDefault(emptyList()).take(300)
         return JsonObject(base + mapOf(
+            "subs" to serverJson.encodeToJsonElement(pool),
             "found" to kotlinx.serialization.json.JsonPrimitive(raw.size),
             "done" to kotlinx.serialization.json.JsonPrimitive(status?.done?.get() ?: 0),
             "total" to kotlinx.serialization.json.JsonPrimitive(status?.total ?: 0),

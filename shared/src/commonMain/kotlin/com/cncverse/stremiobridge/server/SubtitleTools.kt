@@ -76,8 +76,46 @@ object SubtitleTools {
             .getOrElse { String(b, charset("windows-1252")) }
     }
 
+    private val ASS_TAG = Regex("\\{[^}]*\\}")
+
+    /** ASS / SSA (what many anime releases use) as plain WebVTT: the timings and the text, without the styling. */
+    internal fun assToVtt(text: String, ms: Int): String {
+        val sb = StringBuilder("WEBVTT\n\n")
+        var start = 1; var end = 2; var txt = 9; var fields = 10
+        var inEvents = false
+        for (raw in text.replace("\r\n", "\n").replace('\r', '\n').split('\n')) {
+            val line = raw.trim()
+            if (line.startsWith("[")) { inEvents = line.equals("[Events]", true); continue }
+            if (!inEvents) continue
+            if (line.startsWith("Format:", true)) {
+                val cols = line.substringAfter(':').split(',').map { it.trim().lowercase() }
+                fields = cols.size
+                cols.indexOf("start").takeIf { it >= 0 }?.let { start = it }
+                cols.indexOf("end").takeIf { it >= 0 }?.let { end = it }
+                cols.indexOf("text").takeIf { it >= 0 }?.let { txt = it }
+            } else if (line.startsWith("Dialogue:", true)) {
+                val parts = line.substringAfter(':').trim().split(',', limit = fields)
+                if (parts.size <= maxOf(start, end, txt)) continue
+                val t0 = assTime(parts[start]) ?: continue
+                val t1 = assTime(parts[end]) ?: continue
+                val cue = parts[txt].replace(ASS_TAG, "").replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ").trim()
+                if (cue.isEmpty()) continue
+                sb.append(fmt(t0 + ms)).append(" --> ").append(fmt(t1 + ms)).append('\n').append(cue).append("\n\n")
+            }
+        }
+        return sb.toString()
+    }
+
+    /** "0:01:02.34" (h:mm:ss.cc) in milliseconds. */
+    private fun assTime(t: String): Long? {
+        val m = Regex("(\\d+):(\\d{1,2}):(\\d{1,2})[.,](\\d{1,3})").find(t.trim()) ?: return null
+        val frac = m.groupValues[4].padEnd(3, '0').take(3).toLong()
+        return ((m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60 + m.groupValues[3].toLong()) * 1000 + frac
+    }
+
     internal fun shiftText(text: String, ms: Int): String {
         val body = text.replace("\r\n", "\n").replace('\r', '\n')
+        if (body.contains("[Script Info]", true) || (body.contains("[Events]", true) && body.contains("Dialogue:"))) return assToVtt(body, ms)
         val shifted = body.split('\n').joinToString("\n") { line ->
             if ("-->" in line) TIME.replace(line) { m -> fmt(toMs(m) + ms) } else line
         }
