@@ -357,14 +357,14 @@ function giveUpNow(){if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('p
 function liveWatch(gen){clearInterval(liveT);var last=-1,still=0;liveT=setInterval(function(){if(gen!==P.gen||g('player').classList.contains('hide')){clearInterval(liveT);return}
  var v=g('v');if(v.paused||seeking||v.readyState===0){still=0;return}if(Math.abs(v.currentTime-last)<.05){still++}else{still=0;last=v.currentTime}
  if(still>=4){still=0;clearInterval(liveT);if(hls&&P.recon===0)try{hls.startLoad();hls.recoverMediaError()}catch(e){}reconnect()}},4000)}
-function play(x,title){var v=g('v');stopVideo();var gen=++P.gen;P.x=x;P.title=title;P.live=!!tvMode;P.sub=null;P.subDone=false;P.subDelay=0;P.nextEp=null;
+function play(x,title){var v=g('v');stopVideo();var gen=++P.gen;P.err='';P.x=x;P.title=title;P.live=!!tvMode;P.sub=null;P.subDone=false;P.subDelay=0;P.nextEp=null;
  g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('psub').textContent=P.live?'Live':(P.sub2||'');g('player').classList.remove('hide');g('pspin').classList.remove('hide');wake();subStyle();
  var url=fix(x.url);P.url=url;P.kind=kindOf(url,x);var order=P.kind==='dash'?['dash']:(P.kind==='ts'?['ts','hls','file']:(P.kind==='hls'?(tvMode?['hls','ts','file']:['hls','file']):(tvMode?['file','hls','ts']:['file','hls']))),oi=0,startAt=P.startAt;P.startAt=0;audApplied=false;if(v.audioTracks){v.audioTracks.onaddtrack=audRefresh;v.audioTracks.onchange=audRefresh}
  addSubs(x.subtitles);if(!P.live)findNext();
  v.playbackRate=P.live?1:(parseFloat(lsGet('cncSpeed'))||1);
  var fail,giveUp,next;
  var startHls=function(){if(window.Hls&&Hls.isSupported()){hls=new Hls(hlsCfg());hls.loadSource(url);hls.attachMedia(v);var net=0,med=0;
-   hls.on(Hls.Events.ERROR,function(_,d){if(!d.fatal||gen!==P.gen)return;if((d.details==='manifestIncompatibleCodecsError'||d.details==='bufferAddCodecError')&&autoSwitch('its format is not supported here'))return;if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&net<(P.live?3:2)){net++;setTimeout(function(){if(hls&&gen===P.gen)hls.startLoad()},net*800);return}if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&med<2){med++;if(med===2)hls.swapAudioCodec();hls.recoverMediaError();return}if(tvMode&&cur&&cur.auto)giveUp();else fail()});
+   hls.on(Hls.Events.ERROR,function(_,d){if(!d.fatal||gen!==P.gen)return;P.err=String(d.details||d.type)+(d.response&&d.response.code?' HTTP '+d.response.code:'');if((d.details==='manifestIncompatibleCodecsError'||d.details==='bufferAddCodecError')&&autoSwitch('its format is not supported here'))return;if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&net<(P.live?3:2)){net++;setTimeout(function(){if(hls&&gen===P.gen)hls.startLoad()},net*800);return}if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&med<2){med++;if(med===2)hls.swapAudioCodec();hls.recoverMediaError();return}if(tvMode&&cur&&cur.auto)giveUp();else fail()});
    hls.on(Hls.Events.AUDIO_TRACKS_UPDATED,audRefresh);hls.on(Hls.Events.AUDIO_TRACK_SWITCHED,audRefresh);hls.on(Hls.Events.MANIFEST_PARSED,function(){qApply();audRefresh();ccAuto();updateBtns()});
    hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED,function(){ccAuto();updateBtns()});hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH,updateBtns);hls.on(Hls.Events.LEVEL_SWITCHED,updateBtns);
    hls.on(Hls.Events.LEVEL_LOADED,function(_,d){if(d&&d.details&&d.details.live&&!P.live){P.live=true;g('psub').textContent='Live';updateBtns()}})}else{v.src=url}};
@@ -374,14 +374,14 @@ function play(x,title){var v=g('v');stopVideo();var gen=++P.gen;P.x=x;P.title=ti
    mp.attachMediaElement(v);mp.load();mp.on(mpegts.Events.ERROR,function(){if(gen!==P.gen)return;if(tvMode&&cur&&cur.auto)giveUp();else fail()});var pr=mp.play();if(pr&&pr.catch)pr.catch(function(){})}).catch(function(){if(gen===P.gen)fail()})};
  var startDash=function(){lib(DASH,function(){return window.dashjs}).then(function(){if(gen!==P.gen)return;dash=dashjs.MediaPlayer().create();
    dash.updateSettings({streaming:{buffer:{bufferTimeAtTopQuality:30,bufferTimeAtTopQualityLongForm:30,bufferToKeep:20,bufferPruningInterval:20,fastSwitchEnabled:true}}});
-   dash.on('error',function(){if(gen===P.gen)fail()});dash.on('streamInitialized',function(){audRefresh();ccAuto();updateBtns()});dash.on('qualityChangeRendered',updateBtns);dash.initialize(v,url,true)}).catch(function(){if(gen===P.gen)fail()})};
+   dash.on('error',function(e){if(gen===P.gen){P.err='dash '+((e&&e.error&&(e.error.message||e.error.code))||'error');fail()}});dash.on('streamInitialized',function(){audRefresh();ccAuto();updateBtns()});dash.on('qualityChangeRendered',updateBtns);dash.initialize(v,url,true)}).catch(function(){if(gen===P.gen)fail()})};
  var launch=function(k){P.kind=k;if(k==='hls')startHls();else if(k==='dash')startDash();else if(k==='ts')startTs();else startFile()};var begin=function(){launch(order[0])};
  fail=function(){if(gen!==P.gen)return;
   if(oi+1<order.length){oi++;destroyEngines();v.removeAttribute('src');launch(order[oi]);var p=v.play();if(p&&p.catch)p.catch(function(){});return}
   if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('pnote').textContent='Trying link '+(cur.idx+1)+' of '+cur.list.length;play(cur.list[cur.idx],cur.title);return}
   g('pnote').textContent='';g('pspin').classList.add('hide');var why=risks(x).join(', ');
-  if(tvMode)g('pmsg').textContent='No link for this channel would play. Try Links or another channel.';
-  else{g('pmsg').textContent='';if(autoSwitch('the first one would not play'))return;showFix('This link will not play in the browser'+(why?' ('+why+' is not supported here)':'')+'. Pick another link, or play it in a media player.')}};
+  if(tvMode)g('pmsg').textContent='No link for this channel would play'+(P.err?' ['+P.err+']':'')+'. Try Links or another channel.';
+  else{g('pmsg').textContent='';if(autoSwitch('the first one would not play'))return;showFix('This link will not play in the browser'+(why?' ('+why+' is not supported here)':'')+(P.err?' ['+P.err+']':'')+'. Pick another link, or play it in a media player.')}};
  next=function(){if(cur&&cur.auto&&cur.idx+1<cur.list.length){cur.idx++;g('pnote').textContent='Trying link '+(cur.idx+1)+' of '+cur.list.length;play(cur.list[cur.idx],cur.title);return true}return false};
  giveUp=function(){clearTimeout(stallT);stallT=null;if(next())return;if(cur){cur.stalled=true;cur.next=next}if(cur&&cur.done){g('pnote').textContent='';g('pspin').classList.add('hide');g('pmsg').textContent='No link for this channel would play. Try Links or another channel.'}else g('pnote').textContent='Still looking for a working link'};
  clearTimeout(stallT);stallT=null;if(cur&&cur.auto&&tvMode)stallT=setTimeout(giveUp,8000);

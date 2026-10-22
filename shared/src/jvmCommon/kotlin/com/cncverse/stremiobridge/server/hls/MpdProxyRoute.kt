@@ -62,6 +62,8 @@ private suspend fun handleMpdProxy(call: ApplicationCall, converter: MpdConverte
         if (ServerState.isStremioMode.value && !activeTunnel.isNullOrBlank()) {
             proxyBase = activeTunnel
         }
+        // Asked by this device's own media server: everything stays on this device
+        if (call.request.host().let { it == "127.0.0.1" || it == "localhost" }) proxyBase = "http://127.0.0.1:" + ServerState.serverPort
         val headerParams = customHeaders.entries.joinToString("") { (key, value) ->
             "&h_${URLEncoder.encode(key, "UTF-8")}=${URLEncoder.encode(value, "UTF-8")}"
         }

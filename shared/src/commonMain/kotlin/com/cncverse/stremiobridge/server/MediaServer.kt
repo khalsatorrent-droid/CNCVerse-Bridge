@@ -391,13 +391,22 @@ object MediaServer {
         val p = prefs
         if (!p.enabled || root == null) return s
         val url = s.url ?: return s
+        // "Every link": this bridge's own DASH -> HLS converter (clear-key channels) is served by the media server too: it reads the
+        // playlists from this device (never through the internet tunnel) and keeps the segments it hands out
+        if (p.mode == "all" && p.cacheHls && s.externalUrl == null && s.infoHash == null && s.ytId == null &&
+            url.startsWith("http", true) && url.contains("/proxy/mpd/manifest.m3u8")) {
+            val local = "http://127.0.0.1:${ServerState.serverPort}/proxy/mpd/manifest.m3u8" + url.substringAfter("/proxy/mpd/manifest.m3u8")
+            val lid = register(local, emptyMap())
+            return s.copy(url = "$base/media/$lid/pl/${token(lid, local)}.m3u8", behaviorHints = s.behaviorHints?.copy(proxyHeaders = null))
+        }
         // The website's player (hls.js) reads playlists with XHR, which a browser only allows from a server that sends CORS headers:
         // every HLS link goes through this bridge for it, whatever the mode, and the upstream rule below does not apply
         val webHls = forWeb && looksLikeHls(url, s.info?.linkType)
         // An upstream addon's links are left alone - except those pointing at a private home-network address (a self-hosted addon on
         // 192.168.x.x): a phone away from home cannot open them, so this bridge (which can reach them) serves them
         val lanUpstream = s.info?.linkType == "UPSTREAM" && isPrivateHost(LinkUrl.host(s.url))
-        if (s.info?.linkType == "UPSTREAM" && !lanUpstream && !webHls) return s
+        // "Every link" mode serves the stremio add-ons' links as well; the other modes leave them alone
+        if (s.info?.linkType == "UPSTREAM" && !lanUpstream && !webHls && p.mode != "all") return s
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return s
         if (!url.startsWith("http", true) || OWN_PATH.containsMatchIn(url)) return s
         val host = LinkUrl.host(url) ?: return s

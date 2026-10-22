@@ -171,7 +171,10 @@ class MpdConverter {
                     }
 
                     if (codecs.isNotEmpty()) {
-                        attrs.add("""CODECS="$codecs"""")
+                        // Browsers (hls.js) want the audio codec of the audio group listed with the video one
+                        val audioCodec = audioTracks.firstOrNull { it.codecs.isNotBlank() }?.codecs
+                        val all = if (audioCodec != null && !codecs.contains("mp4a") && !codecs.contains(audioCodec)) "$codecs,$audioCodec" else codecs
+                        attrs.add("""CODECS="$all"""")
                     }
 
                     if (frameRate.isNotEmpty()) {
