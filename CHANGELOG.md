@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.27
 
 - **Media server in "Every link" mode serves more.** The clear-key DASH channels (the `/proxy/mpd/manifest.m3u8` links) and the links of Stremio add-ons now go through the media server too; the media server reads the converted playlists from this device, never through the internet tunnel.
 - **Website player: clearer errors, better DASH-to-HLS lists.** When a link does not play, the message now ends with the exact reason (for example `manifestParsingError` or `HTTP 403`), and the converted playlists also name the audio codec, which browsers need.
