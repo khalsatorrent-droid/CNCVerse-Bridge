@@ -4,7 +4,7 @@
 
 - **Media server in "Every link" mode serves more.** The clear-key DASH channels (the `/proxy/mpd/manifest.m3u8` links) and the links of Stremio add-ons now go through the media server too; the media server reads the converted playlists from this device, never through the internet tunnel.
 - **Website player: clearer errors, better DASH-to-HLS lists.** When a link does not play, the message now ends with the exact reason (for example `manifestParsingError` or `HTTP 403`), and the converted playlists also name the audio codec, which browsers need.
-- **Extension report card.** A "Report card" button on the Extensions screen grades every loaded extension A to F from how often it gave links, how many, how fast it answered and when it last worked, so you can see which ones to keep and which to switch off.
+- **Extension report card.** A "Report card" button on the Extensions screen grades every loaded extension A to F from how often it gave links, how many, how fast it answered and when it last worked, so you can see which ones to keep and which to switch off. A "Switch off N dead" button in the card turns off, in one tap, every extension graded D or F after at least 3 asks.
 
 ## 1.7.23
 
