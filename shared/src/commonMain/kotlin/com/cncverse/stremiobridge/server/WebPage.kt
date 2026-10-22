@@ -6,7 +6,7 @@ package com.cncverse.stremiobridge.server
  * No dollar signs in the raw strings: they are written as the character literal.
  */
 internal object WebPage {
-    val HTML: String by lazy { listOf(TOP, WebPlayer.CSS, STYLE_END, WebPlayer.MARKUP, SCRIPT_START, WebPlayer.JS, SCRIPT_END).joinToString("") }
+    val HTML: String by lazy { listOf(TOP, WebPlayer.CSS, STYLE_END, WebPlayer.MARKUP, SCRIPT_START, WebPlayer.JS, WebMse.JS, SCRIPT_END).joinToString("") }
 
     private val TOP = """<!doctype html>
 <html lang="en"><head>
