@@ -3212,6 +3212,15 @@ object VariantData {
  * and every stream tagged with this extension's display name (provider ordering matches on it).
  */
 suspend fun MainApiWrapper.loadLinksAll(dataUrl: String): List<StremioStream> {
+    val t0 = System.currentTimeMillis()
+    try {
+        return loadLinksAllTimed(dataUrl)
+    } finally {
+        runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordTime(pluginInternalName, internalName, System.currentTimeMillis() - t0) }
+    }
+}
+
+private suspend fun MainApiWrapper.loadLinksAllTimed(dataUrl: String): List<StremioStream> {
     val api = this
     fun tag(s: StremioStream, label: String?): StremioStream {
         val info = (s.info ?: com.cncverse.stremiobridge.model.StreamInfo(addonName = api.name)).let { i ->

@@ -47,6 +47,7 @@ fun ExtensionsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedRepoFilter by remember { mutableStateOf<String?>(null) }
     var showAddRepoDialog by remember { mutableStateOf(false) }
+    var showReportCard by remember { mutableStateOf(false) }
     var showOnlyInstalled by remember { mutableStateOf(false) }
     // Bumped when an extension is switched on/off (the disabled set is not observable)
     var enabledTick by remember { mutableStateOf(0) }
@@ -128,6 +129,13 @@ fun ExtensionsScreen(
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Violet400, modifier = Modifier.size(18.dp))
                     }
                 }
+                OutlinedButton(
+                    onClick = { showReportCard = true },
+                    modifier = Modifier.height(36.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, Violet400),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                ) { Text("Report card", color = Violet400, fontSize = 11.sp) }
                 IconButton(
                     onClick = { showAddRepoDialog = true },
                     modifier = Modifier
@@ -306,6 +314,8 @@ fun ExtensionsScreen(
     }
 
     // ── Add Repo Dialog ────────────────────────────────────────────────────
+    if (showReportCard) ReportCardDialog(onDismiss = { showReportCard = false })
+
     if (showAddRepoDialog) {
         AddRepoDialog(
             existingRepos = repos,

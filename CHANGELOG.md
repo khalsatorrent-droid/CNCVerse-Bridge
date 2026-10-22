@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Extension report card.** A "Report card" button on the Extensions screen grades every loaded extension A to F from how often it gave links, how many, how fast it answered and when it last worked, so you can see which ones to keep and which to switch off.
+
 ## 1.7.23
 
 - **Server starts at once:** the web server no longer waits for the extensions to load (that took up to a minute). It starts first, the extensions load in the background and the plugin count and home pages fill in as they finish; a search that arrives meanwhile waits for them. The DNS warm-up of every extension's site no longer holds the loading back either (it runs in the background, 8 at a time), and 6 extensions load at once instead of 4.

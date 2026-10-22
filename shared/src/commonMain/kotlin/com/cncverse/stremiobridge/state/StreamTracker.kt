@@ -56,6 +56,8 @@ internal data class StatRecord(
     val lastProxyCountry: String? = null,
     val lastProbeNote: String? = null,
     val lastProxySuccessTime: Long = 0L,
+    val totalMs: Long = 0L,
+    val timedRequests: Int = 0,
 )
 
 object StreamTracker {
@@ -79,6 +81,10 @@ object StreamTracker {
         var lastProbeNote: String? = null
         /** Last time links came only through the proxy. */
         var lastProxySuccessTime: Long = 0L
+        /** Time the extension took to answer for links, summed over [timedRequests] answers. */
+        var totalMs: Long = 0L
+        var timedRequests: Int = 0
+        fun avgMs(): Long = if (timedRequests > 0) totalMs / timedRequests else -1L
 
         /**
          * - WORKING: links within the last [WORKING_WINDOW_MS], or the latest probe found links directly
@@ -127,6 +133,7 @@ object StreamTracker {
             internalName, pluginName, totalRequests, successRequests, totalStreams, lastStreamCount,
             lastSuccessTime, lastTestedTime, lastError, firstSeen, lastProbeTime, lastDirectProbeStreams,
             lastProxyProbeStreams, lastProxyCountry, lastProbeNote, lastProxySuccessTime,
+            totalMs, timedRequests,
         )
     }
 
@@ -173,6 +180,15 @@ object StreamTracker {
         if (internalName.isNotBlank() && internalName != pluginInternalName) {
             recordSingle(internalName, pluginName, streamCount, error, viaProxy)
         }
+    }
+
+    /** How long an extension took to answer for links (feeds the report card). */
+    fun recordTime(pluginInternalName: String, internalName: String, ms: Long) {
+        for (key in setOf(pluginInternalName, internalName).filter { it.isNotBlank() }) {
+            val s = stats[key] ?: continue
+            synchronized(s) { s.totalMs += ms.coerceIn(0L, 120_000L); s.timedRequests++ }
+        }
+        dirty = true
     }
 
     fun record(internalName: String, pluginName: String, streamCount: Int, error: String? = null) {
@@ -280,6 +296,7 @@ object StreamTracker {
                     lastProbeTime = r.lastProbeTime; lastDirectProbeStreams = r.lastDirectProbeStreams
                     lastProxyProbeStreams = r.lastProxyProbeStreams; lastProxyCountry = r.lastProxyCountry
                     lastProbeNote = r.lastProbeNote; lastProxySuccessTime = r.lastProxySuccessTime
+                    totalMs = r.totalMs; timedRequests = r.timedRequests
                 }
             }
         }.onFailure { ServerState.warn("Could not read stream_health.json: ${it.message}") }
