@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.28
+
+- **Website player: switch the audio inside MKV and MP4 files.** A file with two or more audio tracks (Hindi / English, ...) now plays through the player's own engine, which opens the file in pieces and gives the browser the picture plus the audio track you pick. The Audio menu lists every track by language, switching keeps your place, and seeking, the 30 second buffer and resume still work. It needs the browser to support the codecs (H.264, HEVC, VP9, AV1 with AAC, Opus, MP3, FLAC; Dolby Digital only where the browser has it). Files with one track play as before.
+
 ## 1.7.27
 
 - **Media server in "Every link" mode serves more.** The clear-key DASH channels (the `/proxy/mpd/manifest.m3u8` links) and the links of Stremio add-ons now go through the media server too; the media server reads the converted playlists from this device, never through the internet tunnel.
