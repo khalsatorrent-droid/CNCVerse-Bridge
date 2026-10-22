@@ -20,6 +20,7 @@ import androidx.compose.ui.window.Dialog
 import com.cncverse.stremiobridge.state.*
 
 private data class CardRow(
+    val id: String,
     val name: String,
     val requests: Int,
     val okPct: Int,
@@ -58,6 +59,7 @@ private fun buildRows(plugins: List<LoadedPluginInfo>): List<CardRow> =
         val pct = if (req > 0) ok * 100 / req else 0
         val avgMs = st?.avgMs() ?: -1L
         CardRow(
+            id = p.internalName,
             name = p.displayName,
             requests = req,
             okPct = pct,
@@ -84,6 +86,7 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
     val plugins by ServerState.globalLoadedPlugins.collectAsState()
     var tick by remember { mutableStateOf(0) }
     val rows = remember(plugins, tick) { buildRows(plugins) }
+    val dead = rows.filter { (it.grade == "F" || it.grade == "D") && it.requests >= 3 && !com.cncverse.stremiobridge.server.StremioServer.disabledPlugins.contains(it.id) }
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp), color = AmoledCard, modifier = Modifier.border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(16.dp))) {
             Column(Modifier.padding(16.dp).heightIn(max = 560.dp)) {
@@ -121,6 +124,10 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End) {
+                    if (dead.isNotEmpty()) TextButton(onClick = {
+                        dead.forEach { com.cncverse.stremiobridge.server.StremioServer.setPluginDisabled(it.id, disabled = true) }
+                        tick++
+                    }) { Text("Switch off ${dead.size} dead", color = Red400) }
                     TextButton(onClick = { tick++ }) { Text("Refresh", color = Violet400) }
                     TextButton(onClick = onDismiss) { Text("Close", color = TextPrimary) }
                 }
