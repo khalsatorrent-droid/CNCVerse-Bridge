@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **NetNaija and other extensions: settings are kept after saving (Android).** Extensions read their settings back as JSON, but a saved list (for example the switched-off sources) was stored as plain text and could never be read again, so the switches went back to their old values every time. Lists and objects are now stored the way the extensions expect.
+
 ## 1.7.30
 
 - **Tunnel check every 2 minutes (was 30 seconds).** The check that keeps Stremio Mode's tunnel alive now asks every 2 minutes instead of every 30 seconds, so it sends far fewer requests. A dead tunnel is still restarted automatically, after two failed checks in a row (about 4 minutes).
