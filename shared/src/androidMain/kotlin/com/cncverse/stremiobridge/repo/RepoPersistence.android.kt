@@ -31,15 +31,18 @@ actual fun loadExtensionSettings(): Map<String, String> {
     return map
 }
 
-actual fun saveExtensionSettings(settings: Map<String, String>) {
+private val extSettingsLock = Any()
+
+actual fun saveExtensionSettings(settings: Map<String, String>) = synchronized(extSettingsLock) {
     val prefs = AndroidContextHolder.appContext
         .getSharedPreferences(EXT_PREFS_NAME, Context.MODE_PRIVATE)
     val editor = prefs.edit()
     editor.clear()
-    settings.forEach { (key, value) ->
+    HashMap(settings).forEach { (key, value) ->
         editor.putString(key, value)
     }
-    editor.apply()
+    editor.commit()
+    Unit
 }
 
 private const val KEY_REPO_CACHE = "repo_cache_json"
