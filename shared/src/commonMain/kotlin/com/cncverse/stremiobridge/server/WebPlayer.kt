@@ -6,7 +6,8 @@ internal object WebPlayer {
 #player{position:fixed;inset:0;z-index:30;background:#000;color:#fff;user-select:none;-webkit-user-select:none;touch-action:manipulation;overflow:hidden}
 #player video{position:absolute;inset:0;width:100%;height:100%;background:#000;outline:none;object-fit:contain}
 #v{--cs:1.3em;--cc:#fff;--cb:transparent;--csh:-1px -1px 2px #000,1px -1px 2px #000,-1px 1px 2px #000,1px 1px 2px #000,0 0 7px #000}
-video::cue{color:var(--cc,#fff);background:var(--cb,transparent);font-size:var(--cs,1.3em);font-weight:700;text-shadow:var(--csh,0 0 6px #000)}
+#psubcv{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+video::cue{color:var(--cc,#fff);background:var(--cb,transparent);font-size:var(--cs,1.3em);font-weight:700;font-family:Roboto,'Segoe UI',Arial,sans-serif;text-shadow:var(--csh,0 0 6px #000)}
 #pclick{position:absolute;inset:0;z-index:1}
 #player.idle #pclick{cursor:none}
 #ptop,#pbar{position:absolute;left:0;right:0;z-index:3;transition:opacity .25s}
@@ -72,7 +73,7 @@ video::cue{color:var(--cc,#fff);background:var(--cb,transparent);font-size:var(-
 """
 
     val MARKUP = """<div id="player" class="hide" tabindex="-1">
- <video id="v" playsinline autoplay></video>
+ <video id="v" playsinline autoplay></video><canvas id="psubcv"></canvas>
  <div id="pclick"></div>
  <div id="pspin" class="hide"><i></i></div><div id="pflash"></div>
  <div id="ptop"><button class="pb" id="pclose" aria-label="Back" type="button">&#8592;</button><div class="tt"><div id="ptitle"></div><div id="psub"></div></div>
@@ -160,6 +161,32 @@ function subOff(){clearTracks();P.sub=null;if(hls&&hls.subtitleTracks&&hls.subti
 function ccAuto(){if(P.sub||P.subDone||g('player').classList.contains('hide'))return;var want=(P.subWant||S('sublang','English')||'').toLowerCase();if(want==='off'||!want){return}
  var gp=subGroups(),k=Object.keys(gp).filter(function(x){return x.toLowerCase()===want})[0];if(k){P.subDone=true;showSub(k,0);return}
  if(hls&&hls.subtitleTracks&&hls.subtitleTracks.length){for(var i=0;i<hls.subtitleTracks.length;i++){var t=hls.subtitleTracks[i];if(String(t.lang||t.name||'').toLowerCase().indexOf(want.slice(0,3))===0){P.subDone=true;hls.subtitleDisplay=true;hls.subtitleTrack=i;return}}}}
+/* hardcoded subtitles: the text is painted onto the picture (white, bold, black outline) instead of the browser's own layer */
+var burnRaf=0,burnKey='';
+function burnOn(){return !!S('subburn',false)}
+function burnTracks(on){var v=g('v');Array.prototype.forEach.call(v.textTracks||[],function(t){if(t.kind!=='subtitles'&&t.kind!=='captions')return;
+ if(on&&t.mode==='showing'){t._bh=1;t.mode='hidden'}else if(!on&&t._bh&&t.mode==='hidden'){t._bh=0;t.mode='showing'}})}
+function burnText(){var v=g('v'),o=[];Array.prototype.forEach.call(v.textTracks||[],function(t){if((t.mode==='hidden'||t.mode==='showing')&&t.activeCues)Array.prototype.forEach.call(t.activeCues,function(c){if(c.text)o.push(c.text)})});
+ return o.join('\n').replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\{[^}]*\}/g,'').trim()}
+function burnDraw(){var cv=g('psubcv'),v=g('v'),w=cv.clientWidth,h=cv.clientHeight,d=window.devicePixelRatio||1;if(!w||!h)return;
+ burnTracks(true);var txt=burnText(),key=txt+'|'+w+'x'+h+'|'+S('subsz','m')+S('subcol','white')+S('subbg','shadow')+P.fit+'|'+v.videoWidth;if(key===burnKey)return;burnKey=key;
+ if(cv.width!==Math.round(w*d)||cv.height!==Math.round(h*d)){cv.width=Math.round(w*d);cv.height=Math.round(h*d)}
+ var x=cv.getContext('2d');x.setTransform(d,0,0,d,0,0);x.clearRect(0,0,w,h);if(!txt)return;
+ var vw=v.videoWidth||w,vh=v.videoHeight||h,sc=P.fit==='fill'?0:(P.fit==='cover'?Math.max(w/vw,h/vh):Math.min(w/vw,h/vh)),pw=sc?vw*sc:w,ph=sc?vh*sc:h,px=(w-pw)/2,py=(h-ph)/2;
+ /* the part of the picture that is on screen */
+ var vx=Math.max(0,px),vy=Math.max(0,py),vr=Math.min(w,px+pw),vb=Math.min(h,py+ph),aw=vr-vx,ah=vb-vy;
+ var k={s:.75,m:1,l:1.3,xl:1.7}[S('subsz','m')]||1,fs=Math.max(12,Math.round(ah*.05*k)),col={white:'#fff',yellow:'#ffe066',cyan:'#7de8ff'}[S('subcol','white')]||'#fff',bg=S('subbg','shadow');
+ x.font='700 '+fs+"px Roboto,'Segoe UI',Arial,sans-serif";x.textAlign='center';x.textBaseline='alphabetic';x.lineJoin='round';
+ var lines=[];txt.split('\n').forEach(function(L){L=L.trim();if(!L)return;var cur='';L.split(/\s+/).forEach(function(wd){var t=cur?cur+' '+wd:wd;if(cur&&x.measureText(t).width>aw*.9){lines.push(cur);cur=wd}else cur=t});if(cur)lines.push(cur)});
+ var lh=fs*1.22,y=vb-ah*.065-(lines.length-1)*lh,cx=vx+aw/2;
+ lines.forEach(function(L,i){var yy=y+i*lh;
+  if(bg==='box'||bg==='solid'){var tw=x.measureText(L).width;x.fillStyle=bg==='box'?'rgba(0,0,0,.7)':'#000';x.fillRect(cx-tw/2-fs*.3,yy-fs*.95,tw+fs*.6,fs*1.2)}
+  else{x.strokeStyle='#000';x.lineWidth=Math.max(2,fs*.16);x.strokeText(L,cx,yy)}
+  x.fillStyle=col;x.fillText(L,cx,yy)})}
+function burnLoop(){burnRaf=0;if(!burnOn())return;burnDraw();burnRaf=requestAnimationFrame(burnLoop)}
+function burnApply(){var cv=g('psubcv');if(burnOn()){cv.style.display='block';burnKey='';burnTracks(true);if(!burnRaf)burnRaf=requestAnimationFrame(burnLoop)}
+ else{cv.style.display='none';burnKey='';try{cv.getContext('2d').clearRect(0,0,cv.width,cv.height)}catch(e){}burnTracks(false);if(burnRaf){cancelAnimationFrame(burnRaf);burnRaf=0}}}
+function burnToggle(){Sset('subburn',!burnOn());burnApply();toast(burnOn()?'Subtitles are now drawn onto the picture.':'Subtitles are back to the normal layer.')}
 function subStyle(){var v=g('v'),sz={s:'1em',m:'1.3em',l:'1.7em',xl:'2.2em'}[S('subsz','m')]||'1.3em',col={white:'#fff',yellow:'#ffe066',cyan:'#7de8ff'}[S('subcol','white')]||'#fff',bg=S('subbg','shadow');
  v.style.setProperty('--cs',sz);v.style.setProperty('--cc',col);v.style.setProperty('--cb',bg==='box'?'rgba(0,0,0,.7)':(bg==='solid'?'#000':'transparent'));v.style.setProperty('--csh',bg==='shadow'?'-1px -1px 2px #000,1px -1px 2px #000,-1px 1px 2px #000,1px 1px 2px #000,0 0 7px #000':'none')}
 g('subfile').onchange=function(){var f=this.files&&this.files[0];this.value='';if(!f)return;var r=new FileReader();r.onload=function(){var s={lang:'My file',u:'local:'+f.name,text:String(r.result||'')};P.localSubs=P.localSubs.filter(function(x){return x.u!==s.u}).concat([s]);P.subDone=true;P.subWant='My file';showSub('My file',P.localSubs.length-1);toast('Loaded '+f.name)};r.readAsText(f)};
@@ -216,13 +243,14 @@ var MENUS={
   o.push({label:'Look of the subtitles',keep:true,set:function(){menuKind='sty'}});o.push({label:'Load a subtitle file (.srt or .vtt)',set:function(){g('subfile').click()}});
   if(!ks.length)o.push({head:'No subtitle found for this title yet'});return o}},
  sty:{title:'Subtitle look',items:function(){function pk(key,def,opts){return opts.map(function(a){return {label:a[1],on:S(key,def)===a[0],keep:true,set:function(){Sset(key,a[0]);subStyle()}}})}
-  return [{label:'Back',keep:true,set:function(){menuKind='cc'}},{head:'Size'}].concat(pk('subsz','m',[['s','Small'],['m','Medium'],['l','Large'],['xl','Huge']]),[{head:'Colour'}],pk('subcol','white',[['white','White'],['yellow','Yellow'],['cyan','Cyan']]),[{head:'Background'}],pk('subbg','shadow',[['shadow','Outline'],['box','Dim box'],['solid','Black box']]))}},
+  return [{label:'Back',keep:true,set:function(){menuKind='cc'}},{label:'Hardcode subtitles into the picture',sub:'White bold text with a black outline, painted on the video',on:burnOn(),keep:true,set:burnToggle},{head:'Size'}].concat(pk('subsz','m',[['s','Small'],['m','Medium'],['l','Large'],['xl','Huge']]),[{head:'Colour'}],pk('subcol','white',[['white','White'],['yellow','Yellow'],['cyan','Cyan']]),[{head:'Background'}],pk('subbg','shadow',[['shadow','Outline'],['box','Dim box'],['solid','Black box']]))}},
  sleep:{title:'Sleep timer',items:function(){function o(label,min){return {label:label,on:(min===0&&!P.sleep)||(P.sleep&&P.sleep.min===min),set:function(){setSleep(min);menuKind='more'},keep:true}}
   return [{label:'Back',keep:true,set:function(){menuKind='more'}},o('Off',0),o('15 minutes',15),o('30 minutes',30),o('45 minutes',45),o('1 hour',60),o('End of this episode',-1)]}},
  more:{title:'More',items:function(){var v=g('v');return [
   {label:'Sleep timer'+(P.sleep?(P.sleep.min<0?': end of episode':': '+Math.max(1,Math.ceil((P.sleep.at-Date.now())/60000))+' min left'):''),keep:true,set:function(){menuKind='sleep'}},
   {label:'Skip ahead 85 s',set:function(){skip(85)}},
   {label:'Picture: '+({contain:'fit',cover:'fill the screen',fill:'stretch'}[P.fit]),keep:true,set:function(){P.fit=P.fit==='contain'?'cover':(P.fit==='cover'?'fill':'contain');v.style.objectFit=P.fit}},
+  {label:'Hardcode subtitles into the picture',on:burnOn(),keep:true,set:burnToggle},
   {label:'Stats for nerds',on:P.stats,keep:true,set:function(){P.stats=!P.stats;g('pstats').classList.toggle('hide',!P.stats);statsTick()}},
   {label:'Prefer links that play here',on:!!S('compat',true),keep:true,set:function(){Sset('compat',!S('compat',true))}},
   {label:'Open in VLC',set:function(){openVlc()}},{label:'Cast to a TV or speaker',hide:!(v.remote&&v.remote.prompt),set:function(){try{v.remote.prompt().catch(function(){toast('No cast device found.')})}catch(e){toast('Casting is not available in this browser.')}}},{label:'Copy the link',set:function(){copyUrl()}},{label:'Keyboard shortcuts',set:function(){toast('Space play  S skip 85 s  ← → 10 s  ↑ ↓ volume  F full screen  M mute  C subtitles  A audio  Q quality  < > speed  N next  P previous  I stats  0-9 jump',null,null,12000)}}]}},
@@ -360,7 +388,7 @@ function liveWatch(gen){clearInterval(liveT);var last=-1,still=0;liveT=setInterv
  var v=g('v');if(v.paused||seeking||v.readyState===0){still=0;return}if(Math.abs(v.currentTime-last)<.05){still++}else{still=0;last=v.currentTime}
  if(still>=4){still=0;clearInterval(liveT);if(hls&&P.recon===0)try{hls.startLoad();hls.recoverMediaError()}catch(e){}reconnect()}},4000)}
 function play(x,title){var v=g('v');stopVideo();var gen=++P.gen;P.err='';P.x=x;P.title=title;P.live=!!tvMode;P.sub=null;P.subDone=false;P.subDelay=0;P.nextEp=null;
- g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('psub').textContent=P.live?'Live':(P.sub2||'');g('player').classList.remove('hide');g('pspin').classList.remove('hide');wake();subStyle();
+ g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('psub').textContent=P.live?'Live':(P.sub2||'');g('player').classList.remove('hide');g('pspin').classList.remove('hide');wake();subStyle();burnApply();
  var url=fix(x.url);P.url=url;P.kind=kindOf(url,x);var order=P.kind==='dash'?['dash']:(P.kind==='ts'?['ts','hls','file']:(P.kind==='hls'?(tvMode?['hls','ts','file']:['hls','file']):(tvMode?['file','hls','ts']:['file','hls']))),oi=0,startAt=P.startAt;P.startAt=0;audApplied=false;if(v.audioTracks){v.audioTracks.onaddtrack=audRefresh;v.audioTracks.onchange=audRefresh}
  addSubs(x.subtitles);if(!P.live)findNext();
  v.playbackRate=P.live?1:(parseFloat(lsGet('cncSpeed'))||1);
