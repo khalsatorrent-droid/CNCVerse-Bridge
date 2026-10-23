@@ -12,10 +12,15 @@ class CloudStreamApp {
 
         @PublishedApi
         internal fun getSettings(): MutableMap<String, String> {
-            if (inMemorySettings == null) {
-                inMemorySettings = loadExtensionSettings().toMutableMap()
+            inMemorySettings?.let { return it }
+            // Several extensions load at the same time and all read the settings: only one copy may ever exist,
+            // otherwise a save from one copy wipes what the other wrote (settings "not saving")
+            synchronized(this) {
+                return inMemorySettings ?: java.util.concurrent.ConcurrentHashMap<String, String>().also { map ->
+                    map.putAll(loadExtensionSettings())
+                    inMemorySettings = map
+                }
             }
-            return inMemorySettings!!
         }
 
         inline fun <reified T> getKey(path: String): T? {
@@ -32,15 +37,17 @@ class CloudStreamApp {
         }
         
         fun setKey(path: String, value: Any?) {
-            val settings = getSettings()
-            if (value == null) {
-                settings.remove(path)
-            } else {
-                settings[path] = value.toString()
+            synchronized(this) {
+                val settings = getSettings()
+                if (value == null) {
+                    settings.remove(path)
+                } else {
+                    settings[path] = value.toString()
+                }
+                saveExtensionSettings(HashMap(settings))
             }
-            saveExtensionSettings(settings)
         }
-        
+
         fun getContext(): Context? {
             return AndroidContextHolder.appContext
         }
