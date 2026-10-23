@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Website player: hardcode the subtitles into the picture (optional).** New switch "Hardcode subtitles into the picture" in the player's More menu and in Subtitles > Look of the subtitles. When it is on, the subtitle text is painted onto the video itself in the classic movie style: white bold letters with a black outline at the bottom centre (size, colour and background still follow your Look settings). Off by default.
+- **Website player: English subtitles by default, closed captions for dubs.** English is picked on its own (as before, unless you chose another language or Off). When an anime plays with its English dub (the link says dub, or the English track is playing in a file that also has Japanese), the player prefers the English closed-caption / SDH file, which also describes the sounds; with the original audio it prefers the normal English subtitles. Switching the audio switches the pick too, unless you chose a subtitle by hand.
 
 ## 1.7.28
 
