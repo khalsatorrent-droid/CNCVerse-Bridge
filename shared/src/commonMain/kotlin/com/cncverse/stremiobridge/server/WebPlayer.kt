@@ -147,7 +147,14 @@ function flash(txt,side){var f=g('pflash');f.textContent=txt;f.style.left=side<0
 /* ----- subtitles: every track any extension found for this title, grouped by language ----- */
 var subPool=[];
 function normLang(l){l=String(l||'').trim();if(!l)return 'Unknown';var d=l;try{if(/^[a-z]{2,3}(-[A-Za-z]{2,4})?${'$'}/.test(l))d=new Intl.DisplayNames(['en'],{type:'language'}).of(l)||l}catch(e){}return d.charAt(0).toUpperCase()+d.slice(1)}
-function addSubs(l){var n=0;(l||[]).forEach(function(s){if(!s||!s.url||String(s.url).indexOf('http')!==0)return;var u=String(s.url).split('#')[0];if(subPool.some(function(p){return p.u===u}))return;subPool.push({u:u,full:s.url,lang:normLang(s.lang)});n++});if(n){ccAuto();updateBtns()}}
+/* closed-caption / SDH files describe the sounds as well, which suits a dubbed episode */
+function isCc(s,u){var t=(String(s.id||'')+' '+String(s.label||s.name||'')+' '+u);try{t=decodeURIComponent(t)}catch(e){}return /(^|[^a-z])(sdh|cc|hearing[ ._-]?impaired|closed[ ._-]?caption(s|ed)?)([^a-z]|${'$'})/i.test(t)}
+function isDubNow(){var t=P.x?((P.x.name||'')+' '+(P.x.description||P.x.title||'')):'';if(/(^|[^a-z])dub(bed)?([^a-z]|${'$'})/i.test(t))return true;var a=audList();if(a.length>1){var on=a.filter(function(x){return x.on})[0];
+ if(on&&/^(en|eng|english)/.test(String(on.key||'')+' '+String(on.label||'').toLowerCase())&&a.some(function(x){return /^(ja|jp|jpn|japanese)/.test(String(x.key||'')+' '+String(x.label||'').toLowerCase())}))return true}return false}
+function bestSub(lang){var gp=subGroups()[lang]||[],i;if(!gp.length)return 0;var dub=lang.toLowerCase()==='english'&&isDubNow();for(i=0;i<gp.length;i++){if(!!gp[i].cc===dub)return i}return 0}
+/* the pick made by itself is redone when the audio changes to or from a dub; a pick made by hand is left alone */
+function reAuto(){var a=P.autoPick;if(!a||!P.sub||P.sub.lang!==a.lang||P.sub.idx!==a.idx)return;var i=bestSub(a.lang);if(i!==a.idx){P.autoPick={lang:a.lang,idx:i};showSub(a.lang,i)}}
+function addSubs(l){var n=0;(l||[]).forEach(function(s){if(!s||!s.url||String(s.url).indexOf('http')!==0)return;var u=String(s.url).split('#')[0];if(subPool.some(function(p){return p.u===u}))return;subPool.push({u:u,full:s.url,lang:normLang(s.lang),cc:isCc(s,u)});n++});if(n){ccAuto();updateBtns()}}
 function subGroups(){var gp={};subPool.concat(P.localSubs).forEach(function(s){(gp[s.lang]=gp[s.lang]||[]).push(s)});return gp}
 function langOrder(){var gp=subGroups(),k=Object.keys(gp),want=(P.subWant||'').toLowerCase();return k.sort(function(a,b){function w(x){var l=x.toLowerCase();return l===want?0:(l==='english'?1:(x==='Unknown'?9:(x==='My file'?2:5)))}return w(a)-w(b)||a.localeCompare(b)})}
 function p2(n){return ('0'+n).slice(-2)}
@@ -159,7 +166,7 @@ function showSub(lang,idx){clearTracks();var gp=subGroups()[lang];if(!gp||!gp.le
 function subOff(){clearTracks();P.sub=null;if(hls&&hls.subtitleTracks&&hls.subtitleTracks.length)hls.subtitleTrack=-1;updateBtns()}
 /* choose the language the viewer wants (the last one picked, else the language set in Settings, else English) as soon as it is available */
 function ccAuto(){if(P.sub||P.subDone||g('player').classList.contains('hide'))return;var want=(P.subWant||S('sublang','English')||'').toLowerCase();if(want==='off'||!want){return}
- var gp=subGroups(),k=Object.keys(gp).filter(function(x){return x.toLowerCase()===want})[0];if(k){P.subDone=true;showSub(k,0);return}
+ var gp=subGroups(),k=Object.keys(gp).filter(function(x){return x.toLowerCase()===want})[0];if(k){P.subDone=true;var bi=bestSub(k);P.autoPick={lang:k,idx:bi};showSub(k,bi);return}
  if(hls&&hls.subtitleTracks&&hls.subtitleTracks.length){for(var i=0;i<hls.subtitleTracks.length;i++){var t=hls.subtitleTracks[i];if(String(t.lang||t.name||'').toLowerCase().indexOf(want.slice(0,3))===0){P.subDone=true;hls.subtitleDisplay=true;hls.subtitleTrack=i;return}}}}
 /* hardcoded subtitles: the text is painted onto the picture (white, bold, black outline) instead of the browser's own layer */
 var burnRaf=0,burnKey='';
@@ -232,7 +239,7 @@ var SPEEDS=[0.5,0.75,1,1.25,1.5,1.75,2];
 var MENUS={
  q:{title:'Quality',items:function(){return qList()}},
  spd:{title:'Speed',items:function(){var v=g('v');return SPEEDS.map(function(s){return {label:s===1?'Normal':s+'x',on:Math.abs(v.playbackRate-s)<.01,set:function(){v.playbackRate=s;lsSet('cncSpeed',String(s))}}})}},
- aud:{title:'Audio',items:function(){var a=audList(),o=[];if(a.length){o.push({head:'In this file'});a.forEach(function(x){o.push({label:x.label,on:x.on,set:function(){x.set();lsSet('cncAudio',x.key)}})})}
+ aud:{title:'Audio',items:function(){var a=audList(),o=[];if(a.length){o.push({head:'In this file'});a.forEach(function(x){o.push({label:x.label,on:x.on,set:function(){x.set();lsSet('cncAudio',x.key);setTimeout(reAuto,400)}})})}
   var ol=otherLangs();if(ol.length){o.push({head:'Other links of this title'});ol.forEach(function(x){o.push({label:x.lang+(x.here?' (this link has it)':''),sub:x.n+' link'+(x.n>1?'s':'')+' - switches the link, keeps your place',on:false,set:function(){switchLink(x.link)}})})}
   if(!a.length&&!ol.length)o.push({head:'No other audio found'});if(!a.length&&!P.live)o.push({head:'This browser shows one audio track of a plain file. Pick another link tagged with the language you want.'});return o}},
  cc:{title:'Subtitles',items:function(){var o=[{label:'Off',on:!P.sub&&!(hls&&hls.subtitleTrack>=0),set:function(){P.subDone=true;P.subWant='off';lsSet('cncSub','off');subOff()}}],gp=subGroups();
@@ -444,7 +451,7 @@ function mediaSession(){if(!('mediaSession' in navigator))return;try{var v=g('v'
  v.addEventListener('volumechange',vol);vol();
  ['timeupdate','progress','durationchange','play','pause','seeked','loadedmetadata'].forEach(function(n){v.addEventListener(n,function(){if(!seeking)paint();if(n==='timeupdate'&&Date.now()-lastSave>5000){lastSave=Date.now();posSave()}})});
  v.addEventListener('seeking',function(){g('pspin').classList.remove('hide')});v.addEventListener('canplay',function(){g('pspin').classList.add('hide')});v.addEventListener('seeked',function(){g('pspin').classList.add('hide')});
- v.addEventListener('ratechange',updateBtns);
+ v.addEventListener('ratechange',updateBtns);v.addEventListener('loadedmetadata',function(){setTimeout(reAuto,600)});
  v.addEventListener('ended',function(){posSave();if(P.live){reconnect();return}if(P.sleep&&P.sleep.min<0){P.sleep=null;toast('Sleep timer: stopped after this episode. Good night.',null,null,12000);return}offerNext()});
  document.addEventListener('fullscreenchange',function(){g('pfs').setAttribute('aria-pressed',String(!!fsOn()))});
  setInterval(function(){if(!g('player').classList.contains('hide')&&!seeking)paint()},500)})();
