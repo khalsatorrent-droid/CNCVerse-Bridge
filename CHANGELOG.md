@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Website player: hardcode the subtitles into the picture (optional).** New switch "Hardcode subtitles into the picture" in the player's More menu and in Subtitles > Look of the subtitles. When it is on, the subtitle text is painted onto the video itself in the classic movie style: white bold letters with a black outline at the bottom centre (size, colour and background still follow your Look settings). Off by default.
+
 ## 1.7.28
 
 - **Website player: switch the audio inside MKV and MP4 files.** A file with two or more audio tracks (Hindi / English, ...) now plays through the player's own engine, which opens the file in pieces and gives the browser the picture plus the audio track you pick. The Audio menu lists every track by language, switching keeps your place, and seeking, the 30 second buffer and resume still work. It needs the browser to support the codecs (H.264, HEVC, VP9, AV1 with AAC, Opus, MP3, FLAC; Dolby Digital only where the browser has it). Files with one track play as before.
