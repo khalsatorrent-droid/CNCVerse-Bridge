@@ -105,6 +105,9 @@ object CloudflaredManager {
 
     private fun internetUp(): Boolean = reachable("https://www.cloudflare.com/cdn-cgi/trace") || reachable("https://1.1.1.1/cdn-cgi/trace")
 
+    /** The tunnel check runs this often (it asks the bridge and the tunnel link for the manifest each time). */
+    private const val GUARD_EVERY_MS = 120_000L
+
     private fun startGuard() {
         if (guardJob?.isActive == true) return
         guardJob = guardScope.launch {
@@ -112,20 +115,20 @@ object CloudflaredManager {
             var failedRestarts = 0
             var sinceUrl = 0L
             while (isActive) {
-                delay(30_000)
+                delay(GUARD_EVERY_MS)
                 if (!ServerState.isStremioMode.value || lastPort <= 0) { bad = 0; sinceUrl = 0; continue }
                 val url = ServerState.activeTunnelUrl.value
                 val alive = tunnelProcess?.isAlive == true
                 var why: String? = null
                 if (!alive) why = "cloudflared is not running"
                 else if (url == null) {
-                    sinceUrl += 30_000
-                    if (sinceUrl >= 120_000) why = "no tunnel link after 2 minutes"
+                    sinceUrl += GUARD_EVERY_MS
+                    if (sinceUrl >= 2 * GUARD_EVERY_MS) why = "no tunnel link after 4 minutes"
                 } else {
                     sinceUrl = 0
                     // the bridge itself must answer, otherwise restarting the tunnel would not help
                     val local = reachable("http://127.0.0.1:$lastPort/manifest.json")
-                    if (local && !reachable("$url/manifest.json")) { bad++; if (bad >= 3) why = "the tunnel link does not answer" } else bad = 0
+                    if (local && !reachable("$url/manifest.json")) { bad++; if (bad >= 2) why = "the tunnel link does not answer" } else bad = 0
                 }
                 if (why == null) { if (alive && url != null) failedRestarts = 0; continue }
                 if (!internetUp()) { ServerState.warn("Tunnel check: $why, but there is no internet right now - waiting"); continue }
