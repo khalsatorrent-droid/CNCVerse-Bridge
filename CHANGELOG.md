@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.30
 
 - **Tunnel check every 2 minutes (was 30 seconds).** The check that keeps Stremio Mode's tunnel alive now asks every 2 minutes instead of every 30 seconds, so it sends far fewer requests. A dead tunnel is still restarted automatically, after two failed checks in a row (about 4 minutes).
 - **Extension settings save and open again (Android).** Since extensions started loading several at a time, two of them could read the saved settings at the same moment, end up with two separate copies and overwrite each other's values, or crash while loading before their Settings button was set up (NetNaija, RaghavAnime, PlayFyProvider and others). The settings now live in one shared copy that is written safely.
