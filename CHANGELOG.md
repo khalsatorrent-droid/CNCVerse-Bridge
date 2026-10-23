@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Tunnel check every 2 minutes (was 30 seconds).** The check that keeps Stremio Mode's tunnel alive now asks every 2 minutes instead of every 30 seconds, so it sends far fewer requests. A dead tunnel is still restarted automatically, after two failed checks in a row (about 4 minutes).
+
 ## 1.7.29
 
 - **Website player: hardcode the subtitles into the picture (optional).** New switch "Hardcode subtitles into the picture" in the player's More menu and in Subtitles > Look of the subtitles. When it is on, the subtitle text is painted onto the video itself in the classic movie style: white bold letters with a black outline at the bottom centre (size, colour and background still follow your Look settings). Off by default.
