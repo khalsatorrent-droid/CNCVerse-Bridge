@@ -96,7 +96,7 @@ object CloudflaredManager {
     private var guardJob: Job? = null
     private val guardScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val probeClient by lazy {
-        okhttp3.OkHttpClient.Builder().connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS).readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns).connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS).readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
     }
 
     private fun reachable(url: String): Boolean = runCatching {

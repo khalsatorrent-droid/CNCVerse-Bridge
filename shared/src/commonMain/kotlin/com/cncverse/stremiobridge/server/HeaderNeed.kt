@@ -46,7 +46,7 @@ object HeaderNeed {
     private const val PROBE_UA = "ExoPlayerLib/2.19.1"
 
     private val client by lazy {
-        OkHttpClient.Builder()
+        OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .callTimeout(9, TimeUnit.SECONDS)

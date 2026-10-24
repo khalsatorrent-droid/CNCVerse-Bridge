@@ -29,7 +29,7 @@ data class UpstreamAddon(
 object UpstreamAddons {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .connectTimeout(8, TimeUnit.SECONDS)
             .callTimeout(25, TimeUnit.SECONDS)
             .followRedirects(true)

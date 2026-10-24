@@ -542,7 +542,7 @@ object MediaServer {
     // ── HTTP clients ──────────────────────────────────────────────────────────
 
     private val baseClient by lazy {
-        okhttp3.OkHttpClient.Builder()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             // Several connections per file / many HLS segments: keep them open for the next piece instead of
             // closing all but five and paying a new TCP + TLS handshake for every segment
             .connectionPool(okhttp3.ConnectionPool(48, 5, TimeUnit.MINUTES))

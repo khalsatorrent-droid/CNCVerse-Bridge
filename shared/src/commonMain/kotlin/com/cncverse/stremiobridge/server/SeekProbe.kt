@@ -35,7 +35,7 @@ object SeekProbe {
     internal fun resetForTest() = verdicts.clear()
 
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS)
             .callTimeout(4, TimeUnit.SECONDS)

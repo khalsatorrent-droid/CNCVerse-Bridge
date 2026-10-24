@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
  */
 object SubtitleTools {
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .callTimeout(20, TimeUnit.SECONDS)

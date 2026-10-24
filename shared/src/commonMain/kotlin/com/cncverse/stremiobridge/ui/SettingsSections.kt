@@ -19,6 +19,9 @@ import androidx.compose.ui.unit.sp
 import com.cncverse.stremiobridge.cache.StreamCacheConfig
 import com.cncverse.stremiobridge.cache.StreamCacheManager
 import com.cncverse.stremiobridge.format.StreamFormatter
+import com.cncverse.stremiobridge.network.DohConfig
+import com.cncverse.stremiobridge.network.DohProviders
+import com.cncverse.stremiobridge.network.DohSettings
 import com.cncverse.stremiobridge.format.StreamFormatterConfig
 import com.cncverse.stremiobridge.format.TemplateException
 import com.cncverse.stremiobridge.server.MediaServer
@@ -327,6 +330,64 @@ fun StreamCacheCard() {
 // ── Streams: filters & sorting ────────────────────────────────────────────────
 
 private val RESOLUTIONS = listOf("2160p", "1080p", "720p", "480p", "360p")
+
+/** DNS over HTTPS: every lookup of the app (extensions, streams, subtitles, tunnel checks) goes through the chosen resolver. */
+@Composable
+fun DnsCard() {
+    var s by remember { mutableStateOf(DohConfig.settings) }
+    var saved by remember { mutableStateOf<String?>(null) }
+    fun update(n: DohSettings) { s = n; saved = null }
+    val custom = s.providerId == DohProviders.CUSTOM
+    val chosen = DohProviders.byId(s.providerId)
+
+    AmoledCard(Modifier.fillMaxWidth()) {
+        SectionTitle("DNS over HTTPS", "Names are looked up through an encrypted HTTPS resolver instead of your network's DNS: no blocking or tampering by the provider.")
+        SwitchRow("Use DNS over HTTPS for every request", "Applies to extensions, streams, subtitles, the media server and the tunnel checks", s.enabled) { update(s.copy(enabled = it)) }
+
+        Text("Resolver", color = TextSecondary, fontSize = 11.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (DohProviders.ALL.map { it.id to it.name } + (DohProviders.CUSTOM to "Custom")).forEach { (id, name) ->
+                FilterChip(
+                    selected = s.providerId == id,
+                    onClick = { update(s.copy(providerId = id)) },
+                    label = { Text(name, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+        if (chosen != null) {
+            Text(chosen.note, color = TextSecondary, fontSize = 11.sp)
+            Text(chosen.url, color = TextMuted, fontSize = 10.sp)
+            if (chosen.bootstrap.isNotEmpty()) Text("Reached by IP: " + chosen.bootstrap.joinToString(", "), color = TextMuted, fontSize = 10.sp)
+        }
+        if (custom) {
+            OutlinedTextField(
+                value = s.customUrl, onValueChange = { update(s.copy(customUrl = it.trim())) },
+                label = { Text("DoH address") }, placeholder = { Text("https://dns.example.com/dns-query") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = s.customBootstrap, onValueChange = { update(s.copy(customBootstrap = it)) },
+                label = { Text("Resolver IPs (optional, comma separated)") }, placeholder = { Text("1.2.3.4, 5.6.7.8") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            Text("NextDNS: https://dns.nextdns.io/<your id>. Without IPs the resolver's own name is looked up with the normal DNS once.", color = TextMuted, fontSize = 10.sp)
+        }
+        SwitchRow("Use normal DNS if the resolver does not answer", "Off = requests fail when the DoH resolver cannot be reached", s.fallbackToSystem) { update(s.copy(fallbackToSystem = it)) }
+
+        Spacer(Modifier.height(8.dp))
+        ActionButton("Save", primary = true) {
+            DohConfig.update(s)
+            saved = if (s.enabled && s.provider() == null) "Saved, but the DoH address is not a valid https:// address - normal DNS is used"
+            else if (s.enabled) "Saved - DNS over HTTPS is on" else "Saved - DNS over HTTPS is off"
+        }
+        saved?.let { Text(it, color = Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
+        Text("Not covered: the Cloudflare tunnel program itself and web pages opened inside extensions' WebView use the device's own DNS.", color = TextMuted, fontSize = 10.sp)
+    }
+}
 
 /** How stream lists are filtered and ordered (applied to every request). */
 @Composable

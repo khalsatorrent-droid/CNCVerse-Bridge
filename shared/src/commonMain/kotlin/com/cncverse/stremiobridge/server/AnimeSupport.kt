@@ -48,7 +48,7 @@ data class AnimeTarget(
 /** Looks an anime id up on AniList / Kitsu and collects every title it is known by. */
 object AnimeResolver {
     private val json = Json { ignoreUnknownKeys = true }
-    private val client by lazy { okhttp3.OkHttpClient.Builder().callTimeout(8, TimeUnit.SECONDS).build() }
+    private val client by lazy { okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns).callTimeout(8, TimeUnit.SECONDS).build() }
     private val cache = ConcurrentHashMap<String, AnimeInfo>()
 
     private fun get(url: String, accept: String = "application/json"): JsonObject? = runCatching {

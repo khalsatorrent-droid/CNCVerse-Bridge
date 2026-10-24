@@ -1973,7 +1973,7 @@ object StremioServer {
      * fails the TLS handshake with some of them (arm.haglund.dev: "ProtocolVersion").
      */
     private val idApiClient by lazy {
-        okhttp3.OkHttpClient.Builder()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }

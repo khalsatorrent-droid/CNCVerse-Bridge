@@ -32,7 +32,7 @@ object LocalRelay {
     private const val PORT_TTL_MS = 12 * 60 * 60_000L
 
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .followRedirects(true)

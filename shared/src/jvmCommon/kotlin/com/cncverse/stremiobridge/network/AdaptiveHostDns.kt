@@ -32,6 +32,8 @@ object AdaptiveHostDns : Dns {
     private val hostCache = ConcurrentHashMap<String, CachedHostProtocol>()
 
     override fun lookup(hostname: String): List<InetAddress> {
+        // DNS over HTTPS chosen in Settings: every lookup goes through it
+        if (DohConfig.enabled) return DohResolver.lookup(hostname)
         // 1. Check Host Protocol Cache first
         val cached = hostCache[hostname]
         if (cached != null && !cached.isExpired()) {

@@ -65,7 +65,7 @@ object StableLink {
     val url: String get() = "https://$id-tunnel.pencarimovie.com"
 
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns).connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
     }
 
     /**

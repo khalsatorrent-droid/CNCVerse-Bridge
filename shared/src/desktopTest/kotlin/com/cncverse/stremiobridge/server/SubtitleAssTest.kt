@@ -48,3 +48,17 @@ class SubtitleAssTest {
         assertTrue(!a.contains("m 0 0"))
     }
 }
+
+class DohWireTest {
+    @Test
+    fun queryAndAnswerRoundTrip() {
+        val q = com.cncverse.stremiobridge.network.DohWire.buildQuery("a.io", 1)
+        assertEquals(12 + 1 + 1 + 1 + 2 + 1 + 4, q.size)
+        // response: header (1 question, 1 answer), question copy, answer with a compressed name -> 1.2.3.4, ttl 60
+        val r = q.copyOf().also { it[2] = 0x81.toByte(); it[3] = 0x80.toByte(); it[7] = 1 } +
+            byteArrayOf(0xc0.toByte(), 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 1, 2, 3, 4)
+        val a = com.cncverse.stremiobridge.network.DohWire.parseAnswers(r)
+        assertEquals("1.2.3.4", a.single().first.hostAddress)
+        assertEquals(60L, a.single().second)
+    }
+}
