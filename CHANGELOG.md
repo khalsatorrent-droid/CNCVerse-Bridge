@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Watchuu extensions in the default repositories.** The Watchuu repository (khalsatorrent-droid/Watchuu) is added for new installs, and once to existing installs (remove it and it stays removed).
 - **NetNaija and other extensions: settings are kept after saving (Android).** Extensions read their settings back as JSON, but a saved list (for example the switched-off sources) was stored as plain text and could never be read again, so the switches went back to their old values every time. Lists and objects are now stored the way the extensions expect.
 
 ## 1.7.30

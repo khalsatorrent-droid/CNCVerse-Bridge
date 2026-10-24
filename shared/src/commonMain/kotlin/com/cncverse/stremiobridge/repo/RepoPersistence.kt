@@ -34,7 +34,11 @@ val BUNDLED_REPO_URLS: List<String> = listOf(
     "https://raw.githubusercontent.com/RVRBEAST76/allforu-repo/builds/repo.json",
     "https://raw.githubusercontent.com/Faisal0786/Desi/main/repo.json",
     ECLIPSIA_REPO_URL,
+    WATCHUU_REPO_URL,
 )
+
+/** Watchuu extensions: bundled from 1.7.31 (existing installs get it once, [BUNDLED_REPO_URLS_V4]). */
+const val WATCHUU_REPO_URL = "https://raw.githubusercontent.com/khalsatorrent-droid/Watchuu/main/repo.json"
 
 /** Added to the bundle after the first six: an existing install gets it once ([BUNDLED_REPO_URLS_V2]), a new one with the rest. */
 const val ECLIPSIA_REPO_URL = "https://cs.eclipsia.dpdns.org/repo.json"
@@ -47,3 +51,6 @@ val BUNDLED_REPO_URLS_V3: List<String> = listOf(ECLIPSIA_REPO_URL)
 
 /** Repositories added to the bundle after the first version of it: existing installs get just these, once. */
 val BUNDLED_REPO_URLS_V2: List<String> = listOf(ECLIPSIA_REPO_URL)
+
+/** Added to the bundle in 1.7.31: existing installs get it once. */
+val BUNDLED_REPO_URLS_V4: List<String> = listOf(WATCHUU_REPO_URL)

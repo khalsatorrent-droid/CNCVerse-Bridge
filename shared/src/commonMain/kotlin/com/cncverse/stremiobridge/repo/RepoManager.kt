@@ -13,6 +13,7 @@ object RepoManager {
     private const val BUNDLED_MARK = "bundled_repos_v1"
     private const val BUNDLED_MARK_V2 = "bundled_repos_v2"
     private const val BUNDLED_MARK_V3 = "bundled_repos_v3"
+    private const val BUNDLED_MARK_V4 = "bundled_repos_v4"
 
     /**
      * Load saved repos from persistence and seed the default repo if none exist.
@@ -25,6 +26,7 @@ object RepoManager {
             saveRepoUrls(urls)
             runCatching { setExtensionSetting(BUNDLED_MARK, "1") }
             runCatching { setExtensionSetting(BUNDLED_MARK_V2, "1") }
+            runCatching { setExtensionSetting(BUNDLED_MARK_V4, "1") }
         } else if (runCatching { getExtensionSetting(BUNDLED_MARK) }.getOrNull() == null) {
             // Existing install: add the bundled repositories once (removing one later keeps it removed)
             val before = urls.size
@@ -46,6 +48,13 @@ object RepoManager {
             BUNDLED_REPO_URLS_V3.forEach { if (it !in urls) urls.add(it) }
             if (urls != before) saveRepoUrls(urls)
             runCatching { setExtensionSetting(BUNDLED_MARK_V3, "1") }
+        }
+        // Watchuu extensions: added once to installs that had the bundle before it (removing it later keeps it removed)
+        if (runCatching { getExtensionSetting(BUNDLED_MARK_V4) }.getOrNull() == null) {
+            val before = urls.size
+            BUNDLED_REPO_URLS_V4.forEach { if (it !in urls) urls.add(it) }
+            if (urls.size != before) saveRepoUrls(urls)
+            runCatching { setExtensionSetting(BUNDLED_MARK_V4, "1") }
         }
         val cached = runCatching { loadCachedRepoEntries() }.getOrDefault(emptyList()).associateBy { it.url }
         val entries = urls.map { url ->
