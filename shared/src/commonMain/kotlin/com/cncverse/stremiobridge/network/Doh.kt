@@ -163,7 +163,7 @@ object DohWire {
         while (true) {
             val len = d[i].toInt() and 0xff
             if (len == 0) return i + 1
-            if (len and 0xc0 == 0xc0) return i + 2
+            if ((len and 0xc0) == 0xc0) return i + 2
             i += len + 1
         }
     }
