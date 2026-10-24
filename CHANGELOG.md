@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.34
 
 - **Nuvio mobile: the "· Nuvio mobile" subtitle copies are now bold SRT files.** The ASS file at a link without ".ass" still did not show in Nuvio mobile. The copy is now plain SRT with every line in bold, which Nuvio draws with its own subtitle style (set it to white text with a black outline for the same look). Every styled subtitle request is now written to the bridge log (format, player, served or failed).
 
