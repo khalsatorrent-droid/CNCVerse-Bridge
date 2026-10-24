@@ -87,9 +87,11 @@ object DohResolver {
 
     private fun bootstrapDns(p: DohProvider): Dns {
         val providerHost = p.url.substringAfter("://").substringBefore('/').substringBefore(':')
-        return Dns { host ->
-            if (p.bootstrap.isNotEmpty() && host.equals(providerHost, true)) p.bootstrap.map { InetAddress.getByName(it) } // IP literals: no lookup happens
-            else Dns.SYSTEM.lookup(host)
+        return object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> =
+                // IP literals: no lookup happens
+                if (p.bootstrap.isNotEmpty() && hostname.equals(providerHost, true)) p.bootstrap.map { InetAddress.getByName(it) }
+                else Dns.SYSTEM.lookup(hostname)
         }
     }
 
