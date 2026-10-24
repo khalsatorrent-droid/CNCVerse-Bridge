@@ -82,9 +82,16 @@ object SubtitleTools {
                 if (english >= STYLED_MAX) continue // only the first 10 English tracks are handed out
                 english++
                 if (s.url.startsWith("http", true)) {
-                    cur = s.copy(url = base.trimEnd('/') + "/subass/sub$english.ass?ms=$ms&u=" + URLEncoder.encode(s.url, "UTF-8"))
-                    isStyled = true
+                    val q = "?ms=$ms&u=" + URLEncoder.encode(s.url, "UTF-8")
+                    val root = base.trimEnd('/') + "/subass/sub$english"
                     prefetch(s.url, ms)
+                    val links = p.styledSubtitleLinks
+                    // ".ass" link: Stremio, TV players (libass / mpv draw the full style)
+                    if (links != "plain") result.add(s.copy(url = "$root.ass$q", id = label(result.size + 1, s, s.url in cc, true)))
+                    // Same file without ".ass" in the link: Nuvio mobile then reads it with its normal subtitle
+                    // parser (its libass path fails on add-on subtitles), the text still comes out styled
+                    if (links != "ass") result.add(s.copy(url = "$root$q", id = label(result.size + 1, s, s.url in cc, true) + " · Nuvio mobile"))
+                    continue
                 }
             } else if (ms != 0) {
                 cur = shiftedUrl(s.url, ms, base)?.let { s.copy(url = it) } ?: s

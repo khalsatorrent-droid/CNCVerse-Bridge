@@ -434,6 +434,23 @@ fun StreamsCard() {
             singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         SwitchRow("Styled English subtitles (ASS)", "The first 10 English subtitles are downloaded by the bridge and sent as ASS: white bold text, black outline, bottom centre. Anime: CC subtitles first", p.styledSubtitles) { update(p.copy(styledSubtitles = it)) }
+        if (p.styledSubtitles) {
+            Text("Styled subtitle links", color = TextSecondary, fontSize = 11.sp)
+            Text("Nuvio mobile cannot load \".ass\" links from add-ons; \"Both\" adds a second copy of each track for it", color = TextMuted, fontSize = 10.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("both" to "Both", "ass" to ".ass only (TV / Stremio)", "plain" to "Nuvio mobile only").forEach { (v, name) ->
+                    FilterChip(
+                        selected = p.styledSubtitleLinks == v,
+                        onClick = { update(p.copy(styledSubtitleLinks = v)) },
+                        label = { Text(name, fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                            containerColor = AmoledCard2, labelColor = TextSecondary,
+                        ),
+                    )
+                }
+            }
+        }
         SwitchRow("Only those subtitle languages", "Other languages are dropped (kept if none match)", p.subtitleOnlyPreferred) { update(p.copy(subtitleOnlyPreferred = it)) }
         OutlinedTextField(
             value = subOffset, onValueChange = { subOffset = it.filter { c -> c.isDigit() || c == '-' }.take(6) },

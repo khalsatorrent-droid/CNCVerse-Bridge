@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Styled subtitles on Nuvio mobile.** Nuvio mobile does not load ".ass" subtitle links from add-ons (its libass path fails on them), while the same file at a link without ".ass" loads through its normal subtitle reader. Each styled English track is now also offered as "… · Nuvio mobile". Settings > Streams > "Styled subtitle links": Both (default), .ass only (TV / Stremio), Nuvio mobile only.
+
 ## 1.7.32
 
 - **Styled subtitles keep loading after a pause.** Converted subtitles were only kept in memory: when Android stopped the app during a long pause, or the extension's subtitle link had expired, they no longer loaded on resume. They are now also saved on the device (up to 400 files / 14 days), a failed download is retried once, and players that check the file first (HEAD) get an answer.

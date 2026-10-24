@@ -212,6 +212,8 @@ object StremioServer {
         val subtitleOffsetMs: Int = 0,
         /** The first 10 English subtitles are fetched here and handed out as ASS (white bold text, black outline, bottom centre). */
         val styledSubtitles: Boolean = true,
+        /** Links of the styled subtitles: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
+        val styledSubtitleLinks: String = "both",
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
         /** Order inside a group: default | size (largest first, unknown size last). */
@@ -287,6 +289,7 @@ object StremioServer {
             providerOrder = p.providerOrder.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
             subtitleLangs = p.subtitleLangs.trim().take(200),
             subtitleOffsetMs = p.subtitleOffsetMs.coerceIn(-60_000, 60_000),
+            styledSubtitleLinks = p.styledSubtitleLinks.takeIf { it in setOf("both", "ass", "plain") } ?: "both",
         )
         streamPrefs = cleaned
         val file = streamPrefsFile ?: return
