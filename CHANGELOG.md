@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Styled English subtitles for Stremio / Nuvio.** The bridge now downloads the first 10 English subtitles of a title, converts them to ASS in one look (white bold text, black outline, bottom centre) and hands those to the add-on. Other languages are unchanged. Switch: Settings > Streams > "Styled English subtitles (ASS)".
+- **Subtitle names that tell the tracks apart.** Each track is named like "#2 English · CC · ASS styled · Show.S01E01.1080p.BluRay" (CC/SDH is detected from the name).
+- **Anime: CC subtitles first.** For anime titles, closed-caption (CC / SDH) tracks go to the top of the subtitle list.
 - **Watchuu extensions in the default repositories.** The Watchuu repository (khalsatorrent-droid/Watchuu) is added for new installs, and once to existing installs (remove it and it stays removed).
 - **NetNaija and other extensions: settings are kept after saving (Android).** Extensions read their settings back as JSON, but a saved list (for example the switched-off sources) was stored as plain text and could never be read again, so the switches went back to their old values every time. Lists and objects are now stored the way the extensions expect.
 

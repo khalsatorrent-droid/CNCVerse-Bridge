@@ -210,6 +210,8 @@ object StremioServer {
         val subtitleOnlyPreferred: Boolean = false,
         /** Moves every subtitle cue by this many milliseconds (positive = later). */
         val subtitleOffsetMs: Int = 0,
+        /** The first 10 English subtitles are fetched here and handed out as ASS (white bold text, black outline, bottom centre). */
+        val styledSubtitles: Boolean = true,
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
         /** Order inside a group: default | size (largest first, unknown size last). */
@@ -749,6 +751,16 @@ object StremioServer {
                 else call.respondText(text, ContentType.parse("text/vtt; charset=utf-8"))
             }
 
+            // The same subtitle as a styled ASS file (the .ass name helps players that go by the extension)
+            get("/subass/{name}") {
+                val u = call.request.queryParameters["u"]
+                val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
+                if (u.isNullOrBlank() || !u.startsWith("http", true)) return@get call.respond(HttpStatusCode.BadRequest)
+                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms) }
+                if (text == null) call.respondRedirect(u)
+                else call.respondText(text, ContentType.parse("text/x-ssa; charset=utf-8"))
+            }
+
             // ── Media server: files and HLS cached on this device, then served to the player ──
             get("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
             head("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
@@ -1016,7 +1028,7 @@ object StremioServer {
                     // "Refresh results" button first (it is not a video: it opens a page in the browser)
                     if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size)) + withSupport else withSupport
                 }
-                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, mediaBase())) } ?: s }
+                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, mediaBase(), isAnime(type, id))) } ?: s }
 
             out
         } catch (e: Throwable) {
@@ -1186,6 +1198,10 @@ object StremioServer {
         }
     }
 
+    /** Anime titles: the anime type or an anime id scheme (kitsu / MAL / AniList / AniDB). */
+    private fun isAnime(type: String, id: String): Boolean =
+        type == "anime" || id.substringBefore(':').lowercase() in setOf("kitsu", "mal", "anilist", "anidb")
+
     /** Where clients reach this bridge (for the links the media server hands out). */
     private fun mediaBase(): String =
         ServerState.streamBaseUrl ?: ServerState.publicBaseUrl.ifBlank { "http://127.0.0.1:${ServerState.serverPort}" }
@@ -1354,7 +1370,7 @@ object StremioServer {
             return
         }
         val streams = withContext(pluginDispatcher) { buildStreams(type, id) }
-        val subtitles = SubtitleTools.process(streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }, streamPrefs, mediaBase())
+        val subtitles = SubtitleTools.process(streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }, streamPrefs, mediaBase(), isAnime(type, id))
 
         respond(StremioSubtitleResponse(subtitles))
     }

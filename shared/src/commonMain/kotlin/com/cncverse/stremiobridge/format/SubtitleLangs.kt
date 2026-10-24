@@ -45,6 +45,11 @@ object SubtitleLangs {
 
     private val CODES = (TWO.values + NAMES.values).toSet() + setOf("fra", "deu", "zho", "msa", "fas", "nld", "ces", "ell", "ron", "slk")
 
+    /** A readable name for a 639-2 code ("eng" -> "English"); the code itself when unknown. */
+    fun display(code: String): String =
+        NAMES.entries.firstOrNull { it.value == code.lowercase() && it.key.all { c -> c in 'a'..'z' } && ' ' !in it.key }?.key
+            ?.replaceFirstChar { it.uppercase() } ?: code
+
     /** The 639-2 code for [raw], or [raw] unchanged when the language is not recognised. */
     fun normalize(raw: String): String {
         val base = raw.substringBefore('(').substringBefore('[').trim().trimEnd('-', ':', ',').trim()
