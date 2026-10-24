@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.33
 
 - **Styled subtitles on Nuvio mobile.** Nuvio mobile does not load ".ass" subtitle links from add-ons (its libass path fails on them), while the same file at a link without ".ass" loads through its normal subtitle reader. Each styled English track is now also offered as "… · Nuvio mobile". Settings > Streams > "Styled subtitle links": Both (default), .ass only (TV / Stremio), Nuvio mobile only.
 
