@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.32
 
 - **Styled subtitles keep loading after a pause.** Converted subtitles were only kept in memory: when Android stopped the app during a long pause, or the extension's subtitle link had expired, they no longer loaded on resume. They are now also saved on the device (up to 400 files / 14 days), a failed download is retried once, and players that check the file first (HEAD) get an answer.
 
