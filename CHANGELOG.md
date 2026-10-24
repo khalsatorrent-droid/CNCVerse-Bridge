@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Styled subtitles keep loading after a pause.** Converted subtitles were only kept in memory: when Android stopped the app during a long pause, or the extension's subtitle link had expired, they no longer loaded on resume. They are now also saved on the device (up to 400 files / 14 days), a failed download is retried once, and players that check the file first (HEAD) get an answer.
+
 ## 1.7.31
 
 - **DNS over HTTPS setting.** Settings > DNS over HTTPS: one switch sends every lookup of the app (extensions, streams, subtitles, media server, tunnel checks) through an encrypted resolver. 16 resolvers to pick from (Cloudflare incl. security/family, Google, Quad9, AdGuard incl. unfiltered/family, OpenDNS, NextDNS, CleanBrowsing, Mullvad, DNS.SB, Control D, LibreDNS) or your own https address, optional fallback to normal DNS. Not covered: the tunnel program itself and WebView pages.

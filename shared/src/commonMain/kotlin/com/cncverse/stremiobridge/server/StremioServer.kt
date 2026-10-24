@@ -403,6 +403,7 @@ object StremioServer {
             com.cncverse.stremiobridge.format.StreamFormatter.init(cacheDir)
             com.cncverse.stremiobridge.cache.StreamCacheManager.init(cacheDir)
             MediaServer.init(cacheDir)
+            runCatching { SubtitleTools.init(cacheDir) }
             UpstreamAddons.init(cacheDir); com.cncverse.stremiobridge.state.StreamHistory.init(cacheDir)
             com.cncverse.stremiobridge.network.CfCookieStore.initIfNeeded(cacheDir)
             WebSite.load(cacheDir)
@@ -752,14 +753,9 @@ object StremioServer {
             }
 
             // The same subtitle as a styled ASS file (the .ass name helps players that go by the extension)
-            get("/subass/{name}") {
-                val u = call.request.queryParameters["u"]
-                val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
-                if (u.isNullOrBlank() || !u.startsWith("http", true)) return@get call.respond(HttpStatusCode.BadRequest)
-                val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms) }
-                if (text == null) call.respondRedirect(u)
-                else call.respondText(text, ContentType.parse("text/x-ssa; charset=utf-8"))
-            }
+            get("/subass/{name}") { respondStyledSub(call) }
+            // some players check the file with HEAD first
+            head("/subass/{name}") { respondStyledSub(call) }
 
             // ── Media server: files and HLS cached on this device, then served to the player ──
             get("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
@@ -1195,6 +1191,20 @@ object StremioServer {
                 ServerState.info("[Streams] Preparing the next episode in the background: $next")
                 withContext(pluginDispatcher) { buildStreams(type, next) }
             }.onFailure { kotlinx.coroutines.currentCoroutineContext().ensureActive() }
+        }
+    }
+
+    private suspend fun respondStyledSub(call: ApplicationCall) {
+        val u = call.request.queryParameters["u"]
+        val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
+        if (u.isNullOrBlank() || !u.startsWith("http", true)) return call.respond(HttpStatusCode.BadRequest)
+        val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms) }
+        if (text == null) {
+            ServerState.warn("Styled subtitle could not be made (source unreachable or expired): ${u.take(120)}")
+            call.respondRedirect(u)
+        } else {
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respondText(text, ContentType.parse("text/x-ssa; charset=utf-8"))
         }
     }
 

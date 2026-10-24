@@ -114,10 +114,44 @@ object SubtitleTools {
     fun fetchStyled(url: String, ms: Int): String? {
         val key = "$ms|$url"
         synchronized(styledCache) { styledCache[key] }?.let { return it }
-        val text = download(url)?.let { decode(it).removePrefix("\uFEFF") } ?: return null
-        val ass = toStyledAss(text, ms) ?: return null
+        // Kept on disk too: after the app was stopped while paused, or once the extension's link expired, the
+        // converted file is still there when the player asks again
+        val file = diskFile(key)
+        file?.takeIf { it.isFile }?.let { f ->
+            runCatching { f.readText() }.getOrNull()?.takeIf { it.startsWith("[Script Info]") }?.let { ass ->
+                runCatching { f.setLastModified(System.currentTimeMillis()) }
+                synchronized(styledCache) { styledCache[key] = ass }
+                return ass
+            }
+        }
+        // one retry: a slow or briefly failing subtitle site is common
+        val bytes = download(url) ?: run { Thread.sleep(800); download(url) } ?: return null
+        val ass = toStyledAss(decode(bytes).removePrefix("\uFEFF"), ms) ?: return null
         synchronized(styledCache) { styledCache[key] = ass }
+        if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeText(ass); trimDisk() }
         return ass
+    }
+
+    @Volatile private var diskDir: java.io.File? = null
+
+    /** Where converted subtitles are kept (called at server start with the app's cache folder). */
+    fun init(cacheDir: String) {
+        diskDir = java.io.File(cacheDir, "subtitle_cache").also { it.mkdirs() }
+        runCatching { trimDisk() }
+    }
+
+    private fun diskFile(key: String): java.io.File? {
+        val dir = diskDir ?: return null
+        val h = java.security.MessageDigest.getInstance("SHA-1").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+        return java.io.File(dir, "$h.ass")
+    }
+
+    /** At most 400 files, none older than 14 days (a few MB in all). */
+    private fun trimDisk() {
+        val files = diskDir?.listFiles()?.filter { it.isFile } ?: return
+        val old = System.currentTimeMillis() - 14L * 24 * 3600_000
+        files.filter { it.lastModified() < old }.forEach { it.delete() }
+        files.filter { it.exists() }.sortedByDescending { it.lastModified() }.drop(400).forEach { it.delete() }
     }
 
     internal fun toStyledAss(text: String, ms: Int): String? {
