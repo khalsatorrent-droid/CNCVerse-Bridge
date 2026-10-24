@@ -74,7 +74,7 @@ object DohConfig {
     private fun load(): DohSettings = runCatching {
         val raw = getExtensionSetting(KEY)?.takeIf { it.startsWith("doh1;") } ?: return@runCatching DohSettings()
         val p = raw.removePrefix("doh1;").split(';').map { URLDecoder.decode(it, "UTF-8") }
-        DohSettings(p.getOrNull(0) == "1", p.getOrNull(1)?.ifBlank { null } ?: "cloudflare", p.getOrNull(2) != "0", p.getOrNull(3).orEmpty(), p.getOrNull(4).orEmpty())
+        DohSettings(enabled = p.getOrNull(0) == "1", providerId = p.getOrNull(1)?.ifBlank { null } ?: "cloudflare", fallbackToSystem = p.getOrNull(2) != "0", customUrl = p.getOrNull(3).orEmpty(), customBootstrap = p.getOrNull(4).orEmpty())
     }.getOrDefault(DohSettings())
 }
 
