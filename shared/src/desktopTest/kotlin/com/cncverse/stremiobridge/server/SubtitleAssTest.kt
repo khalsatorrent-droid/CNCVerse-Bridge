@@ -42,6 +42,12 @@ class SubtitleAssTest {
     }
 
     @Test
+    fun boldSrtCopy() {
+        val s = SubtitleTools.toBoldSrt("1\n00:00:01,000 --> 00:00:02,500\n<i>Hi</i> there\nline two\n", 0)!!
+        assertEquals("1\n00:00:01,000 --> 00:00:02,500\n<b><i>Hi</i> there\nline two</b>\n\n", s)
+    }
+
+    @Test
     fun assInputKeepsTextDropsDrawings() {
         val a = SubtitleTools.toStyledAss(ass + "\nDialogue: 0,0:00:05.00,0:00:06.00,Sign,,0,0,0,,{\\p1}m 0 0 l 5 5", 0)!!
         assertTrue(a.contains("Hello, world\\NSecond line"))

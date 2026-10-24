@@ -436,7 +436,7 @@ fun StreamsCard() {
         SwitchRow("Styled English subtitles (ASS)", "The first 10 English subtitles are downloaded by the bridge and sent as ASS: white bold text, black outline, bottom centre. Anime: CC subtitles first", p.styledSubtitles) { update(p.copy(styledSubtitles = it)) }
         if (p.styledSubtitles) {
             Text("Styled subtitle links", color = TextSecondary, fontSize = 11.sp)
-            Text("Nuvio mobile cannot load \".ass\" links from add-ons; \"Both\" adds a second copy of each track for it", color = TextMuted, fontSize = 10.sp)
+            Text("Nuvio mobile does not show ASS from add-ons: \"Both\" adds a bold SRT copy of each track (\"· Nuvio mobile\") that it draws with its own subtitle style", color = TextMuted, fontSize = 10.sp)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("both" to "Both", "ass" to ".ass only (TV / Stremio)", "plain" to "Nuvio mobile only").forEach { (v, name) ->
                     FilterChip(

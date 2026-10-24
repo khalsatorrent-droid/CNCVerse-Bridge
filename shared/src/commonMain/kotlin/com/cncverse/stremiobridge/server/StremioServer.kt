@@ -759,6 +759,8 @@ object StremioServer {
             get("/subass/{name}") { respondStyledSub(call) }
             // some players check the file with HEAD first
             head("/subass/{name}") { respondStyledSub(call) }
+            get("/subsrt/{name}") { respondStyledSub(call, srt = true) }
+            head("/subsrt/{name}") { respondStyledSub(call, srt = true) }
 
             // ── Media server: files and HLS cached on this device, then served to the player ──
             get("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
@@ -1197,17 +1199,20 @@ object StremioServer {
         }
     }
 
-    private suspend fun respondStyledSub(call: ApplicationCall) {
+    private suspend fun respondStyledSub(call: ApplicationCall, srt: Boolean = false) {
         val u = call.request.queryParameters["u"]
         val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
+        val who = call.request.headers[HttpHeaders.UserAgent].orEmpty().take(60)
+        val what = "${if (srt) "SRT" else "ASS"} ${call.parameters["name"]} (${call.request.httpMethod.value}, $who)"
         if (u.isNullOrBlank() || !u.startsWith("http", true)) return call.respond(HttpStatusCode.BadRequest)
-        val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms) }
+        val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms, srt) }
         if (text == null) {
-            ServerState.warn("Styled subtitle could not be made (source unreachable or expired): ${u.take(120)}")
+            ServerState.warn("[Subtitle] $what could not be made (source unreachable or expired): ${u.take(120)}")
             call.respondRedirect(u)
         } else {
+            ServerState.info("[Subtitle] $what served, ${text.length / 1024} KB")
             call.response.header(HttpHeaders.CacheControl, "no-store")
-            call.respondText(text, ContentType.parse("text/x-ssa; charset=utf-8"))
+            call.respondText(text, ContentType.parse(if (srt) "application/x-subrip; charset=utf-8" else "text/x-ssa; charset=utf-8"))
         }
     }
 

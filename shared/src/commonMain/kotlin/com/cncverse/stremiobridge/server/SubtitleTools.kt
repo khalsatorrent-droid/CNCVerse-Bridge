@@ -88,9 +88,8 @@ object SubtitleTools {
                     val links = p.styledSubtitleLinks
                     // ".ass" link: Stremio, TV players (libass / mpv draw the full style)
                     if (links != "plain") result.add(s.copy(url = "$root.ass$q", id = label(result.size + 1, s, s.url in cc, true)))
-                    // Same file without ".ass" in the link: Nuvio mobile then reads it with its normal subtitle
-                    // parser (its libass path fails on add-on subtitles), the text still comes out styled
-                    if (links != "ass") result.add(s.copy(url = "$root$q", id = label(result.size + 1, s, s.url in cc, true) + " · Nuvio mobile"))
+                    // Nuvio mobile does not show ASS from add-ons: a bold SRT copy, drawn with the app's own subtitle style
+                    if (links != "ass") result.add(s.copy(url = base.trimEnd('/') + "/subsrt/sub$english.srt$q", id = label(result.size + 1, s, s.url in cc, true) + " · Nuvio mobile"))
                     continue
                 }
             } else if (ms != 0) {
@@ -118,25 +117,45 @@ object SubtitleTools {
     }
 
     /** The file at [url] as an ASS file in the house look, every cue moved by [ms]; null when it cannot be read or has no cues. */
-    fun fetchStyled(url: String, ms: Int): String? {
-        val key = "$ms|$url"
+    fun fetchStyled(url: String, ms: Int, srt: Boolean = false): String? {
+        val key = (if (srt) "srt|" else "") + "$ms|$url"
         synchronized(styledCache) { styledCache[key] }?.let { return it }
         // Kept on disk too: after the app was stopped while paused, or once the extension's link expired, the
         // converted file is still there when the player asks again
         val file = diskFile(key)
         file?.takeIf { it.isFile }?.let { f ->
-            runCatching { f.readText() }.getOrNull()?.takeIf { it.startsWith("[Script Info]") }?.let { ass ->
+            runCatching { f.readText() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { body ->
                 runCatching { f.setLastModified(System.currentTimeMillis()) }
-                synchronized(styledCache) { styledCache[key] = ass }
-                return ass
+                synchronized(styledCache) { styledCache[key] = body }
+                return body
             }
         }
         // one retry: a slow or briefly failing subtitle site is common
         val bytes = download(url) ?: run { Thread.sleep(800); download(url) } ?: return null
-        val ass = toStyledAss(decode(bytes).removePrefix("\uFEFF"), ms) ?: return null
-        synchronized(styledCache) { styledCache[key] = ass }
-        if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeText(ass); trimDisk() }
-        return ass
+        val text = decode(bytes).removePrefix("\uFEFF")
+        val out = (if (srt) toBoldSrt(text, ms) else toStyledAss(text, ms)) ?: return null
+        synchronized(styledCache) { styledCache[key] = out }
+        if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeText(out); trimDisk() }
+        return out
+    }
+
+    /**
+     * The same cues as SRT with every line in bold: for players that cannot load ASS from an add-on
+     * (Nuvio mobile). The player's own subtitle style (white text, black outline) draws the rest.
+     */
+    internal fun toBoldSrt(text: String, ms: Int): String? {
+        val cues = parseCues(text.replace("\r\n", "\n").replace('\r', '\n'))
+        if (cues.isEmpty()) return null
+        val sb = StringBuilder()
+        cues.forEachIndexed { i, c ->
+            val body = c.text.replace("{\\i1}", "<i>").replace("{\\i0}", "</i>")
+                .replace(Regex("\\{[^}]*\\}"), "").replace("\\N", "\n").trim()
+            if (body.isEmpty()) return@forEachIndexed
+            sb.append(i + 1).append('\n')
+                .append(fmt(c.start + ms).replace('.', ',')).append(" --> ").append(fmt(c.end + ms).replace('.', ',')).append('\n')
+                .append("<b>").append(body).append("</b>\n\n")
+        }
+        return sb.toString()
     }
 
     @Volatile private var diskDir: java.io.File? = null
