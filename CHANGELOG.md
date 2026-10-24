@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.31
 
 - **DNS over HTTPS setting.** Settings > DNS over HTTPS: one switch sends every lookup of the app (extensions, streams, subtitles, media server, tunnel checks) through an encrypted resolver. 16 resolvers to pick from (Cloudflare incl. security/family, Google, Quad9, AdGuard incl. unfiltered/family, OpenDNS, NextDNS, CleanBrowsing, Mullvad, DNS.SB, Control D, LibreDNS) or your own https address, optional fallback to normal DNS. Not covered: the tunnel program itself and WebView pages.
 - **Styled English subtitles for Stremio / Nuvio.** The bridge now downloads the first 10 English subtitles of a title, converts them to ASS in one look (white bold text, black outline, bottom centre) and hands those to the add-on. Other languages are unchanged. Switch: Settings > Streams > "Styled English subtitles (ASS)".
