@@ -332,6 +332,7 @@ fun StreamCacheCard() {
 private val RESOLUTIONS = listOf("2160p", "1080p", "720p", "480p", "360p")
 
 /** DNS over HTTPS: every lookup of the app (extensions, streams, subtitles, tunnel checks) goes through the chosen resolver. */
+/*BISECT
 @Composable
 fun DnsCard() {
     var s by remember { mutableStateOf(DohConfig.settings) }
@@ -389,6 +390,7 @@ fun DnsCard() {
     }
 }
 
+BISECT*/
 /** How stream lists are filtered and ordered (applied to every request). */
 @Composable
 fun StreamsCard() {

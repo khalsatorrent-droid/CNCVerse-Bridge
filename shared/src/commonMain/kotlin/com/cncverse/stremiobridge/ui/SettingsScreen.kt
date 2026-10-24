@@ -46,7 +46,7 @@ fun SettingsScreen() {
             TunnelSettingsCard()
             WebsiteCard()
             CloudflareChecksCard()
-            DnsCard()
+            //DnsCard()
             StreamsCard()
             CatalogsCard()
             FormatterCard()
