@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.35
 
 - **Website: "Short dramas" and "Music" pages.** Two new headings in the website's top bar. Short dramas shows the combined short-drama catalog (all short-drama extensions, a chip per extension, search across all of them). Music shows the Monochrome extension (Watchuu repository) with its home-page sections and its search. Titles open with the extension's own episodes / tracks and links.
 - **One TV catalog and one short-drama catalog.** Stremio / Nuvio now get a single "📺 All TV channels (A-Z)" catalog instead of every TV extension's own catalogs, and a single "🎬 Short dramas" catalog that takes turns between all short-drama extensions (pick one extension as its genre; search covers all of them). Short-drama extensions are found from their name and description (short drama, vertical, reels...) and can be changed by hand. The per-catalog switches now choose what goes into the combined catalogs. Settings > Catalogs: "One combined TV catalog", "One combined short-drama catalog", "Which extensions are short-drama".
