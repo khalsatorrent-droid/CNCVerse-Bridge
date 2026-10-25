@@ -30,7 +30,7 @@ The fork adds a **kitchen** 🍳 (the *media server*) that can prepare a link fo
 1. Open the **[Releases](../../releases)** page and download the `.apk` file. 📥
 2. Install it and open **CNCVerse Bridge**. (Android may ask you to allow installs from your browser: that is normal for apps outside the Play Store.)
 3. Tap **Start**. The app shows an address like `http://127.0.0.1:8080/manifest.json`. That is your "add-on address". 🏠
-4. Add some extensions: open the **Extensions** tab, pick a repository, and install what you like. (Seven repositories are already added for you.) 🧩
+4. Add some extensions: open the **Extensions** tab, pick a repository, and install what you like. (Eight repositories are already added for you, including Watchuu.) 🧩
 5. **Using Nuvio?** Just open it. It finds the Bridge by itself, nothing to paste. ✅
 6. **Using Stremio?** It wants a secure (`https`) address. Turn on **Stremio Mode** on the Server tab. With no setup the app gives you a free temporary `https` link. Copy it into Stremio under **Add-ons**, and tap **Install**. ✅
 
@@ -89,6 +89,7 @@ The app downloads `cloudflared` on first use.
 ### 🍿 Better link lists
 - 🥇 **Sorted by real quality**: the best resolution first, and inside each, the fast kinds of links first. Links that only *claim* to be HD are checked and shown with their real resolution.
 - 🗑️ **Dead links hidden**: broken, download-only and non-seekable files can be hidden, and a "hide links below 720p" setting keeps junk out.
+- 🎚️ **Only the kind of link you want**: "Hide HLS links" and "Hide direct files" remove every m3u8 link or every plain video file from movie and series results (both off by default; live TV keeps its links).
 - 🏷️ **Every link says where it came from**: the extension, the matched title, the file name and the episode, so you can tell similar links apart.
 - 🧹 **No clutter**: the same link is listed once, and giant subtitle lists become a short "63 languages".
 - 🔄 **FORCE REFRESH entry**: the first item of every list shows how many results were found, how many *each* extension found, and whether the search is still running. Tap it to clear that title and search again.
@@ -104,6 +105,7 @@ Many links only play with special "headers" or cookies, and many websites are sl
 - 🏠 Slow self-hosted sources (a Telegram server, a NAS at home) get gentler settings so they don't choke.
 - 🔥 The first couple of links in a list are "warmed up" in the background so they start sooner.
 - 🔐 Links are signed, so it is not an open proxy for strangers.
+- 🔓 In **"Every link"** mode it also serves the bridge's clear-key DASH channels and the links of other Stremio add-ons.
 
 ### 🌐 The website version (`/home`)
 Don't want an app on the laptop? The Bridge can host its **own website** 💻:
@@ -111,18 +113,27 @@ Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 - 🎬 Browse a TMDB catalogue, search, open a title and play it in the browser.
 - ⏱️ **Links appear as each extension answers**, with a "Still searching: 12 of 30 sources" line.
 - 📺 **Live TV tab**: every TV channel from all your catalogues in one A-Z list, with favourites, recently watched, letters, search, channel up / down, and quick start. If a link is stuck, it moves on to the next by itself.
-- 🔊 **Audio language picker** for streams with several languages.
+- 🎞️ **Short dramas page**: every short-drama extension in one list, a chip per extension, and one search across all of them.
+- 🎵 **Music page**: lossless music from the Monochrome extension (Watchuu repository), with song, album and artist search.
+- 🧩 **Search inside every extension**: switch the search box to "In: Extensions" to see each extension's own results, open a title and get its links from that extension only.
+- 🔊 **Audio switching**: picks the audio track inside HLS / DASH streams and inside MKV / MP4 files with several audio tracks (its own engine plays those files when the browser supports their codecs).
+- 🎛️ **Its own player**: seek bar with buffer and preview, quality menu, subtitles from every extension, sleep timer, skip intro, link switching while playing, tap to show or hide the controls.
+- 📚 **Library**: Browse page with filters, Continue watching, My list, watched marks and recent searches.
 - 📱 Works on phones too (with a proper search button).
 - 🎨 A cleaner look: featured title, rows you scroll, "recently opened", season tabs and episode cards.
 - ⌨️ Keys: space, arrows, F (full screen), M (mute), A (audio), N / P (next / previous channel), Esc.
 
-### 📺 Live TV in the add-on
-- 📺 **"All TV channels (A-Z)"**: one catalogue that merges the channels of every TV catalogue.
+### 📺 Tidier catalogues in the add-on
+- 📺 **"All TV channels (A-Z)"**: one catalogue that merges the channels of every TV catalogue. The separate TV catalogues are no longer listed (switch: *One combined TV catalog*).
+- 🎞️ **"Short dramas"**: one catalogue that takes turns between all short-drama extensions (pick one as its genre). Short-drama extensions are found from their name and description and can be changed by hand in **Settings → Catalogs**.
 
 ### 💬 Subtitles
 - 🌍 Pick your languages (e.g. `English, Hindi`): they come first, or are the *only* ones.
 - 🧽 Duplicates removed.
 - ⏲️ Optional **delay** if subtitles are out of sync.
+- ✍️ **Styled English subtitles**: the first 10 English subtitles are downloaded by the bridge and sent as ASS files with one look (white bold text, black outline, bottom centre). They are also kept on the device, so they still load after a long pause.
+- 📱 **Nuvio mobile**: it cannot show ASS from add-ons, so each styled track also comes as a bold SRT copy ("· Nuvio mobile") that Nuvio draws with its own style.
+- 🏷️ **Readable names** like `#2 English · CC · ASS styled · Show.S01E01.1080p`, and for anime the CC tracks come first.
 
 ### 🎌 Anime made easier
 - 🔎 Every known name of a show (AniList, Kitsu, MyAnimeList, TMDB) is searched, with fuzzy matching and season checks.
@@ -132,6 +143,7 @@ Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 ### 🛡️ Cloudflare and network
 - 🧩 Cloudflare "checking your browser" pages are solved once in a hidden web view, and the cookie is reused for later requests (also across a site's other hosts).
 - 🌐 A real **DNS-over-HTTPS** fallback (Cloudflare, Google, Quad9) when your network's DNS fails.
+- 🔒 **DNS over HTTPS for every request** (Settings → DNS over HTTPS): 16 resolvers to pick from (Cloudflare, Google, Quad9, AdGuard, OpenDNS, NextDNS, CleanBrowsing, Mullvad, DNS.SB, Control D, LibreDNS and their filtered versions) or your own address, with an optional fallback to normal DNS.
 
 ### 🔗 Other add-ons and special hosts
 - ➕ **Upstream add-ons**: merge another Stremio add-on (like your own Telegram server). Links to a home-network address are served through the Bridge so they also play away from home.
@@ -139,6 +151,9 @@ Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 
 ### 🧰 Handy extras
 - 🗂️ **Backup & import**: all settings, repositories and extensions in one file.
+- 📊 **Extension report card**: grades every extension A to F from how often it gave links and how fast.
+- 🚫 **No popups**: the donation popup follows the "support the project" switch (off by default), and popups that extensions open on their own (donation / Telegram ads) are closed at once (switch: *Block extension popups*).
+- 🩺 **Stays up 24/7**: a watchdog restarts the Stremio Mode tunnel when it dies, extensions load several at a time and never stay at 0, and the notification shows the live status.
 - 🔔 **In-app updates**: a dialog shows the release notes with *Update / Later / Skip*.
 - 🕘 **History tab** with a long-press "copy as text".
 - 🔋 Android: the server is kept alive (wake locks, battery-optimisation exemption, restarts after swipe-away).

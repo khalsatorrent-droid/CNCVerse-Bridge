@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **README updated** with the features added since 1.7.27.
+
 ## 1.7.38
 
 - **No more popups.** The bridge's donation popup now follows the "Show support the project entry" switch (off by default), so it no longer appears every time the server starts. Popups that extensions open on their own when they load (donation, Telegram, "premium plugins" ads such as AllForU's) are closed straight away. Extension settings opened from the Extensions screen and the Cloudflare check still show. Switch: Settings > Streams > "Block extension popups" (on by default).
