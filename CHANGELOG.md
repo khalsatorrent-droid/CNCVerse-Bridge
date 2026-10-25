@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.37
 
 - **Hide HLS links / Hide direct files.** Two new switches in Settings > Streams remove every HLS (m3u8) link or every direct video file (mp4, mkv...) from movie and series results. Both are off by default; live TV always keeps its links.
 
