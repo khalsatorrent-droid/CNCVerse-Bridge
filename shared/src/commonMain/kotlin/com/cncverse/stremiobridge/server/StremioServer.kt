@@ -232,6 +232,8 @@ object StremioServer {
         val providerOrder: List<String> = emptyList(),
         /** Show the "support the project" entry on top of stream lists. */
         val showSupport: Boolean = false,
+        /** Popups that extensions open on their own (donation / Telegram ads) are closed at once (Android). */
+        val blockExtensionPopups: Boolean = true,
         /** A "refresh results" entry on top of every stream list: opens a page that clears this title's saved results and searches again. */
         val showRefresh: Boolean = true,
         /** Pixeldrain links (file ids) are sent through the fast mirror cdn.pixeldrain.eu.cc. */

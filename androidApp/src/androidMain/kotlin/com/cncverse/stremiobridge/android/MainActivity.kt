@@ -240,6 +240,17 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         Toast.makeText(this, "Copied!", Toast.LENGTH_SHORT).show()
     }
 
+    // Popups extensions open on their own are closed while the app is on screen (Settings > Streams > Block extension popups)
+    override fun onStart() {
+        super.onStart()
+        com.cncverse.stremiobridge.plugin.PopupGuard.start(this)
+    }
+
+    override fun onStop() {
+        com.cncverse.stremiobridge.plugin.PopupGuard.stop(this)
+        super.onStop()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (serviceBound) {

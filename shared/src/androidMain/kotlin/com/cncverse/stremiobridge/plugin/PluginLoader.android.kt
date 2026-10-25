@@ -323,6 +323,7 @@ actual class PluginLoader(private val context: Context) {
         }
 
         val settingsContext = activityContext as? Context ?: PluginUIContext.currentActivity ?: context
+        PopupGuard.userOpenedPluginUi()
         Handler(Looper.getMainLooper()).post {
             runCatching { openSettings(settingsContext) }
                 .onSuccess { ServerState.info("Opened settings for $internalName") }

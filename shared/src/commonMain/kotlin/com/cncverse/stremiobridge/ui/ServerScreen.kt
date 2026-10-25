@@ -286,7 +286,8 @@ fun ServerScreen(
                     if (isRunning) onStop()
                     else {
                         onStart()
-                        tryShowDonation()
+                        // the donation popup follows the "support the project" setting (off by default)
+                        if (com.cncverse.stremiobridge.server.StremioServer.streamPrefs.showSupport) tryShowDonation()
                     }
                 },
                 enabled = !isStarting,

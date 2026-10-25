@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **No more popups.** The bridge's donation popup now follows the "Show support the project entry" switch (off by default), so it no longer appears every time the server starts. Popups that extensions open on their own when they load (donation, Telegram, "premium plugins" ads such as AllForU's) are closed straight away. Extension settings opened from the Extensions screen and the Cloudflare check still show. Switch: Settings > Streams > "Block extension popups" (on by default).
+
 ## 1.7.37
 
 - **Hide HLS links / Hide direct files.** Two new switches in Settings > Streams remove every HLS (m3u8) link or every direct video file (mp4, mkv...) from movie and series results. Both are off by default; live TV always keeps its links.

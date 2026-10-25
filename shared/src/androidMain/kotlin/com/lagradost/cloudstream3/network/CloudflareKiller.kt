@@ -266,6 +266,7 @@ class CloudflareKiller : Interceptor {
                             addView(cancel)
                         }
                         dialog = android.app.Dialog(act, android.R.style.Theme_DeviceDefault_NoActionBar).apply {
+                            com.cncverse.stremiobridge.plugin.PopupGuard.allow(this)
                             setContentView(box)
                             setCancelable(true)
                             setOnCancelListener { finish() }

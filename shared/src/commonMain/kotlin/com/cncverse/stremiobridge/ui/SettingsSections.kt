@@ -461,7 +461,8 @@ fun StreamsCard() {
         )
         SwitchRow("Pixeldrain fast mirror", "Pixeldrain links go through cdn.pixeldrain.eu.cc (no download limit)", p.pixeldrainBypass) { update(p.copy(pixeldrainBypass = it)) }
         SwitchRow("Show \"refresh results\" button", "First entry of every list (not a video): clears the saved results of the title and searches again, to get rid of stale results (tap it, then reload the list)", p.showRefresh) { update(p.copy(showRefresh = it)) }
-        SwitchRow("Show \"support the project\" entry", "One donate link on top of stream lists", p.showSupport) { update(p.copy(showSupport = it)) }
+        SwitchRow("Show \"support the project\" entry", "One donate link on top of stream lists, and the donation popup when the server starts", p.showSupport) { update(p.copy(showSupport = it)) }
+        SwitchRow("Block extension popups", "Closes the popups extensions open on their own (donation, Telegram, \"premium plugins\" ads). Their settings still open", p.blockExtensionPopups) { update(p.copy(blockExtensionPopups = it)) }
 
         // ── Quality allotment ──
         Spacer(Modifier.height(10.dp))
