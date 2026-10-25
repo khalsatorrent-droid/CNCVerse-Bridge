@@ -6,7 +6,7 @@ package com.cncverse.stremiobridge.server
  * No dollar signs in the raw strings: they are written as the character literal.
  */
 internal object WebPage {
-    val HTML: String by lazy { listOf(TOP, WebPlayer.CSS, STYLE_END, WebPlayer.MARKUP, SCRIPT_START, WebPlayer.JS, WebMse.JS, SCRIPT_END).joinToString("") }
+    val HTML: String by lazy { listOf(TOP, WebPlayer.CSS, STYLE_END, WebPlayer.MARKUP, SCRIPT_START, WebPlayer.JS, WebMse.JS, WebShelves.JS, SCRIPT_END).joinToString("") }
 
     private val TOP = """<!doctype html>
 <html lang="en"><head>
@@ -45,13 +45,14 @@ input:focus{border-color:var(--lamp)}
 @media(max-width:820px){#login{grid-template-columns:1fr}#login .brand{padding:40px 24px 0}#login form{padding:24px;max-width:none}}
 
 /* header */
-header{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;gap:20px;padding:14px 4vw;background:linear-gradient(180deg,rgba(10,18,21,.95),rgba(10,18,21,0));transition:background .2s}
+header{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;gap:14px;padding:14px 4vw;background:linear-gradient(180deg,rgba(10,18,21,.95),rgba(10,18,21,0));transition:background .2s}
 header.solid{background:rgba(10,18,21,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.navs{display:flex;min-width:0;flex:0 0 auto;overflow-x:auto;scrollbar-width:none}.navs::-webkit-scrollbar{display:none}.navs .nav{white-space:nowrap}
 .logo{font:700 22px var(--disp);letter-spacing:-.03em;cursor:pointer;white-space:nowrap;background:none;color:var(--tx);padding:0}
 .logo i{font-style:normal;color:var(--lamp)}
-.sbox{margin:0 0 0 auto;display:flex;gap:8px;align-items:center}
+.sbox{margin:0 0 0 auto;display:flex;gap:8px;align-items:center;flex:1 1 auto;min-width:0;justify-content:flex-end}
 .srch{padding:10px 16px}
-#q{width:min(34vw,340px);background:rgba(255,255,255,.07);border-color:transparent}
+#q{width:auto;flex:0 1 340px;min-width:110px;background:rgba(255,255,255,.07);border-color:transparent}
 #q:focus{background:var(--s1)}
 main{padding-bottom:60px;min-height:100vh}
 .pad{padding:0 4vw}
@@ -123,7 +124,7 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 .ep:hover .th:after{background:rgba(255,178,62,.14)}
 .ep .en{margin-top:7px;font-weight:600;font-size:14px}
 .ep small{display:block;color:var(--mut);font-size:12.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-@media(max-width:640px){header{flex-wrap:wrap;gap:6px 8px;padding:10px 4vw;background:rgba(10,18,21,.94)}.logo{order:1;font-size:20px}.nav{order:2;padding:8px 8px;font-size:14px}#out{order:3;margin-left:auto;padding:8px 12px}.sbox{order:4;flex:1 1 100%;margin:0}#q{width:auto;flex:1}.top-gap{height:118px}.hero{padding-top:100px}.tp .in{flex-direction:column;align-items:flex-start;padding-top:140px}.tp img.pp{width:120px}}
+@media(max-width:640px){header{flex-wrap:wrap;gap:6px 8px;padding:10px 4vw;background:rgba(10,18,21,.94)}.navs{order:5;flex:1 1 100%;margin:0 -4vw;padding:0 3vw}.logo{order:1;font-size:20px}.nav{order:2;padding:8px 8px;font-size:14px}#out{order:3;margin-left:auto;padding:8px 12px}.sbox{order:4;flex:1 1 100%;margin:0}#q{width:auto;flex:1}.top-gap{height:158px}.hero{padding-top:140px}.tp .in{flex-direction:column;align-items:flex-start;padding-top:180px}.tp img.pp{width:120px}}
 
 /* links panel */
 #shade{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -227,7 +228,7 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 
 <div id="app" class="hide">
  <header id="hd"><button class="logo" id="home">CNC<i>Verse</i></button>
-  <button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navbr" type="button">Browse</button><button class="nav" id="navtv" type="button">Live TV</button>
+  <nav class="navs" aria-label="Sections"><button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navbr" type="button">Browse</button><button class="nav" id="navtv" type="button">Live TV</button><button class="nav" id="navdr" type="button">Short dramas</button><button class="nav" id="navmu" type="button">Music</button></nav>
   <form class="sbox" id="sf" role="search"><input id="q" type="search" list="rs" autocomplete="off" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><datalist id="rs"></datalist><button class="quiet" id="sm" type="button" aria-pressed="false" title="Where to search">In: Catalog</button><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
   <button class="quiet gear" id="cfgb" type="button" aria-label="Settings">Settings</button><button class="quiet" id="out" type="button">Log out</button>
  </header>
@@ -277,7 +278,7 @@ g('cfgb').onclick=openSettings;
 
 g('out').onclick=function(){fetch('/web/logout',{method:'POST',credentials:'same-origin'}).then(showLogin)};
 g('home').onclick=function(){g('q').value='';location.hash='#/'};
-g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};g('navbr').onclick=function(){location.hash='#/browse'};
+g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};g('navbr').onclick=function(){location.hash='#/browse'};g('navdr').onclick=function(){location.hash='#/drama'};g('navmu').onclick=function(){location.hash='#/music'};
 function searches(){return store('cncSearches')}
 function fillSearches(){var d=g('rs');d.textContent='';searches().forEach(function(s){var o=document.createElement('option');o.value=s;d.appendChild(o)})}
 function addSearch(s){if(!s)return;var l=searches().filter(function(x){return x.toLowerCase()!==s.toLowerCase()});l.unshift(s);put('cncSearches',l.slice(0,8));fillSearches()}
@@ -287,8 +288,8 @@ window.addEventListener('scroll',function(){g('hd').classList.toggle('solid',win
 window.addEventListener('hashchange',function(){if(!g('app').classList.contains('hide'))route()});
 
 function route(){var h=location.hash.replace(/^#\/?/,'').split('/');window.scrollTo(0,0);closePanel();
- g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navbr').setAttribute('aria-current',h[0]==='browse'?'page':'false');g('navmov').setAttribute('aria-current',(h[0]==='tv'||h[0]==='browse')?'false':'page');
- if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else if(h[0]==='x'&&h[1])xsearch(decodeURIComponent(h[1]));else if(h[0]==='xt'&&h[2])xtitle(decodeURIComponent(h[1]),decodeURIComponent(h[2]));else goHome()}
+ g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navbr').setAttribute('aria-current',h[0]==='browse'?'page':'false');g('navdr').setAttribute('aria-current',h[0]==='drama'?'page':'false');g('navmu').setAttribute('aria-current',h[0]==='music'?'page':'false');g('navmov').setAttribute('aria-current',(h[0]==='tv'||h[0]==='browse'||h[0]==='drama'||h[0]==='music')?'false':'page');
+ if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='drama')shelf('drama');else if(h[0]==='music')shelf('music');else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else if(h[0]==='x'&&h[1])xsearch(decodeURIComponent(h[1]));else if(h[0]==='xt'&&h[2])xtitle(decodeURIComponent(h[1]),decodeURIComponent(h[2]));else goHome()}
 
 function recent(){try{return JSON.parse(localStorage.getItem('cncRecent')||'[]')}catch(e){return[]}}
 function remember(t){try{var l=recent().filter(function(x){return !(x.id===t.id&&x.type===t.type)});l.unshift({id:t.id,type:t.type,title:t.title,year:t.year,poster:t.poster});localStorage.setItem('cncRecent',JSON.stringify(l.slice(0,20)))}catch(e){}}

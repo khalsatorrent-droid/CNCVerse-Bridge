@@ -1123,6 +1123,51 @@ object StremioServer {
         return JsonObject(base + mapOf("subs" to serverJson.encodeToJsonElement(pool))).toString()
     }
 
+    /** Website "Short dramas": the combined short-drama catalog (a genre = one extension), [q] searches all of them. */
+    suspend fun webDramaJson(skip: Int, genre: String?, q: String?): String {
+        val items = withContext(pluginDispatcher) {
+            withTimeoutOrNull(40_000L) { runCatching { buildAllDrama(q?.ifBlank { null }, skip, genre?.ifBlank { null }) }.getOrNull() }
+        } ?: emptyList()
+        val srcs = dramaSources()
+        if (srcs.isEmpty()) return """{"none":true,"genres":[],"items":[]}"""
+        return shelfJson(srcs.map { it.first.name }.distinct().takeIf { it.size > 1 }.orEmpty(), items, "")
+    }
+
+    /** Website "Music": the music extension (Monochrome): its home-page sections as genres, and its search. */
+    suspend fun webMusicJson(skip: Int, genre: String?, q: String?): String {
+        val apis = loadedApis.filter { a ->
+            !isGloballyDisabled(a) && (a.name.contains("monochrome", true) ||
+                a.supportedTypes.any { it.equals("Music", true) || it.equals("Audio", true) })
+        }
+        val api = apis.firstOrNull { it.name.contains("monochrome", true) } ?: apis.firstOrNull()
+            ?: return """{"none":true,"genres":[],"items":[]}"""
+        val def = (providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)).firstOrNull()
+            ?: return """{"none":true,"genres":[],"items":[]}"""
+        val genres = def.extra.firstOrNull { it.name == "genre" }?.options.orEmpty()
+        val items = withContext(pluginDispatcher) {
+            withTimeoutOrNull(30_000L) { runCatching { buildCatalog(def.type, def.id, q?.ifBlank { null }, skip, genre?.ifBlank { null }) }.getOrNull() }
+        } ?: emptyList()
+        return shelfJson(genres, items, api.name)
+    }
+
+    /** Items of a catalog for the website, each with the extension and address its title page opens with. */
+    private fun shelfJson(genres: List<String>, items: List<StremioMeta>, source: String): String =
+        kotlinx.serialization.json.buildJsonObject {
+            put("source", source)
+            put("genres", kotlinx.serialization.json.buildJsonArray { genres.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+            put("items", kotlinx.serialization.json.buildJsonArray {
+                items.forEach { m ->
+                    val d = StremioIds.decode(m.id) ?: return@forEach
+                    val api = loadedApis.firstOrNull { it.internalName == d.first } ?: loadedApis.firstOrNull { it.pluginInternalName == d.first } ?: return@forEach
+                    add(kotlinx.serialization.json.buildJsonObject {
+                        put("title", m.name); put("poster", m.poster ?: "")
+                        put("year", m.releaseInfo ?: m.year?.toString() ?: "")
+                        put("ext", api.internalName); put("url", d.second)
+                    })
+                }
+            })
+        }.toString()
+
     /** One live channel source for the website: the links of that source only, without the slow checks, so the first one can start playing at once. */
     suspend fun webTvStreamsJson(id: String): String {
         val built = withTimeoutOrNull(25_000L) { withContext(pluginDispatcher) { buildStreams("tv", id) } } ?: emptyList()

@@ -353,6 +353,19 @@ object WebSite {
             if (ext.isEmpty() || data.isEmpty()) return@get call.respond(HttpStatusCode.BadRequest)
             call.json(StremioServer.webExtLinksJson(ext, data))
         }
+        // "Short dramas" and "Music" pages: one catalog each
+        get("/web/api/shelf") {
+            if (!call.guard()) return@get
+            val qp = call.request.queryParameters
+            val skip = qp["skip"]?.toIntOrNull()?.coerceIn(0, 100_000) ?: 0
+            val genre = qp["genre"]?.take(200)
+            val q = qp["q"]?.trim()?.take(100)
+            when (qp["kind"]) {
+                "drama" -> call.json(StremioServer.webDramaJson(skip, genre, q))
+                "music" -> call.json(StremioServer.webMusicJson(skip, genre, q))
+                else -> call.respond(HttpStatusCode.BadRequest)
+            }
+        }
         // One source of a live channel: its links only, no slow checks
         get("/web/api/tvstreams") {
             if (!call.guard()) return@get
