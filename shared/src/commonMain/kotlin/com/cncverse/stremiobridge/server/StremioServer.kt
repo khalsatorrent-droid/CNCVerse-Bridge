@@ -1158,7 +1158,9 @@ object StremioServer {
             put("items", kotlinx.serialization.json.buildJsonArray {
                 items.forEach { m ->
                     val d = StremioIds.decode(m.id) ?: return@forEach
-                    val api = loadedApis.firstOrNull { it.internalName == d.first } ?: loadedApis.firstOrNull { it.pluginInternalName == d.first } ?: return@forEach
+                    // catalog items name their extension by its name slug (see toStremiMeta), older ones by internal name
+                    val api = loadedApis.firstOrNull { nameSlug(it.name) == d.first } ?: loadedApis.firstOrNull { it.internalName == d.first }
+                        ?: loadedApis.firstOrNull { it.pluginInternalName == d.first } ?: return@forEach
                     add(kotlinx.serialization.json.buildJsonObject {
                         put("title", m.name); put("poster", m.poster ?: "")
                         put("year", m.releaseInfo ?: m.year?.toString() ?: "")

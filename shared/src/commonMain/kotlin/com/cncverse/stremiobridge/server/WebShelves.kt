@@ -17,7 +17,7 @@ function shelf(kind){var my=++xrun;var isM=kind==='music';var name=isM?'Music':'
    if(!drawn){drawn=true;var all=[''].concat(d.genres||[]);if(all.length>1)all.forEach(function(gn){var c=el('button','chip',gn||'All');c.type='button';c.setAttribute('aria-pressed',String(gn===st.genre));c.onclick=function(){st.genre=gn;Array.prototype.forEach.call(chips.children,function(x){x.setAttribute('aria-pressed',String(x===c))});load(true)};chips.appendChild(c)})}
    var items=d.items||[];items.forEach(function(it){var c=card({poster:it.poster,title:it.title,year:it.year,type:'tv'});var s=c.querySelector('.s');if(s)s.textContent=it.year||(isM?'Music':'Short drama');c.onclick=function(){location.hash='#/xt/'+encodeURIComponent(it.ext)+'/'+encodeURIComponent(it.url)};gr.appendChild(c)});
    st.skip+=items.length;
-   if(!gr.children.length)info.textContent=st.q?'Nothing found. Try another word.':'Nothing here yet. The extensions may still be loading: try again in a minute.';else info.classList.add('hide');
+   if(!gr.children.length)info.textContent=st.q?'Nothing found. Try another word.':(isM?'Search for a song, album or artist above.':'Nothing here yet. The extensions may still be loading: try again in a minute.');else info.classList.add('hide');
    if(items.length)more.classList.remove('hide')
   }).catch(function(e){if(e.message!=='auth'&&r===run)info.textContent='Could not load this page. Try again.'})}
  more.onclick=function(){load(false)};

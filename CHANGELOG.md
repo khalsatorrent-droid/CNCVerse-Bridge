@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Website: Short dramas and Music now list their titles.** Both pages stayed empty (search too): catalog items name their extension by a short form of its name, which the pages did not recognise, so every item was dropped.
+
 ## 1.7.35
 
 - **Website: "Short dramas" and "Music" pages.** Two new headings in the website's top bar. Short dramas shows the combined short-drama catalog (all short-drama extensions, a chip per extension, search across all of them). Music shows the Monochrome extension (Watchuu repository) with its home-page sections and its search. Titles open with the extension's own episodes / tracks and links.
