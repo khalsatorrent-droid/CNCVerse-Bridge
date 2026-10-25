@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.36
 
 - **Website: Short dramas and Music now list their titles.** Both pages stayed empty (search too): catalog items name their extension by a short form of its name, which the pages did not recognise, so every item was dropped.
 
