@@ -766,7 +766,6 @@ object StremioServer {
             get("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
             head("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
             get("/media/{id}/pl/{tok}") { MediaServer.servePlaylist(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
-            get("/media/{id}/sub/{file}") { MediaServer.serveSubtitle(call, call.parameters["id"].orEmpty(), call.parameters["file"].orEmpty()) }
             get("/media/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
 
             // ── Addon ────────────────────────────────────────────────────────
@@ -1206,7 +1205,7 @@ object StremioServer {
         val who = call.request.headers[HttpHeaders.UserAgent].orEmpty().take(60)
         val what = "${if (srt) "SRT" else "ASS"} ${call.parameters["name"]} (${call.request.httpMethod.value}, $who)"
         if (u.isNullOrBlank() || !u.startsWith("http", true)) return call.respond(HttpStatusCode.BadRequest)
-        val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms, if (srt) "srt" else "ass") }
+        val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms, srt) }
         if (text == null) {
             ServerState.warn("[Subtitle] $what could not be made (source unreachable or expired): ${u.take(120)}")
             call.respondRedirect(u)

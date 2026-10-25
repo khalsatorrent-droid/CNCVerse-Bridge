@@ -732,7 +732,6 @@ fun MediaServerCard() {
         SwitchRow("Video files (mp4, mkv...)", "Download first, then play from this device", p.cacheFiles) { p = p.copy(cacheFiles = it); message = null }
         SwitchRow("Warm up the first links", "Open the first 2 video-file links of each result list ahead of time (about 8 MB each) so playback starts faster. Uses extra data.", p.prewarm) { p = p.copy(prewarm = it); message = null }
         SwitchRow("HLS streams (m3u8)", "Cache playlists and segments, fetch ahead of the player", p.cacheHls) { p = p.copy(cacheHls = it); message = null }
-        SwitchRow("English subtitles inside HLS streams", "The first 10 English subtitles become the stream's own WebVTT tracks (white, bold, black outline, bottom centre)", p.hlsSubtitles) { p = p.copy(hlsSubtitles = it); message = null }
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(

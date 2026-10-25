@@ -60,8 +60,6 @@ data class MediaServerPrefs(
     val prewarm: Boolean = false,
     /** Cache HLS playlists and segments on this device. */
     val cacheHls: Boolean = true,
-    /** The first 10 English subtitles of a title are added to its HLS streams as built-in WebVTT tracks (styled: white, bold, black outline). */
-    val hlsSubtitles: Boolean = true,
     /** HLS segments fetched ahead of the player. */
     val prefetchSegments: Int = 30,
     /** How far (MB) past the playing position a file download may run (0 = download the whole file). */
@@ -76,12 +74,8 @@ data class MediaServerPrefs(
     val ver: Int = 5,
 )
 
-/** A subtitle track added to an HLS stream as one of its own tracks: [name] shown in the player, [url] the original file. */
 @Serializable
-private data class HlsSub(val name: String, val url: String)
-
-@Serializable
-private class MediaSource(val url: String, val headers: Map<String, String> = emptyMap(), val subs: List<HlsSub> = emptyList())
+private class MediaSource(val url: String, val headers: Map<String, String> = emptyMap())
 
 @Serializable
 private class FileMeta(
@@ -433,8 +427,7 @@ object MediaServer {
         // The extension declares headers, but the host answered a plain request (see HeaderNeed): the link needs no help from this server
         if (!loop && !lanUpstream && !webHls && !needsCf && headers.isNotEmpty() && (p.mode == "headers" || (p.mode == "hls" && !hls)) &&
             HeaderNeed.verdict(url, headers) == false) return s
-        val subs = if (hls && p.hlsSubtitles) runCatching { SubtitleTools.hlsTracks(s.subtitles.orEmpty()) }.getOrDefault(emptyList()) else emptyList()
-        val id = register(url, headers, subs.map { HlsSub(it.first, it.second) })
+        val id = register(url, headers)
         // The extension's server may stop at any time: its playlists (and the first segments) are fetched and kept now
         if (loop && !warmLocal(id, url)) return s
         val newUrl = if (hls) "$base/media/$id/pl/${token(id, url)}.m3u8" else "$base/media/$id/file/${fileName(url)}"
@@ -504,16 +497,12 @@ object MediaServer {
     private fun sha256(text: String): String =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    private fun register(url: String, headers: Map<String, String>, subs: List<HlsSub> = emptyList()): String {
+    private fun register(url: String, headers: Map<String, String>): String {
         val sorted = headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + ":" + it.value }
         val id = sha256(url + "\n" + sorted).take(20)
-        val prev = sources[id] ?: sourceFor(id)
-        // a newer subtitle list replaces the saved one (an empty list never wipes tracks found earlier)
-        if (prev == null || (subs.isNotEmpty() && prev.subs != subs)) {
-            val src = MediaSource(url, headers, subs.ifEmpty { prev?.subs.orEmpty() })
-            sources[id] = src
+        if (sources.putIfAbsent(id, MediaSource(url, headers)) == null) {
             val dir = File(root ?: return id, id).also { it.mkdirs() }
-            runCatching { File(dir, "source.json").writeText(json.encodeToString(src)) }
+            runCatching { File(dir, "source.json").writeText(json.encodeToString(MediaSource(url, headers))) }
         }
         return id
     }
@@ -1370,124 +1359,8 @@ object MediaServer {
             if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, url, useRaw)
             rewritten
         }
-        val asIs = call.request.queryParameters["raw"] != null
-        val out = if (!asIs && url == src.url && src.subs.isNotEmpty() && prefs.hlsSubtitles) withSubtitleTracks(src, tok, text) else text
         call.response.header(HttpHeaders.CacheControl, "no-store")
-        call.respondText(out, ContentType.parse("application/vnd.apple.mpegurl"))
-    }
-
-    // ── Subtitles as built-in HLS tracks ──────────────────────────────────────
-
-    private const val SUB_GROUP = "cncsubs"
-
-    private fun subMediaLines(src: MediaSource, group: String): String =
-        src.subs.mapIndexed { i, s ->
-            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"$group\",NAME=\"${s.name.replace("\"", "'").replace(",", " ")}\"," +
-                "LANGUAGE=\"en\",AUTOSELECT=YES,DEFAULT=NO,FORCED=NO,URI=\"../sub/$i.m3u8\""
-        }.joinToString("\n")
-
-    /**
-     * The stream's playlist with the subtitle tracks added. A master playlist gets them as a subtitle group of every
-     * variant; a single (finished) media playlist is wrapped in a small master playlist that points back at it.
-     */
-    private fun withSubtitleTracks(src: MediaSource, tok: String, text: String): String {
-        val lines = text.lines()
-        if (text.contains("#EXT-X-STREAM-INF")) {
-            val groups = LinkedHashSet<String>()
-            val out = ArrayList<String>()
-            var inserted = false
-            val fixed = lines.map { l ->
-                if (!l.startsWith("#EXT-X-STREAM-INF")) l
-                else {
-                    val g = Regex("SUBTITLES=\"([^\"]*)\"").find(l)?.groupValues?.get(1)
-                    if (g != null) { groups += g; l } else { groups += SUB_GROUP; "$l,SUBTITLES=\"$SUB_GROUP\"" }
-                }
-            }
-            for (l in fixed) {
-                if (!inserted && l.startsWith("#EXT-X-STREAM-INF")) {
-                    groups.forEach { out += subMediaLines(src, it) }
-                    inserted = true
-                }
-                out += l
-            }
-            return out.joinToString("\n")
-        }
-        // a live media playlist is left alone (the add-on subtitles are for films and episodes)
-        if (!text.contains("#EXTINF") || !text.contains("#EXT-X-ENDLIST")) return text
-        return "#EXTM3U\n#EXT-X-INDEPENDENT-SEGMENTS\n" + subMediaLines(src, SUB_GROUP) + "\n" +
-            "#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES=\"$SUB_GROUP\"\n" + tok + "?raw=1\n"
-    }
-
-    /** First presentation time of the stream, in 90 kHz units (it lines the WebVTT cues up with the video). */
-    private val firstPtsOf = ConcurrentHashMap<String, Long>()
-
-    private fun firstPts(id: String, src: MediaSource): Long {
-        firstPtsOf[id]?.let { return it }
-        // the player opens a variant playlist before (or while) asking for subtitles: wait a little for its segment list
-        var segs: List<String>? = null
-        for (i in 0 until 30) {
-            segs = playlistSegs.entries.firstOrNull { it.key.startsWith("$id|") && it.value.isNotEmpty() }?.value
-            if (segs != null) break
-            Thread.sleep(200)
-        }
-        val first = segs?.firstOrNull() ?: return 0L
-        val pts = runCatching { tsFirstPts(ensureSegment(id, src, first).readBytes()) }.getOrNull() ?: 0L
-        firstPtsOf[id] = pts
-        return pts
-    }
-
-    /** Lowest first PTS among the elementary streams of an MPEG-TS segment; null for other containers (fMP4 starts at 0). */
-    internal fun tsFirstPts(b: ByteArray): Long? {
-        if (b.size < 188 || b[0] != 0x47.toByte()) return null
-        val seen = HashSet<Int>()
-        var best: Long? = null
-        var i = 0
-        while (i + 188 <= b.size) {
-            if (b[i] != 0x47.toByte()) { i++; continue }
-            val pusi = (b[i + 1].toInt() and 0x40) != 0
-            val pid = ((b[i + 1].toInt() and 0x1f) shl 8) or (b[i + 2].toInt() and 0xff)
-            val afc = (b[i + 3].toInt() shr 4) and 3
-            var p = i + 4
-            if (afc == 2 || afc == 3) p += 1 + (b[i + 4].toInt() and 0xff)
-            if (pusi && (afc == 1 || afc == 3) && p + 14 <= i + 188 && pid !in seen &&
-                b[p] == 0.toByte() && b[p + 1] == 0.toByte() && b[p + 2] == 1.toByte()) {
-                val sid = b[p + 3].toInt() and 0xff
-                if (sid in 0xC0..0xEF && (b[p + 7].toInt() and 0x80) != 0) {
-                    seen += pid
-                    val pts = (((b[p + 9].toLong() shr 1) and 0x07) shl 30) or ((b[p + 10].toLong() and 0xff) shl 22) or
-                        (((b[p + 11].toLong() shr 1) and 0x7f) shl 15) or ((b[p + 12].toLong() and 0xff) shl 7) or
-                        ((b[p + 13].toLong() shr 1) and 0x7f)
-                    if (best == null || pts < best) best = pts
-                    if (seen.size >= 2) break
-                }
-            }
-            i += 188
-        }
-        return best
-    }
-
-    /** /media/{id}/sub/{n}.m3u8 (one-segment subtitle playlist) and /media/{id}/sub/{n}.vtt (the styled WebVTT). */
-    suspend fun serveSubtitle(call: ApplicationCall, id: String, file: String) {
-        val src = sourceFor(id) ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
-        val sub = file.substringBefore('.').toIntOrNull()?.let { src.subs.getOrNull(it) }
-            ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
-        val ms = StremioServer.streamPrefs.subtitleOffsetMs
-        val vtt = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(sub.url, ms, "vtt") }
-            ?: return call.respondText("Subtitle could not be read", status = HttpStatusCode.BadGateway)
-        call.response.header(HttpHeaders.CacheControl, "no-store")
-        if (file.endsWith(".m3u8")) {
-            val d = (SubtitleTools.vttEndSeconds(vtt) + 10).coerceAtLeast(60)
-            val n = file.substringBefore('.')
-            call.respondText(
-                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:$d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:$d.000,\n$n.vtt\n#EXT-X-ENDLIST\n",
-                ContentType.parse("application/vnd.apple.mpegurl"),
-            )
-        } else {
-            val pts = withContext(Dispatchers.IO) { firstPts(id, src) }
-            ServerState.info("[Subtitle] HLS track ${sub.name.take(40)} served (${call.request.headers[HttpHeaders.UserAgent].orEmpty().take(40)})")
-            val body = vtt.replaceFirst("WEBVTT", "WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:$pts,LOCAL:00:00:00.000")
-            call.respondText(body, ContentType.parse("text/vtt; charset=utf-8"))
-        }
+        call.respondText(text, ContentType.parse("application/vnd.apple.mpegurl"))
     }
 
     /** A master playlist was opened: load its rendition playlists now, so the player's next request is instant. */
