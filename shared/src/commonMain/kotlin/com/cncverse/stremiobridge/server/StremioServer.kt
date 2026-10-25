@@ -243,6 +243,10 @@ object StremioServer {
          * them, so they never play). With the media server on they are kept: it sends the headers itself.
          */
         val hideHeaderLinks: Boolean = false,
+        /** Drop every HLS (m3u8) link from movie / series results (live TV keeps them). */
+        val hideHlsLinks: Boolean = false,
+        /** Drop every direct video file (mp4 / mkv / ... ) from movie / series results. */
+        val hideDirectFiles: Boolean = false,
         /**
          * Resolution cap, e.g. "1080p": streams above it are listed after everything within the cap
          * (a TV or phone that cannot decode 4K gets playable links first). "" = no cap.
@@ -978,7 +982,10 @@ object StremioServer {
         // Filters and ordering from the app's stream settings
         val p = streamPrefs
         // Adaptive HLS links report no quality: read their playlist for the real resolution
-        val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(streams, p.splitHls, 4_000L, p.bestHls) else streams
+        // "Hide HLS links" / "Hide direct files" (live TV is always HLS: it keeps its links)
+        val byKind = if (type == "tv" || (!p.hideHlsLinks && !p.hideDirectFiles)) streams
+            else streams.filter { st -> !(p.hideHlsLinks && isHlsLink(st)) && !(p.hideDirectFiles && isDirectFileLink(st)) }
+        val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(byKind, p.splitHls, 4_000L, p.bestHls) else byKind
         val tProbed = System.currentTimeMillis()
         val sorted = sortStreamsByQuality(probed)
 
@@ -1223,6 +1230,22 @@ object StremioServer {
 
     /** Request headers a player cannot be asked to send: anything but the usual User-Agent / Accept family. */
     private val HARMLESS_HEADERS = setOf("user-agent", "accept", "accept-language", "accept-encoding", "connection", "range", "host", "cache-control")
+
+    /** An HLS stream: an m3u8 playlist (also this bridge's DASH -> HLS conversion). */
+    fun isHlsLink(s: StremioStream): Boolean {
+        val u = s.url ?: return false
+        return s.info?.linkType.equals("M3U8", true) || u.substringBefore('?').endsWith(".m3u8", true) || u.contains(".m3u8", true)
+    }
+
+    /** A direct video file: a plain http(s) link that is not a playlist, a DASH manifest, a torrent, YouTube or an external page. */
+    fun isDirectFileLink(s: StremioStream): Boolean {
+        val u = s.url ?: return false
+        if (!u.startsWith("http", true) || s.infoHash != null || s.ytId != null || s.externalUrl != null) return false
+        if (isHlsLink(s)) return false
+        if (s.info?.linkType?.uppercase() in setOf("TORRENT", "MAGNET")) return false
+        if (s.info?.linkType.equals("DASH", true) || u.substringBefore('?').endsWith(".mpd", true) || u.contains(".mpd?", true)) return false
+        return true
+    }
 
     fun needsHeaders(s: StremioStream): Boolean =
         s.behaviorHints?.proxyHeaders?.request.orEmpty().any { (k, v) -> v.isNotBlank() && k.lowercase() !in HARMLESS_HEADERS }

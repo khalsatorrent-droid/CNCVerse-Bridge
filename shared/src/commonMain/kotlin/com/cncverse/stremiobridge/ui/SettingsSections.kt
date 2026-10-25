@@ -427,6 +427,8 @@ fun StreamsCard() {
         SwitchRow("Hide non-seekable / non-playable files", "Direct files whose server can't seek, download-only links (Google Drive) and archives", p.filterNonSeekable) {
             update(p.copy(filterNonSeekable = it))
         }
+        SwitchRow("Hide HLS links", "Removes every HLS (m3u8) link from movie / series results (live TV keeps its links)", p.hideHlsLinks) { update(p.copy(hideHlsLinks = it)) }
+        SwitchRow("Hide direct files", "Removes every direct video file (mp4, mkv...) from movie / series results", p.hideDirectFiles) { update(p.copy(hideDirectFiles = it)) }
         SwitchRow("Hide subtitles", "Streams go out without subtitle tracks", p.hideSubtitles) { update(p.copy(hideSubtitles = it)) }
         OutlinedTextField(
             value = p.subtitleLangs, onValueChange = { update(p.copy(subtitleLangs = it)) },

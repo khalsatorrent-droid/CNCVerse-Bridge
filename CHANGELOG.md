@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Hide HLS links / Hide direct files.** Two new switches in Settings > Streams remove every HLS (m3u8) link or every direct video file (mp4, mkv...) from movie and series results. Both are off by default; live TV always keeps its links.
+
 ## 1.7.36
 
 - **Website: Short dramas and Music now list their titles.** Both pages stayed empty (search too): catalog items name their extension by a short form of its name, which the pages did not recognise, so every item was dropped.
