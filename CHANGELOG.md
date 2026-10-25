@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **One TV catalog and one short-drama catalog.** Stremio / Nuvio now get a single "📺 All TV channels (A-Z)" catalog instead of every TV extension's own catalogs, and a single "🎬 Short dramas" catalog that takes turns between all short-drama extensions (pick one extension as its genre; search covers all of them). Short-drama extensions are found from their name and description (short drama, vertical, reels...) and can be changed by hand. The per-catalog switches now choose what goes into the combined catalogs. Settings > Catalogs: "One combined TV catalog", "One combined short-drama catalog", "Which extensions are short-drama".
+
 ## 1.7.34
 
 - **Nuvio mobile: the "· Nuvio mobile" subtitle copies are now bold SRT files.** The ASS file at a link without ".ass" still did not show in Nuvio mobile. The copy is now plain SRT with every line in bold, which Nuvio draws with its own subtitle style (set it to white text with a black outline for the same look). Every styled subtitle request is now written to the bridge log (format, player, served or failed).

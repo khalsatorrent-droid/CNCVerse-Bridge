@@ -212,6 +212,13 @@ object StremioServer {
         val subtitleOffsetMs: Int = 0,
         /** The first 10 English subtitles are fetched here and handed out as ASS (white bold text, black outline, bottom centre). */
         val styledSubtitles: Boolean = true,
+        /** Every TV extension's catalogs are shown as the one "All TV channels (A-Z)" catalog (the separate ones are not listed). */
+        val combineTv: Boolean = true,
+        /** Every short-drama extension's catalogs are shown as one "Short dramas" catalog (the separate ones are not listed). */
+        val combineShortDrama: Boolean = true,
+        /** Extensions (plugin internal names) marked as short-drama by hand / taken out of the automatic detection. */
+        val shortDramaOn: Set<String> = emptySet(),
+        val shortDramaOff: Set<String> = emptySet(),
         /** Links of the styled subtitles: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
         val styledSubtitleLinks: String = "both",
         /** How streams are grouped: default (by quality) | provider. */
@@ -1688,14 +1695,113 @@ object StremioServer {
                 .filter { "${it.type}/${it.id}" !in prefs.disabledCatalogs }
         }
         val hasCatalogs = catalogs.isNotEmpty()
-        return buildManifestFrom(withAllTvCatalog(catalogs), hasCatalogs, types)
+        return buildManifestFrom(withCombinedCatalogs(catalogs), hasCatalogs, types)
     }
 
-    /** The combined "All TV channels" catalog goes in front of the first TV catalog (when TV catalogs exist and it is not switched off). */
-    private fun withAllTvCatalog(catalogs: List<StremioCatalogDef>): List<StremioCatalogDef> {
-        val first = catalogs.indexOfFirst { it.type == "tv" }
-        if (first < 0 || "tv/$ALL_TV_ID" in streamPrefs.disabledCatalogs) return catalogs
-        return catalogs.take(first) + allTvDef() + catalogs.drop(first)
+    /**
+     * The combined catalogs: "All TV channels (A-Z)" goes where the first TV catalog was and "Short dramas" where the first
+     * short-drama catalog was. While combining is on, the separate catalogs they are made of are not listed.
+     */
+    private fun withCombinedCatalogs(catalogs: List<StremioCatalogDef>): List<StremioCatalogDef> {
+        val p = streamPrefs
+        var out = catalogs
+        val dramaIds = dramaSources().map { it.second.id }.toSet()
+        if (p.combineShortDrama && dramaIds.isNotEmpty()) {
+            val first = out.indexOfFirst { it.id in dramaIds }
+            if (first >= 0) {
+                val rest = out.filterIndexed { i, d -> i < first || d.id !in dramaIds }
+                val at = first
+                out = if ("other/$ALL_DRAMA_ID" in p.disabledCatalogs) rest else rest.take(at) + allDramaDef() + rest.drop(at)
+            }
+        }
+        val firstTv = out.indexOfFirst { it.type == "tv" }
+        if (firstTv >= 0) {
+            val withoutTv = if (p.combineTv) out.filterIndexed { i, d -> i < firstTv || d.type != "tv" } else out
+            out = if ("tv/$ALL_TV_ID" in p.disabledCatalogs) withoutTv else withoutTv.take(firstTv) + allTvDef() + withoutTv.drop(firstTv)
+        }
+        return out
+    }
+
+    // ── Combined short-drama catalog ──────────────────────────────────────────
+
+    private const val ALL_DRAMA_ID = "cnc_all_shortdrama"
+    private val DRAMA_WORDS = Regex(
+        "short[ _-]?dramas?|vertical|\\breels?\\b|micro[ _-]?dramas?|mini[ _-]?dramas?|dramabox|shortmax|reelshort|goodshort|netshort|flextv|dramawave|\\bshorts\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Short-drama extension: marked by hand, or its name / description says so (vertical, reels, short drama...). */
+    fun isShortDramaApi(api: MainApiWrapper): Boolean {
+        val key = api.pluginInternalName
+        val p = streamPrefs
+        if (key in p.shortDramaOff) return false
+        if (key in p.shortDramaOn) return true
+        val desc = runCatching {
+            com.cncverse.stremiobridge.state.RepoState.installedPlugins.value.firstOrNull { it.internalName == key }?.description
+        }.getOrNull().orEmpty()
+        return DRAMA_WORDS.containsMatchIn(api.name + " " + api.internalName + " " + desc)
+    }
+
+    /** Extensions with a non-TV catalog (internal name -> name, short-drama ones marked), for the app's settings. */
+    fun shortDramaChoices(): List<Triple<String, String, Boolean>> =
+        loadedApis.filter { !isGloballyDisabled(it) && it.supportedTypes.any { t -> cs3TvTypeToStremio(t) == "other" } }
+            .distinctBy { it.pluginInternalName }
+            .map { Triple(it.pluginInternalName, it.name, isShortDramaApi(it)) }
+            .sortedBy { it.second.lowercase() }
+
+    /** (extension, its catalog) of every short-drama catalog that is switched on. */
+    private fun dramaSources(): List<Pair<MainApiWrapper, StremioCatalogDef>> =
+        loadedApis.filter { !isGloballyDisabled(it) && isShortDramaApi(it) }.flatMap { api ->
+            (providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api))
+                .filter { it.type == "other" && "${it.type}/${it.id}" !in streamPrefs.disabledCatalogs }
+                .map { api to it }
+        }.distinctBy { it.second.id }
+
+    private fun allDramaDef(): StremioCatalogDef {
+        val names = dramaSources().map { it.first.name }.distinct()
+        return StremioCatalogDef(
+            type = "other", id = ALL_DRAMA_ID, name = "🎬 Short dramas",
+            extra = listOfNotNull(
+                // a genre per extension: one source on its own
+                names.takeIf { it.size > 1 }?.let { ExtraEntry(name = "genre", options = it) },
+                ExtraEntry("search"), ExtraEntry("skip"),
+            ),
+        )
+    }
+
+    /** "<sources>|<search>|<skip>" -> where each source's next page starts (-1 = that source has no more). */
+    private val dramaNext = ConcurrentHashMap<String, List<Int>>()
+
+    /**
+     * The short-drama extensions' catalogs as ONE list: their pages are fetched at the same time and taken in turns
+     * (one from each), so every extension shows up near the top. A genre picks one extension on its own.
+     */
+    private suspend fun buildAllDrama(search: String?, skip: Int, genre: String?): List<StremioMeta> {
+        val srcs = dramaSources()
+        if (srcs.isEmpty()) return emptyList()
+        if (!genre.isNullOrBlank()) {
+            val one = srcs.firstOrNull { it.first.name == genre } ?: return emptyList()
+            return buildCatalog(one.second.type, one.second.id, search, skip, null)
+        }
+        val sig = srcs.joinToString(",") { it.second.id } + "|" + search.orEmpty()
+        val starts = if (skip == 0) List(srcs.size) { 0 } else dramaNext["$sig|$skip"] ?: List(srcs.size) { skip / srcs.size }
+        val pages = coroutineScope {
+            srcs.mapIndexed { i, (_, d) ->
+                async {
+                    if (starts[i] < 0) emptyList()
+                    else withTimeoutOrNull(25_000L) { runCatching { buildCatalog(d.type, d.id, search, starts[i], null) }.getOrNull() } ?: emptyList()
+                }
+            }.awaitAll()
+        }
+        val out = ArrayList<StremioMeta>()
+        val seen = HashSet<String>()
+        val longest = pages.maxOfOrNull { it.size } ?: 0
+        for (k in 0 until longest) for (pg in pages) pg.getOrNull(k)?.let { if (seen.add(it.id)) out.add(it) }
+        if (out.isNotEmpty()) {
+            if (dramaNext.size > 2000) dramaNext.clear()
+            dramaNext["$sig|${skip + out.size}"] = starts.mapIndexed { i, s -> if (s < 0 || pages[i].isEmpty()) -1 else s + pages[i].size }
+        }
+        return out
     }
 
     private fun allTvDef() = StremioCatalogDef(
@@ -1726,9 +1832,13 @@ object StremioServer {
         loadedApis.filter { !isGloballyDisabled(it) }.flatMap { api ->
             providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
         }.distinctBy { it.id }.let { defs ->
-            // the combined TV catalog is listed in front of the first TV catalog so it can be switched off like the others
+            // the combined catalogs are listed in front of the first catalog they are made of, so they can be switched off like the others
             val i = defs.indexOfFirst { it.type == "tv" }
-            if (i < 0) defs else defs.take(i) + allTvDef() + defs.drop(i)
+            val withTv = if (i < 0) defs else defs.take(i) + allTvDef() + defs.drop(i)
+            val dramaIds = loadedApis.filter { !isGloballyDisabled(it) && isShortDramaApi(it) }
+                .flatMap { api -> (providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)).filter { it.type == "other" }.map { it.id } }.toSet()
+            val j = withTv.indexOfFirst { it.id in dramaIds }
+            if (j < 0) withTv else withTv.take(j) + StremioCatalogDef(type = "other", id = ALL_DRAMA_ID, name = "🎬 Short dramas") + withTv.drop(j)
         }.map { "${it.type}/${it.id}" to it.name }
 
     // ── Catalog builder ───────────────────────────────────────────────────────
@@ -2124,6 +2234,7 @@ object StremioServer {
         type: String, id: String, search: String?, skip: Int, genre: String?
     ): List<StremioMeta> {
         if (id == ALL_TV_ID) return if (type == "tv" && !ServerState.disableCatalogsGlobally) buildAllTv(search, skip) else emptyList()
+        if (id == ALL_DRAMA_ID) return if (!ServerState.disableCatalogsGlobally) buildAllDrama(search, skip, genre) else emptyList()
         val prefix = "cnc_"
         if (!id.startsWith(prefix)) return emptyList()
         val rest = id.removePrefix(prefix)

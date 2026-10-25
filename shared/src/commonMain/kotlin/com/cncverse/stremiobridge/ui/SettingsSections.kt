@@ -615,7 +615,14 @@ fun StreamsCard() {
                     minSizeGb = minGb.toDoubleOrNull() ?: 0.0,
                     maxSizeGb = maxGb.toDoubleOrNull() ?: 0.0,
                     subtitleOffsetMs = subOffset.toIntOrNull() ?: 0,
-                )
+                ).let { n ->
+                    // the Catalogs card's settings may have changed since this card was opened: keep them
+                    val cur = StremioServer.streamPrefs
+                    n.copy(
+                        disabledCatalogs = cur.disabledCatalogs, combineTv = cur.combineTv, combineShortDrama = cur.combineShortDrama,
+                        shortDramaOn = cur.shortDramaOn, shortDramaOff = cur.shortDramaOff,
+                    )
+                }
             )
             p = StremioServer.streamPrefs
             saved = "Saved — applies to the next stream request"
@@ -652,7 +659,46 @@ fun CatalogsCard() {
             },
         )
         if (!catalogsOff) {
-            val all = remember(expanded) { StremioServer.allCatalogs() }
+            var cp by remember { mutableStateOf(StremioServer.streamPrefs) }
+            var showDrama by remember { mutableStateOf(false) }
+            fun saveCp(n: StremioServer.StreamPrefs) { cp = n; StremioServer.updateStreamPrefs(n) }
+            SwitchRow(
+                title = "One combined TV catalog",
+                description = "Only \"All TV channels (A-Z)\" is shown; the TV switches below choose what goes into it",
+                checked = cp.combineTv,
+                onCheckedChange = { saveCp(StremioServer.streamPrefs.copy(combineTv = it)) },
+            )
+            SwitchRow(
+                title = "One combined short-drama catalog",
+                description = "Only \"Short dramas\" is shown, with every short-drama extension in it (pick one as its genre)",
+                checked = cp.combineShortDrama,
+                onCheckedChange = { saveCp(StremioServer.streamPrefs.copy(combineShortDrama = it)) },
+            )
+            TextButton(onClick = { showDrama = !showDrama }) {
+                Text(if (showDrama) "Hide short-drama extensions" else "Which extensions are short-drama", color = Violet400, fontSize = 12.sp)
+            }
+            if (showDrama) {
+                val choices = remember(cp) { StremioServer.shortDramaChoices() }
+                Text("Found from the extension's name and description; tap to change", color = TextMuted, fontSize = 10.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    choices.forEach { (key, name, on) ->
+                        FilterChip(
+                            selected = on,
+                            onClick = {
+                                val c = StremioServer.streamPrefs
+                                saveCp(if (on) c.copy(shortDramaOn = c.shortDramaOn - key, shortDramaOff = c.shortDramaOff + key)
+                                       else c.copy(shortDramaOff = c.shortDramaOff - key, shortDramaOn = c.shortDramaOn + key))
+                            },
+                            label = { Text(name, fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                                containerColor = AmoledCard2, labelColor = TextSecondary,
+                            ),
+                        )
+                    }
+                }
+            }
+            val all = remember(expanded, cp) { StremioServer.allCatalogs() }
             TextButton(onClick = { expanded = !expanded }) {
                 Text(
                     if (expanded) "Hide catalog list" else "Choose catalogs (${all.count { it.first !in disabled }} of ${all.size} on)",
