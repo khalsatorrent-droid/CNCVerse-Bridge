@@ -117,8 +117,8 @@ object SubtitleTools {
     }
 
     /** The file at [url] as an ASS file in the house look, every cue moved by [ms]; null when it cannot be read or has no cues. */
-    fun fetchStyled(url: String, ms: Int, srt: Boolean = false): String? {
-        val key = (if (srt) "srt|" else "") + "$ms|$url"
+    fun fetchStyled(url: String, ms: Int, kind: String = "ass"): String? {
+        val key = (if (kind == "ass") "" else "$kind|") + "$ms|$url"
         synchronized(styledCache) { styledCache[key] }?.let { return it }
         // Kept on disk too: after the app was stopped while paused, or once the extension's link expired, the
         // converted file is still there when the player asks again
@@ -133,10 +133,50 @@ object SubtitleTools {
         // one retry: a slow or briefly failing subtitle site is common
         val bytes = download(url) ?: run { Thread.sleep(800); download(url) } ?: return null
         val text = decode(bytes).removePrefix("\uFEFF")
-        val out = (if (srt) toBoldSrt(text, ms) else toStyledAss(text, ms)) ?: return null
+        val out = when (kind) { "srt" -> toBoldSrt(text, ms); "vtt" -> toStyledVtt(text, ms); else -> toStyledAss(text, ms) } ?: return null
         synchronized(styledCache) { styledCache[key] = out }
         if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeText(out); trimDisk() }
         return out
+    }
+
+    /**
+     * WebVTT in the same look as the ASS files: white bold text with a black outline, bottom centre. Players that
+     * follow the file's style (browsers, Apple players) draw it like that; others use their own subtitle style.
+     */
+    internal fun toStyledVtt(text: String, ms: Int): String? {
+        val cues = parseCues(text.replace("\r\n", "\n").replace('\r', '\n'))
+        if (cues.isEmpty()) return null
+        val sb = StringBuilder("WEBVTT\n\nSTYLE\n::cue {\n  color: #FFFFFF;\n  font-weight: bold;\n  font-family: Arial, Roboto, sans-serif;\n" +
+            "  background-color: transparent;\n  text-shadow: #000 0 0 3px, #000 2px 2px 0, #000 -2px -2px 0, #000 2px -2px 0, #000 -2px 2px 0;\n}\n\n")
+        for (c in cues) {
+            var italicOpen = false
+            val parts = Regex("\\{\\\\i([01])\\}").split(c.text)
+            val tags = Regex("\\{\\\\i([01])\\}").findAll(c.text).map { it.groupValues[1] }.toList()
+            val body = StringBuilder()
+            parts.forEachIndexed { i, part ->
+                body.append(part.replace(Regex("\\{[^}]*\\}"), "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\\N", "\n"))
+                tags.getOrNull(i)?.let { t -> if (t == "1" && !italicOpen) { body.append("<i>"); italicOpen = true } else if (t == "0" && italicOpen) { body.append("</i>"); italicOpen = false } }
+            }
+            if (italicOpen) body.append("</i>")
+            val line = body.toString().trim()
+            if (line.isEmpty()) continue
+            sb.append(fmt(c.start + ms)).append(" --> ").append(fmt(c.end + ms)).append("\n")
+                .append("<b>").append(line).append("</b>\n\n")
+        }
+        return sb.toString()
+    }
+
+    /** End of the last cue of a WebVTT text, in whole seconds. */
+    fun vttEndSeconds(vtt: String): Int =
+        vtt.lineSequence().filter { "-->" in it }.mapNotNull { TIME.findAll(it).drop(1).firstOrNull()?.let { m -> toMs(m) } }
+            .maxOrNull()?.let { (it / 1000).toInt() + 1 } ?: 0
+
+    /** The first 10 English tracks of [subs], named "English 1 · CC · SRT · release" (for HLS streams). */
+    fun hlsTracks(subs: List<StremioSubtitle>): List<Pair<String, String>> {
+        if (subs.isEmpty()) return emptyList()
+        val p = StremioServer.streamPrefs.copy(styledSubtitles = false, subtitleOffsetMs = 0, subtitleOnlyPreferred = false)
+        return process(subs, p, "").filter { it.lang.equals("eng", true) && it.url.startsWith("http", true) }.take(STYLED_MAX)
+            .mapIndexed { i, s -> ("English ${i + 1}" + s.id.substringAfter(" English", "")).take(90) to s.url }
     }
 
     /**

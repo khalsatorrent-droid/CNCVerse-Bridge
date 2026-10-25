@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **English subtitles built into HLS streams.** HLS links served by the media server now carry the first 10 English subtitles as the stream's own WebVTT tracks, so they show in the player's track list like built-in subtitles (also in external players such as VLC / MX Player). They use the same look as the ASS subtitles: white bold text, black outline, bottom centre (players that apply their own subtitle style, such as Nuvio mobile, use that style instead). The cues are lined up with the video's own timestamps. Switch: Settings > Media server > "English subtitles inside HLS streams".
+
 ## 1.7.34
 
 - **Nuvio mobile: the "· Nuvio mobile" subtitle copies are now bold SRT files.** The ASS file at a link without ".ass" still did not show in Nuvio mobile. The copy is now plain SRT with every line in bold, which Nuvio draws with its own subtitle style (set it to white text with a black outline for the same look). Every styled subtitle request is now written to the bridge log (format, player, served or failed).
