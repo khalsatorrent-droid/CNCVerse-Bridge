@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.40
 
 - **Report card is fairer and more exact.** A title that is not in an extension's catalog (or an episode it does not list) is no longer counted against it, so anime-only or regional extensions are not graded F for movies they never had. The speed now covers the whole answer (search, open title, links) instead of only the last step, the card refreshes by itself while open, and extensions that are switched off are listed last and marked.
 
