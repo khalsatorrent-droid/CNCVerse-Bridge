@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.42
 
 - **Choose which TV extensions go into the combined TV catalog.** Settings > Catalogs > "Which extensions go into the TV catalog": tap an extension to leave it out of "All TV channels (A-Z)" (with All in / All out buttons). An extension left out keeps its own TV catalogs listed separately. The website's Live TV follows the same choice.
 - **Report card: Reset button.** Starts the counting over (asks, hits, speed, last links) so the grades only show how the extensions do from now on. Asks for a second tap to confirm.
