@@ -151,6 +151,7 @@ Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 
 ### 🧰 Handy extras
 - 🗂️ **Backup & import**: all settings, repositories and extensions in one file.
+- 👥 **Profiles** (optional, *Settings → Profiles*): one bridge, several add-on links. Each profile has its own link and its own set of extensions (for example one for the family, one for you). Off by default.
 - 📊 **Extension report card** (Extensions screen): grades every extension A to F from how often it gave links, how many, how fast it answered (search to links) and when it last worked. Titles an extension simply does not have are not held against it. One tap switches off the dead ones (D or F), and *Reset* starts the counting over.
 - 📶 **Bitrate in the results**: each link with a known size shows its bitrate (size / running time).
 - 🚫 **No popups**: the donation popup follows the "support the project" switch (off by default), and popups that extensions open on their own (donation / Telegram ads) are closed at once (switch: *Block extension popups*).
