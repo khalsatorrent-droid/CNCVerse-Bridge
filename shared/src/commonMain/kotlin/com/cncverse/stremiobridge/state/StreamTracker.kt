@@ -248,10 +248,40 @@ object StreamTracker {
         dirty = true
     }
 
-    private fun find(internalName: String): Stat? =
-        stats[internalName]
-            ?: stats.entries.find { it.key.startsWith("${internalName}_") }?.value
+    /**
+     * The numbers for one extension. Requests are recorded under the API's own name ("Plugin_source") and, where the
+     * platform says so, under the bare plugin name too; "Plugin" alone may only be the empty entry made when the
+     * extension was first seen, so an empty exact entry never hides the real numbers.
+     */
+    private fun find(internalName: String): Stat? {
+        val exact = stats[internalName]
+        if (exact != null && (exact.totalRequests > 0 || exact.lastProbeTime > 0)) return exact
+        val sub = stats.entries.filter { it.key.startsWith("${internalName}_") }.map { it.value }
+        return sub.filter { it.totalRequests > 0 || it.lastProbeTime > 0 }.maxByOrNull { it.lastTestedTime }
+            ?: exact
+            ?: sub.firstOrNull()
             ?: stats.entries.find { internalName.startsWith("${it.key}_") }?.value
+    }
+
+    /** All the sources of one extension added up (a single extension can carry several APIs). */
+    fun totalsOf(internalName: String): Stat? {
+        val exact = stats[internalName]
+        val sub = stats.entries.filter { it.key.startsWith("${internalName}_") }.map { it.value }
+        // Recorded under both the plugin and each source name: the plugin's own entry already has the total
+        if (exact != null && exact.totalRequests > 0) return exact
+        val used = sub.filter { it.totalRequests > 0 }
+        if (used.isEmpty()) return exact ?: sub.firstOrNull()
+        if (used.size == 1) return used[0]
+        return Stat(internalName, used[0].pluginName).also { t ->
+            for (u in used) synchronized(u) {
+                t.totalRequests += u.totalRequests; t.successRequests += u.successRequests
+                t.totalStreams += u.totalStreams; t.noMatch += u.noMatch
+                t.totalMs += u.totalMs; t.timedRequests += u.timedRequests
+                if (u.lastSuccessTime > t.lastSuccessTime) t.lastSuccessTime = u.lastSuccessTime
+                if (u.lastTestedTime > t.lastTestedTime) { t.lastTestedTime = u.lastTestedTime; t.lastError = u.lastError }
+            }
+        }
+    }
 
     fun getHealth(internalName: String, pluginName: String, enabled: Boolean, iconUrl: String? = null): PluginStreamHealth {
         return find(internalName)?.toHealth(enabled, iconUrl) ?: PluginStreamHealth(
