@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.43
 
 - **Search report in History.** Every request in the History tab has a "Search report" button that opens a dialog: for each extension how many links it found and how many were sent, how many were dropped and for which setting or reason (hide HLS, minimum resolution, CAM, size, non-seekable ...), and how many were the same link as another and merged. The total line shows found, sent, dropped and merged for the whole search.
 
