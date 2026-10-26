@@ -7,6 +7,19 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 
+/** What happened to the links of one extension in one search: how many it found, why some were dropped, how many were the same as another link. */
+@Serializable
+data class ExtReport(
+    val name: String,
+    val found: Int,
+    /** Links of this extension in the list that was sent */
+    val shown: Int = 0,
+    /** "Hide HLS links is on: 3" */
+    val rejected: List<String> = emptyList(),
+    /** Links dropped because another link had exactly the same address */
+    val merged: Int = 0,
+)
+
 /** One answered stream request: what was asked, what each extension found, and the exact list that was sent. */
 @Serializable
 data class HistoryEntry(
@@ -27,6 +40,8 @@ data class HistoryEntry(
     val lines: List<String> = emptyList(),
     /** The link of each line in [lines] (same order), "" when a line has none. Only kept for the newest entries. */
     val urls: List<String> = emptyList(),
+    /** The search report: one row per extension that found links (empty in entries written by older versions) */
+    val ext: List<ExtReport> = emptyList(),
 )
 
 object StreamHistory {

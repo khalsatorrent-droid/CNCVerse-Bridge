@@ -946,13 +946,15 @@ object StremioServer {
             }
             ServerState.info("[Request] sent ${out.size} link(s) for $type/$id (${(System.currentTimeMillis() - requestStart) / 1000.0}s)")
         } finally {
-            withContext(kotlinx.coroutines.NonCancellable) { recordHistory(type, id, streams, out, requestStart) }
+            withContext(kotlinx.coroutines.NonCancellable) { recordHistory(type, id, prep, requestStart) }
         }
         if (p.prefetchNext) prefetchNextEpisode(type, id)
     }
 
-    private fun recordHistory(type: String, id: String, streams: List<StremioStream>, out: List<StremioStream>, requestStart: Long) {
+    private fun recordHistory(type: String, id: String, prep: Prepared, requestStart: Long) {
         runCatching {
+            val streams = prep.streams
+            val out = prep.out
             val parts = id.split(':')
             val ep = if ((type == "series" || type == "anime") && parts.size >= 3) {
                 if (parts[0] == "kitsu" || parts[0] == "mal" || parts[0] == "anilist" || parts[0] == "anidb") "E${parts.last()}"
@@ -962,10 +964,10 @@ object StremioServer {
                 com.cncverse.stremiobridge.state.HistoryEntry(
                     time = System.currentTimeMillis(), type = type, id = id,
                     title = com.cncverse.stremiobridge.state.StreamHistory.titleFor(id) ?: id.substringBefore(':'),
-                    episode = ep, found = streams.size, shown = out.size,
+                    episode = ep, found = prep.trace.foundTotal.coerceAtLeast(streams.size), shown = out.size,
+                    ext = prep.trace.report(out),
                     tookMs = System.currentTimeMillis() - requestStart,
-                    providers = streams.groupingBy { it.info?.addonName ?: it.name ?: "?" }.eachCount()
-                        .entries.sortedByDescending { it.value }.map { "${it.key}: ${it.value}" },
+                    providers = prep.trace.foundBy.entries.sortedByDescending { it.value }.map { "${it.key}: ${it.value}" },
                     lines = out.map { st -> listOfNotNull(st.name, st.title).joinToString(" | ").replace("\n", " / ").replace("\r", "") },
                     urls = out.map { st -> st.url ?: st.externalUrl ?: st.infoHash?.let { "magnet:?xt=urn:btih:$it" } ?: "" },
                 )
@@ -973,7 +975,46 @@ object StremioServer {
         }
     }
 
-    private class Prepared(val streams: List<StremioStream>, val out: List<StremioStream>, val safeOut: List<StremioStream>)
+    private class Prepared(val streams: List<StremioStream>, val out: List<StremioStream>, val safeOut: List<StremioStream>, val trace: SearchTrace = SearchTrace())
+
+    /**
+     * What the stream settings did to each extension's links in one request (for the search report in History):
+     * how many each extension found, how many were dropped at each step and why, and how many were the same link.
+     */
+    private class SearchTrace {
+        val foundBy = java.util.LinkedHashMap<String, Int>()
+        var foundTotal = 0
+        private val rejected = java.util.LinkedHashMap<String, java.util.LinkedHashMap<String, Int>>()
+        private val merged = java.util.LinkedHashMap<String, Int>()
+        private fun nameOf(st: StremioStream): String = st.info?.addonName ?: st.name ?: "?"
+        private fun counts(l: List<StremioStream>): Map<String, Int> = l.groupingBy { nameOf(it) }.eachCount()
+        fun start(built: List<StremioStream>) { foundTotal = built.size; foundBy.putAll(counts(built)) }
+        /** Records what a step removed: links of each extension that were in [before] but not in [after]. */
+        fun step(reason: String, before: List<StremioStream>, after: List<StremioStream>) {
+            if (after.size >= before.size) return
+            val a = counts(after)
+            counts(before).forEach { (n, c) ->
+                val d = c - (a[n] ?: 0)
+                if (d > 0) { val m = rejected.getOrPut(n) { java.util.LinkedHashMap() }; m[reason] = (m[reason] ?: 0) + d }
+            }
+        }
+        fun mergedAway(before: List<StremioStream>, after: List<StremioStream>) {
+            if (after.size >= before.size) return
+            val a = counts(after)
+            counts(before).forEach { (n, c) -> val d = c - (a[n] ?: 0); if (d > 0) merged[n] = (merged[n] ?: 0) + d }
+        }
+        fun report(out: List<StremioStream>): List<com.cncverse.stremiobridge.state.ExtReport> {
+            val shown = counts(out)
+            val names = (foundBy.keys + rejected.keys + merged.keys).toList()
+            return names.map { n ->
+                com.cncverse.stremiobridge.state.ExtReport(
+                    name = n, found = foundBy[n] ?: 0, shown = shown[n] ?: 0,
+                    rejected = rejected[n]?.entries?.map { "${it.key}: ${it.value}" } ?: emptyList(),
+                    merged = merged[n] ?: 0,
+                )
+            }.sortedByDescending { it.found }
+        }
+    }
 
     /**
      * Everything after the search - archive filter, quality / seek checks, sorting, the stream settings, formatting and the
@@ -981,14 +1022,18 @@ object StremioServer {
      */
     private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false, forWeb: Boolean = false): Prepared {
         val tBuilt = System.currentTimeMillis()
+        val trace = SearchTrace()
+        trace.start(built ?: emptyList())
         // Archive downloads (".zip" season packs) can never play in any player
         val streams = (built ?: emptyList()).filter { !SeekProbe.isArchiveUrl(it.url) }
+        trace.step("Archive file (.zip), cannot be played", built ?: emptyList(), streams)
         // Filters and ordering from the app's stream settings
         val p = streamPrefs
         // Adaptive HLS links report no quality: read their playlist for the real resolution
         // "Hide HLS links" / "Hide direct files" (live TV is always HLS: it keeps its links)
-        val byKind = if (type == "tv" || (!p.hideHlsLinks && !p.hideDirectFiles)) streams
-            else streams.filter { st -> !(p.hideHlsLinks && isHlsLink(st)) && !(p.hideDirectFiles && isDirectFileLink(st)) }
+        var byKind = streams
+        if (type != "tv" && p.hideHlsLinks) { val n = byKind.filter { !isHlsLink(it) }; trace.step("Setting \"Hide HLS links\"", byKind, n); byKind = n }
+        if (type != "tv" && p.hideDirectFiles) { val n = byKind.filter { !isDirectFileLink(it) }; trace.step("Setting \"Hide direct files\"", byKind, n); byKind = n }
         val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(byKind, p.splitHls, 4_000L, p.bestHls) else byKind
         val tProbed = System.currentTimeMillis()
         val sorted = sortStreamsByQuality(probed)
@@ -996,18 +1041,25 @@ object StremioServer {
         // Pixeldrain first, so the seek check below judges the link that is really played: a pixeldrain.com/u/ID address is
         // a web page (it used to be hidden as "not a file") while the fast mirror it becomes is a seekable file
         // and the mirror's redirect is followed here: the list carries the address of the server that holds the file
-        val kept = if (fast) sorted else PixeldrainResolver.resolveAll(filterStreamsByProfile(sorted, p).map { pixeldrainBypass(it, p) })
+        val profiled = if (fast) sorted else filterStreamsByProfile(sorted, p) { why, b, a -> trace.step(why, b, a) }
+        val kept = if (fast) sorted else PixeldrainResolver.resolveAll(profiled.map { pixeldrainBypass(it, p) }).also { trace.step("Pixeldrain link could not be used", profiled, it) }
         // Whatever the settings above did, the list that goes out is sorted by resolution and has nothing below 720p
-        val playableHere = if (p.hideHeaderLinks && !MediaServer.prefs.enabled) kept.filterNot { needsHeaders(it) } else kept
-        val seekable = if (!fast && p.filterNonSeekable) SeekProbe.dropNonSeekable(playableHere) else playableHere
+        val playableHere = if (p.hideHeaderLinks && !MediaServer.prefs.enabled) kept.filterNot { needsHeaders(it) }.also { trace.step("Setting \"Hide links that need headers\"", kept, it) } else kept
+        val seekable = if (!fast && p.filterNonSeekable) SeekProbe.dropNonSeekable(playableHere).also { trace.step("Setting \"Hide non-seekable files\" (the server cannot seek or the link is download-only)", playableHere, it) } else playableHere
         val tSeek = System.currentTimeMillis()
         // live channels (fast): no probes, and no resolution rules - a 480p channel is still a channel
-        val filtered = if (fast) seekable else enforceResolutionOrder(hardsubFirst(applyAnimeAudio(arrangeStreams(seekable, p), p)))
+        val filtered = if (fast) seekable else {
+            val arranged = arrangeStreams(seekable, p)
+            val audioed = applyAnimeAudio(arranged, p).also { trace.step("Anime audio: only ${p.animeAudio} links wanted", arranged, it) }
+            val ordered = hardsubFirst(audioed)
+            enforceResolutionOrder(ordered).also { trace.step("Below the minimum resolution (${p.minResolution.ifBlank { "none" }})", ordered, it) }
+        }
         ServerState.info("[Request] $type/$id timing: search ${(tBuilt - requestStart) / 1000.0}s, quality probe ${(tProbed - tBuilt) / 1000.0}s, seek check ${(tSeek - tProbed) / 1000.0}s")
 
         val out: List<StremioStream> = try {
             // Drop results whose link is exactly the same as an earlier (better ranked) one; different links are never merged
             val unique = filtered.distinctBy<StremioStream, Any> { it.url ?: it.externalUrl ?: it.infoHash?.let { h -> "magnet:$h" } ?: it.ytId?.let { y -> "yt:$y" } ?: it }
+            trace.mergedAway(filtered, unique)
 
             // Streams of upstream add-ons already carry their add-on's own name and description: keep those
             // (marked with the add-on's name) and format only this bridge's own streams
@@ -1032,7 +1084,7 @@ object StremioServer {
             // "Hide subtitles": no subtitle tracks go out (after formatting, so the description stays truthful)
             val out = (if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted)
                 // Links into an extension's own server that no longer answers (and have no copy here) are left out
-                .filter { st -> !LocalRelay.isDeadLink(st) }
+                .let { l -> l.filter { st -> !LocalRelay.isDeadLink(st) }.also { kept2 -> trace.step("The extension's own server no longer answers", l, kept2) } }
                 // One odd link must never cost the whole answer: a link whose rewrite fails goes out as it is
                 .map { st ->
                     try {
@@ -1062,7 +1114,7 @@ object StremioServer {
         // the best direct links are opened now, so their slow start (the source resolving the file) is over when one is chosen
         // (not for the website's growing lists: their best links change while the search runs)
         if (!fast && !forWeb) runCatching { MediaServer.prewarm(safeOut) }
-        return Prepared(streams, out, safeOut)
+        return Prepared(streams, out, safeOut, trace)
     }
 
     // ── Website: search straight in the extensions (their own catalogs and their own links) ──
@@ -2635,17 +2687,21 @@ object StremioServer {
     }
 
     /** Filters a list of streams against a user's profile quality preferences. */
-    fun filterStreamsByProfile(streams: List<StremioStream>, profile: StreamPrefs): List<StremioStream> {
+    fun filterStreamsByProfile(streams: List<StremioStream>, profile: StreamPrefs, note: (String, List<StremioStream>, List<StremioStream>) -> Unit = { _, _, _ -> }): List<StremioStream> {
         var result = streams
 
         // 1. Exclude CAM / Screener rips
         if (profile.excludeCam) {
+            val b = result
             result = result.filter { !isCamStream(it) }
+            note("Setting \"Hide CAM / TeleSync\"", b, result)
         }
 
         // 1b. Streams whose resolution cannot be found at all
         if (profile.hideUnknownQuality) {
+            val b = result
             result = result.filter { detectStreamResolution(it) != "other" }
+            note("Setting \"Hide streams with unknown quality\"", b, result)
         }
 
         // 2. Filter allowed resolutions if user chose specific ones
@@ -2653,10 +2709,12 @@ object StremioServer {
         // the UI has no checkbox for them, so filtering them would silently empty whole titles.
         val allowed = profile.allowedResolutions.map { it.lowercase().trim() }.toSet()
         if (allowed.isNotEmpty() && !allowed.containsAll(SELECTABLE_RESOLUTIONS)) {
+            val b = result
             result = result.filter { stream ->
                 val res = detectStreamResolution(stream).lowercase()
                 res !in SELECTABLE_RESOLUTIONS || res in allowed
             }
+            note("Resolution not ticked in the stream settings", b, result)
         }
 
         // 2b. File size window: only streams whose size is KNOWN can be outside it (unknown always pass)
@@ -2664,10 +2722,12 @@ object StremioServer {
             val gb = 1024.0 * 1024 * 1024
             val lo = (profile.minSizeGb * gb).toLong()
             val hi = if (profile.maxSizeGb > 0) (profile.maxSizeGb * gb).toLong() else Long.MAX_VALUE
+            val b = result
             result = result.filter { st ->
                 val size = com.cncverse.stremiobridge.format.StreamVariables.sizeBytesOf(st) ?: return@filter true
                 size in lo..hi
             }
+            note("File size outside the minimum / maximum size setting", b, result)
         }
 
         // 3. Limit streams per resolution tier if configured
@@ -2680,7 +2740,9 @@ object StremioServer {
                     list.add(st)
                 }
             }
+            val b = result
             result = groups.values.flatten()
+            note("More than ${profile.maxStreamsPerResolution} links of one resolution (setting)", b, result)
         }
 
         return result
