@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.39
 
 - **Bitrate in the results.** Every link with a known size now shows its bitrate next to it ("💾 338 MB • 📶 3.7 Mbps"), worked out from the file size and the episode's or movie's running time (TMDB, or Kitsu / AniList for anime). HLS links with no size show an estimated size and bitrate from their playlist ("💾 ~620 MB (est.) • 📶 6.8 Mbps"). All four built-in formatter layouts show it; a saved copy of the default layout moves to the new one.
 - **README updated** with the features added since 1.7.27.
