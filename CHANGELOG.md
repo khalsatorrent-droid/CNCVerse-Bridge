@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.41
 
 - **Report card shows the real numbers.** On Android the answers were counted under the extension's source name while the card looked under the extension's own name, which only held an empty entry, so every extension said "Not asked yet". The card (and the green/amber health marks) now find the numbers wherever they were counted, and add up the sources of an extension that has several.
 
