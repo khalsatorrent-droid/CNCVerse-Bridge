@@ -55,7 +55,7 @@ private fun ago(ms: Long): String {
 
 private fun buildRows(plugins: List<LoadedPluginInfo>): List<CardRow> =
     plugins.filter { it.apiRegistered }.map { p ->
-        val st = StreamTracker.statOf(p.internalName)
+        val st = StreamTracker.totalsOf(p.internalName)
         val nm = st?.noMatch ?: 0
         // Only answers where the extension had the title count: a title that is not in its catalog is not its fault
         val req = ((st?.totalRequests ?: 0) - nm).coerceAtLeast(0)
