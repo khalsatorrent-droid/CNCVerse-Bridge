@@ -1065,10 +1065,24 @@ object StremioServer {
             // (marked with the add-on's name) and format only this bridge's own streams
             val (fromUpstream, own) = unique.partition { it.info?.linkType == "UPSTREAM" }
             // the running time gives each link's bitrate (size / time); a slow lookup is skipped, the next request has it cached
-            val runtime = if (type == "tv" || own.isEmpty()) null else withTimeoutOrNull(2_500L) { runtimeSec(type, id) }
+            // (looked up together with the files' sizes, which the links' own text rarely gives)
+            val skipBitrate = type == "tv" || own.isEmpty()
+            val (runtime, fileSizes) = if (skipBitrate) Pair<Int?, Map<String, Long>>(null, emptyMap()) else coroutineScope {
+                val r = async { withTimeoutOrNull(2_500L) { runtimeSec(type, id) } }
+                val z = async { runCatching { SizeProbe.fill(own, 2_500L) }.getOrDefault(emptyMap()) }
+                r.await() to z.await()
+            }
+            // No answer for the running time: a usual length for the kind of title, and the bitrate is shown with a "~"
+            val usualSec = when {
+                skipBitrate -> null
+                ExternalIds.parse(id)?.scheme?.let { it in ExternalIds.ANIME_SCHEMES } == true || type == "anime" -> 24 * 60
+                type == "series" -> 42 * 60
+                else -> 110 * 60
+            }
             val ownFormatted = com.cncverse.stremiobridge.format.StreamFormatter.applyFor(
                 own,
-                com.cncverse.stremiobridge.format.StreamFormatter.contextFromId(type, id).copy(runtimeSec = runtime),
+                com.cncverse.stremiobridge.format.StreamFormatter.contextFromId(type, id)
+                    .copy(runtimeSec = runtime ?: usualSec, runtimeApprox = runtime == null && usualSec != null, sizes = fileSizes),
                 null,
             ).associateBy { it.url ?: it.infoHash ?: it.hashCode().toString() }
             val upstreamTagged = fromUpstream.associateBy({ it.url ?: it.infoHash ?: it.hashCode().toString() }) { u ->
