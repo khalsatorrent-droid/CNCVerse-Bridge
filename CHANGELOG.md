@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.44
 
 - **Manage Repos: the Add button is always reachable.** With many repositories the list pushed the address field and the Add / Cancel buttons off the screen, so no more could be added. The list now scrolls by itself and the field and buttons stay at the bottom.
 - **Bitrate on many more results.** A link whose name gives no size now gets its size from its server (a one-byte range request, remembered per link), and when no running time can be found the usual one is used (movie about 110 min, series episode about 42 min, anime about 24 min) and the bitrate is shown with a "~" (for example "~3.7 Mbps").
