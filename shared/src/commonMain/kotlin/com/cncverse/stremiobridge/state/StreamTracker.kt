@@ -58,6 +58,7 @@ internal data class StatRecord(
     val lastProxySuccessTime: Long = 0L,
     val totalMs: Long = 0L,
     val timedRequests: Int = 0,
+    val noMatch: Int = 0,
 )
 
 object StreamTracker {
@@ -84,6 +85,8 @@ object StreamTracker {
         /** Time the extension took to answer for links, summed over [timedRequests] answers. */
         var totalMs: Long = 0L
         var timedRequests: Int = 0
+        /** Requests where the title (or episode) was simply not in this extension's catalog: not counted against it in the report card. */
+        var noMatch: Int = 0
         fun avgMs(): Long = if (timedRequests > 0) totalMs / timedRequests else -1L
 
         /**
@@ -133,7 +136,7 @@ object StreamTracker {
             internalName, pluginName, totalRequests, successRequests, totalStreams, lastStreamCount,
             lastSuccessTime, lastTestedTime, lastError, firstSeen, lastProbeTime, lastDirectProbeStreams,
             lastProxyProbeStreams, lastProxyCountry, lastProbeNote, lastProxySuccessTime,
-            totalMs, timedRequests,
+            totalMs, timedRequests, noMatch,
         )
     }
 
@@ -149,11 +152,12 @@ object StreamTracker {
     /** Set by the geo router: true when the current request ran through a proxy for this plugin. */
     @Volatile var proxiedNow: ((pluginInternalName: String) -> Boolean)? = null
 
-    private fun recordSingle(key: String, pluginName: String, streamCount: Int, error: String?, viaProxy: Boolean) {
+    private fun recordSingle(key: String, pluginName: String, streamCount: Int, error: String?, viaProxy: Boolean, noMatch: Boolean = false) {
         val s = stats.computeIfAbsent(key) { Stat(key, pluginName) }
         s.pluginName = pluginName
         synchronized(s) {
             s.totalRequests++
+            if (noMatch && streamCount == 0) s.noMatch++
             s.lastTestedTime = currentTimeMillis()
             s.lastStreamCount = streamCount
             s.lastError = error
@@ -173,19 +177,20 @@ object StreamTracker {
         internalName: String,
         pluginName: String,
         streamCount: Int,
-        error: String? = null
+        error: String? = null,
+        noMatch: Boolean = false,
     ) {
         val viaProxy = streamCount > 0 && runCatching { proxiedNow?.invoke(pluginInternalName) }.getOrNull() == true
-        recordSingle(pluginInternalName, pluginName, streamCount, error, viaProxy)
+        recordSingle(pluginInternalName, pluginName, streamCount, error, viaProxy, noMatch)
         if (internalName.isNotBlank() && internalName != pluginInternalName) {
-            recordSingle(internalName, pluginName, streamCount, error, viaProxy)
+            recordSingle(internalName, pluginName, streamCount, error, viaProxy, noMatch)
         }
     }
 
     /** How long an extension took to answer for links (feeds the report card). */
-    fun recordTime(pluginInternalName: String, internalName: String, ms: Long) {
+    fun recordTime(pluginInternalName: String, internalName: String, ms: Long, pluginName: String? = null) {
         for (key in setOf(pluginInternalName, internalName).filter { it.isNotBlank() }) {
-            val s = stats[key] ?: continue
+            val s = stats.computeIfAbsent(key) { Stat(key, pluginName ?: key) }
             synchronized(s) { s.totalMs += ms.coerceIn(0L, 120_000L); s.timedRequests++ }
         }
         dirty = true
@@ -296,7 +301,7 @@ object StreamTracker {
                     lastProbeTime = r.lastProbeTime; lastDirectProbeStreams = r.lastDirectProbeStreams
                     lastProxyProbeStreams = r.lastProxyProbeStreams; lastProxyCountry = r.lastProxyCountry
                     lastProbeNote = r.lastProbeNote; lastProxySuccessTime = r.lastProxySuccessTime
-                    totalMs = r.totalMs; timedRequests = r.timedRequests
+                    totalMs = r.totalMs; timedRequests = r.timedRequests; noMatch = r.noMatch
                 }
             }
         }.onFailure { ServerState.warn("Could not read stream_health.json: ${it.message}") }

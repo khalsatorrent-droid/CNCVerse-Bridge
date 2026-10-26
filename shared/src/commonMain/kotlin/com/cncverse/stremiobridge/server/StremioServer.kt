@@ -3144,7 +3144,30 @@ object StremioServer {
             ?: partial.firstOrNull { it.year == null }
     }
 
+    /** Marks a request whose whole time (search + load + links) is timed once, so loadLinksAll does not time it again. */
+    internal class WholeRequestTimed : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<WholeRequestTimed>
+    }
+
+    /** One real answer of an extension, timed from search to links (feeds the report card). A cancelled request is not timed. */
     private suspend fun doBuildGenericStreamsForApi(
+        api: MainApiWrapper,
+        type: String,
+        id: String,
+        title: String,
+        year: Int?,
+        anime: AnimeInfo? = null,
+        target: AnimeTarget? = null,
+    ): List<StremioStream> {
+        val t0 = System.currentTimeMillis()
+        val out = kotlinx.coroutines.withContext(WholeRequestTimed()) {
+            doBuildGenericStreamsForApiInner(api, type, id, title, year, anime, target)
+        }
+        runCatching { StreamTracker.recordTime(api.pluginInternalName, api.internalName, System.currentTimeMillis() - t0, api.name) }
+        return out
+    }
+
+    private suspend fun doBuildGenericStreamsForApiInner(
         api: MainApiWrapper,
         type: String,
         id: String,
@@ -3230,7 +3253,7 @@ object StremioServer {
             alt
         } else null) ?: run {
             ServerState.debug("[${api.name}] No result matches '$title'" + (year?.let { " ($it)" } ?: ""))
-            StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No result matches '$title'")
+            StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No result matches '$title'", noMatch = true)
             return emptyList()
         }
 
@@ -3301,7 +3324,7 @@ object StremioServer {
                 }
                 if (!replaced) {
                     ServerState.debug("[STREAM_EMPTY] [${api.name}] no entry has the episode count of the wanted season ($expected)")
-                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No entry with the wanted season's episode count")
+                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No entry with the wanted season's episode count", noMatch = true)
                     return emptyList()
                 }
             }
@@ -3332,7 +3355,7 @@ object StremioServer {
                 }
                 if (ep == null) {
                     ServerState.debug("[STREAM_EMPTY] [${api.name}] Episode $epNo not found")
-                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode $epNo not found")
+                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode $epNo not found", noMatch = true)
                     return emptyList()
                 }
                 dataUrlToLoad = ep.dataUrl
@@ -3352,7 +3375,7 @@ object StremioServer {
                     ServerState.debug("[${api.name}] Found episode S${season}E${episode}")
                 } else {
                     ServerState.debug("[STREAM_EMPTY] [${api.name}] Episode S${season}E${episode} not found")
-                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode S${season}E${episode} not found")
+                    StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode S${season}E${episode} not found", noMatch = true)
                     return emptyList()
                 }
             }
@@ -3486,11 +3509,12 @@ object VariantData {
  */
 suspend fun MainApiWrapper.loadLinksAll(dataUrl: String): List<StremioStream> {
     val t0 = System.currentTimeMillis()
-    try {
-        return loadLinksAllTimed(dataUrl)
-    } finally {
-        runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordTime(pluginInternalName, internalName, System.currentTimeMillis() - t0) }
+    // Not cancelled: a request the bridge stopped says nothing about the extension's speed
+    val out = loadLinksAllTimed(dataUrl)
+    if (kotlin.coroutines.coroutineContext[StremioServer.WholeRequestTimed.Key] == null) {
+        runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordTime(pluginInternalName, internalName, System.currentTimeMillis() - t0, name) }
     }
+    return out
 }
 
 private suspend fun MainApiWrapper.loadLinksAllTimed(dataUrl: String): List<StremioStream> {
