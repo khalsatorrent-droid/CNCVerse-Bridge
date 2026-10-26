@@ -2,6 +2,8 @@ package com.cncverse.stremiobridge.ui
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.CircleShape
@@ -588,6 +590,7 @@ private fun AddRepoDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = 700.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(AmoledCard)
                 .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
@@ -599,7 +602,8 @@ private fun AddRepoDialog(
 
             Spacer(Modifier.height(20.dp))
 
-            // Existing repos
+            // Existing repos: this part scrolls, so the field and the buttons below always stay in view
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             if (existingRepos.isNotEmpty()) {
                 Text("Added Repos", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
                 Spacer(Modifier.height(8.dp))
@@ -643,6 +647,7 @@ private fun AddRepoDialog(
                     Spacer(Modifier.height(6.dp))
                 }
                 Spacer(Modifier.height(12.dp))
+            }
             }
 
             // Add new URL

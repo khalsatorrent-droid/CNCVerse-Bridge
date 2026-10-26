@@ -277,6 +277,10 @@ data class StreamRequestContext(
     val anime: Boolean = true,
     /** Running time of the movie / episode in seconds (TMDB, Kitsu, AniList), for the bitrate; null when unknown. */
     val runtimeSec: Int? = null,
+    /** True when [runtimeSec] is a usual length for this kind of title (no lookup answered): the bitrate is then shown with a "~". */
+    val runtimeApprox: Boolean = false,
+    /** File sizes the servers reported for direct links (link -> bytes), for links whose text gives none. */
+    val sizes: Map<String, Long> = emptyMap(),
 )
 
 object StreamVariables {
@@ -558,14 +562,15 @@ object StreamVariables {
         val file = fileNameOf(stream)
 
         // Bitrate: file size over running time (or the HLS rendition's bandwidth); an HLS link without a size gets an estimated one
-        val size = sizeFrom(resolution, linkText, releaseText)
+        val size = sizeFrom(resolution, linkText, releaseText) ?: stream.url?.let { ctx.sizes[it] }
         val runtime = ctx.runtimeSec?.takeIf { it > 0 }
         val bw = info?.bandwidth?.takeIf { it > 0 }
         val bps: Long? = if (size != null && size > 0 && runtime != null) size * 8 / runtime else bw
-        val estSize: Long? = if ((size == null || size <= 0) && bw != null && runtime != null) bw * runtime / 8 else null
+        val estSize: Long? = if ((size == null || size <= 0) && bw != null && runtime != null && !ctx.runtimeApprox) bw * runtime / 8 else null
         val bitrate = bps?.takeIf { it in 50_000L..400_000_000L }?.let { b ->
             val mbps = b / 1_000_000.0
-            (if (mbps < 10) String.format(java.util.Locale.ROOT, "%.1f", mbps) else mbps.toLong().toString()) + " Mbps"
+            (if (ctx.runtimeApprox && size != null && size > 0 && runtime != null) "~" else "") +
+                (if (mbps < 10) String.format(java.util.Locale.ROOT, "%.1f", mbps) else mbps.toLong().toString()) + " Mbps"
         }
 
         return mapOf(
