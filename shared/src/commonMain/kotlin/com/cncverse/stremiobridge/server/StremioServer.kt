@@ -214,6 +214,8 @@ object StremioServer {
         val styledSubtitles: Boolean = true,
         /** Every TV extension's catalogs are shown as the one "All TV channels (A-Z)" catalog (the separate ones are not listed). */
         val combineTv: Boolean = true,
+        /** TV extensions (plugin internal names) left out of the combined TV catalog; their own catalogs stay listed. */
+        val tvOff: Set<String> = emptySet(),
         /** Every short-drama extension's catalogs are shown as one "Short dramas" catalog (the separate ones are not listed). */
         val combineShortDrama: Boolean = true,
         /** Extensions (plugin internal names) marked as short-drama by hand / taken out of the automatic detection. */
@@ -1788,10 +1790,12 @@ object StremioServer {
                 out = if ("other/$ALL_DRAMA_ID" in p.disabledCatalogs) rest else rest.take(at) + allDramaDef() + rest.drop(at)
             }
         }
-        val firstTv = out.indexOfFirst { it.type == "tv" }
-        if (firstTv >= 0) {
-            val withoutTv = if (p.combineTv) out.filterIndexed { i, d -> i < firstTv || d.type != "tv" } else out
-            out = if ("tv/$ALL_TV_ID" in p.disabledCatalogs) withoutTv else withoutTv.take(firstTv) + allTvDef() + withoutTv.drop(firstTv)
+        val tvIds = tvSources().map { it.id }.toSet()
+        val firstTv = out.indexOfFirst { it.type == "tv" && (it.id in tvIds || !p.combineTv) }
+        if (firstTv >= 0 || (tvIds.isNotEmpty() && out.any { it.type == "tv" })) {
+            val at = if (firstTv >= 0) firstTv else out.indexOfFirst { it.type == "tv" }
+            val withoutTv = if (p.combineTv) out.filterIndexed { i, d -> i < at || d.type != "tv" || d.id !in tvIds } else out
+            out = if ("tv/$ALL_TV_ID" in p.disabledCatalogs || tvIds.isEmpty()) withoutTv else withoutTv.take(at) + allTvDef() + withoutTv.drop(at)
         }
         return out
     }
@@ -1815,6 +1819,19 @@ object StremioServer {
         }.getOrNull().orEmpty()
         return DRAMA_WORDS.containsMatchIn(api.name + " " + api.internalName + " " + desc)
     }
+
+    /** TV catalogs that go into the combined TV catalog: the ones switched on, of extensions not left out by hand. */
+    private fun tvSources(): List<StremioCatalogDef> =
+        loadedApis.filter { !isGloballyDisabled(it) && it.pluginInternalName !in streamPrefs.tvOff }.flatMap { api ->
+            providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
+        }.filter { it.type == "tv" && it.id != ALL_TV_ID && "tv/${it.id}" !in streamPrefs.disabledCatalogs }.distinctBy { it.id }
+
+    /** Extensions with TV channels (internal name -> name, in the combined catalog or not), for the app's settings. */
+    fun tvChoices(): List<Triple<String, String, Boolean>> =
+        loadedApis.filter { !isGloballyDisabled(it) && it.supportedTypes.any { t -> cs3TvTypeToStremio(t) == "tv" } }
+            .distinctBy { it.pluginInternalName }
+            .map { Triple(it.pluginInternalName, it.name, it.pluginInternalName !in streamPrefs.tvOff) }
+            .sortedBy { it.second.lowercase() }
 
     /** Extensions with a non-TV catalog (internal name -> name, short-drama ones marked), for the app's settings. */
     fun shortDramaChoices(): List<Triple<String, String, Boolean>> =
@@ -2339,9 +2356,7 @@ object StremioServer {
      */
     private suspend fun buildAllTv(search: String?, skip: Int): List<StremioMeta> {
         if (skip > 0) return emptyList()
-        val defs = loadedApis.filter { !isGloballyDisabled(it) }.flatMap { api ->
-            providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)
-        }.filter { it.type == "tv" && it.id != ALL_TV_ID && "tv/${it.id}" !in streamPrefs.disabledCatalogs }.distinctBy { it.id }
+        val defs = tvSources()
         // a source whose first page is not loaded yet is loaded now (each one is cached by buildCatalog), all at the same time
         coroutineScope {
             defs.filter { d -> homePageCatalogCache.keys.none { it.startsWith("tv:${d.id}:") } }.map { d ->
