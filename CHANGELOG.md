@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Report card is fairer and more exact.** A title that is not in an extension's catalog (or an episode it does not list) is no longer counted against it, so anime-only or regional extensions are not graded F for movies they never had. The speed now covers the whole answer (search, open title, links) instead of only the last step, the card refreshes by itself while open, and extensions that are switched off are listed last and marked.
+
 ## 1.7.39
 
 - **Bitrate in the results.** Every link with a known size now shows its bitrate next to it ("💾 338 MB • 📶 3.7 Mbps"), worked out from the file size and the episode's or movie's running time (TMDB, or Kitsu / AniList for anime). HLS links with no size show an estimated size and bitrate from their playlist ("💾 ~620 MB (est.) • 📶 6.8 Mbps"). All four built-in formatter layouts show it; a saved copy of the default layout moves to the new one.
