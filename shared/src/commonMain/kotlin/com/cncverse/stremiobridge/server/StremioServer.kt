@@ -1010,9 +1010,11 @@ object StremioServer {
             // Streams of upstream add-ons already carry their add-on's own name and description: keep those
             // (marked with the add-on's name) and format only this bridge's own streams
             val (fromUpstream, own) = unique.partition { it.info?.linkType == "UPSTREAM" }
+            // the running time gives each link's bitrate (size / time); a slow lookup is skipped, the next request has it cached
+            val runtime = if (type == "tv" || own.isEmpty()) null else withTimeoutOrNull(2_500L) { runtimeSec(type, id) }
             val ownFormatted = com.cncverse.stremiobridge.format.StreamFormatter.applyFor(
                 own,
-                com.cncverse.stremiobridge.format.StreamFormatter.contextFromId(type, id),
+                com.cncverse.stremiobridge.format.StreamFormatter.contextFromId(type, id).copy(runtimeSec = runtime),
                 null,
             ).associateBy { it.url ?: it.infoHash ?: it.hashCode().toString() }
             val upstreamTagged = fromUpstream.associateBy({ it.url ?: it.infoHash ?: it.hashCode().toString() }) { u ->
@@ -2041,6 +2043,60 @@ object StremioServer {
             if (result == null) ServerState.warn("TMDB lookup failed on all hosts: $cleanPath")
             result
         }
+    }
+
+    /** "scheme:key:season:episode" -> running time in seconds (0 = not known). */
+    private val runtimeCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** Running time of the movie / episode behind [id]: TMDB (movie, episode, or the show's usual episode length), Kitsu or AniList for anime ids. */
+    private suspend fun runtimeSec(type: String, id: String): Int? {
+        val ext = ExternalIds.parse(id) ?: return null
+        val key = "${ext.scheme}:${ext.key}:${ext.season}:${ext.episode}"
+        runtimeCache[key]?.let { return it.takeIf { s -> s > 0 } }
+        val minutes: Int? = try {
+            when (ext.scheme) {
+                "imdb", "tvdb", "tmdb" -> {
+                    val isTv = type == "series" || type == "anime" || ext.episode != null
+                    val tmdbId = if (ext.scheme == "tmdb") ext.key else
+                        fetchTmdbJson("find/${ext.key}?external_source=" + (if (ext.scheme == "imdb") "imdb_id" else "tvdb_id"))
+                            ?.get(if (isTv) "tv_results" else "movie_results")
+                            ?.let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                            ?.get("id")?.jsonPrimitive?.contentOrNull
+                    when {
+                        tmdbId == null -> null
+                        !isTv -> fetchTmdbJson("movie/$tmdbId")?.get("runtime")?.jsonPrimitive?.intOrNull
+                        else -> {
+                            val s = ext.season; val e = ext.episode
+                            (if (s != null && e != null) fetchTmdbJson("tv/$tmdbId/season/$s/episode/$e")?.get("runtime")?.jsonPrimitive?.intOrNull else null)
+                                ?: fetchTmdbJson("tv/$tmdbId")?.let { j ->
+                                    (j["episode_run_time"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.jsonPrimitive?.intOrNull
+                                        ?: (j["last_episode_to_air"] as? kotlinx.serialization.json.JsonObject)?.get("runtime")?.jsonPrimitive?.intOrNull
+                                }
+                        }
+                    }
+                }
+                "kitsu" -> getJson("https://kitsu.io/api/edge/anime/${ext.key}", accept = "application/vnd.api+json")
+                    ?.get("data")?.jsonObject?.get("attributes")?.jsonObject?.get("episodeLength")?.jsonPrimitive?.intOrNull
+                "anilist", "mal" -> {
+                    val field = if (ext.scheme == "mal") "idMal" else "id"
+                    val q = "query{Media(" + field + ":" + ext.key + ",type:ANIME){duration}}"
+                    val body = kotlinx.serialization.json.buildJsonObject { put("query", kotlinx.serialization.json.JsonPrimitive(q)) }.toString()
+                    idApiCall(
+                        okhttp3.Request.Builder().url("https://graphql.anilist.co").header("Accept", "application/json")
+                            .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()
+                    )?.let { txt ->
+                        serverJson.parseToJsonElement(txt).jsonObject["data"]?.jsonObject?.get("Media")?.jsonObject?.get("duration")?.jsonPrimitive?.intOrNull
+                    }
+                }
+                else -> null
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) { null }
+        val sec = (minutes ?: 0).coerceIn(0, 600) * 60
+        if (runtimeCache.size > 5_000) runtimeCache.clear()
+        runtimeCache[key] = sec
+        return sec.takeIf { it > 0 }
     }
 
     private val tmdbSeasonCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()

@@ -275,6 +275,8 @@ data class StreamRequestContext(
     val episode: Int? = null,
     /** False for movies and ordinary series: their links get no Sub / Dub / Hardsub label. Previews default to true. */
     val anime: Boolean = true,
+    /** Running time of the movie / episode in seconds (TMDB, Kitsu, AniList), for the bitrate; null when unknown. */
+    val runtimeSec: Int? = null,
 )
 
 object StreamVariables {
@@ -283,7 +285,7 @@ object StreamVariables {
     val NAMES = listOf(
         "addon.name", "metadata.title", "metadata.year",
         "stream.resolution", "stream.quality", "stream.specs", "stream.visualTags", "stream.encode",
-        "stream.audioTags", "stream.audioChannels", "stream.streamType", "stream.size",
+        "stream.audioTags", "stream.audioChannels", "stream.streamType", "stream.size", "stream.bitrate", "stream.estSize",
         "stream.languages", "stream.subtitles", "stream.seasonEpisode", "stream.season",
         "stream.episode", "stream.audioKind", "stream.subType", "stream.host", "stream.source", "stream.label", "stream.match", "stream.matchEpisode", "stream.fileLine", "stream.file", "stream.filename", "stream.name", "stream.title",
     )
@@ -555,6 +557,17 @@ object StreamVariables {
         val source = sourceName(info?.source, addon)
         val file = fileNameOf(stream)
 
+        // Bitrate: file size over running time (or the HLS rendition's bandwidth); an HLS link without a size gets an estimated one
+        val size = sizeFrom(resolution, linkText, releaseText)
+        val runtime = ctx.runtimeSec?.takeIf { it > 0 }
+        val bw = info?.bandwidth?.takeIf { it > 0 }
+        val bps: Long? = if (size != null && size > 0 && runtime != null) size * 8 / runtime else bw
+        val estSize: Long? = if ((size == null || size <= 0) && bw != null && runtime != null) bw * runtime / 8 else null
+        val bitrate = bps?.takeIf { it in 50_000L..400_000_000L }?.let { b ->
+            val mbps = b / 1_000_000.0
+            (if (mbps < 10) String.format(java.util.Locale.ROOT, "%.1f", mbps) else mbps.toLong().toString()) + " Mbps"
+        }
+
         return mapOf(
             "addon.name" to addon,
             "metadata.title" to info?.metadataTitle,
@@ -567,7 +580,9 @@ object StreamVariables {
             "stream.audiotags" to audio,
             "stream.audiochannels" to channels,
             "stream.streamtype" to streamTypeFrom(info, stream),
-            "stream.size" to sizeFrom(resolution, linkText, releaseText),
+            "stream.size" to size,
+            "stream.bitrate" to bitrate,
+            "stream.estsize" to estSize,
             "stream.languages" to languages,
             "stream.subtitles" to cleanSubtitles(stream.subtitles),
             "stream.seasonepisode" to seasonEpisode,
@@ -690,7 +705,7 @@ object StreamFormatter {
             descriptionTemplate = "{metadata.title}{stream.seasonEpisode::exists[\" - {stream.seasonEpisode::join('')}\"||\"\"]}\n" +
                 "{stream.match::exists[\"Matched: {stream.match::truncate(60)}\"||\"\"]}\n" +
                 "{stream.fileline::exists[\"{stream.fileline::truncate(100)}\"||\"\"]}\n" +
-                "{stream.specs::join(' ')}{stream.size::>0[\" | {stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')}\"||\"\"]}{stream.source::exists[\" | {stream.source}\"||\"\"]}\n" +
+                "{stream.specs::join(' ')}{stream.size::>0[\" | {stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')}\"||\"{stream.estsize::>0[\" | ~{stream.estsize::bytes2::replace('GiB','GB')::replace('MiB','MB')}\"||\"\"]}\"]}{stream.bitrate::exists[\" | {stream.bitrate}\"||\"\"]}{stream.source::exists[\" | {stream.source}\"||\"\"]}\n" +
                 "Audio: {stream.languages::default('Multi')}{stream.subtitles::exists[\" | Subs: {stream.subtitles::join(', ')}\"||\"\"]}"
         ),
         FormatterPreset(
@@ -702,7 +717,7 @@ object StreamFormatter {
                 "{stream.match::exists[\"🔎 Match: {stream.match::truncate(90)}\"||\"\"]}\n" +
                 "{stream.fileline::exists[\"📄 {stream.fileline::truncate(120)}\"||\"\"]}\n" +
                 "⚙️ Specs: {stream.specs::join(' • ')}\n" +
-                "📦 Size: {stream.size::>0[\"{stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')}\"||\"Direct Stream\"]} • Host: {addon.name}\n" +
+                "📦 Size: {stream.size::>0[\"{stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')}\"||\"{stream.estsize::>0[\"~{stream.estsize::bytes2::replace('GiB','GB')::replace('MiB','MB')} (est.)\"||\"Direct Stream\"]}\"]}{stream.bitrate::exists[\" • {stream.bitrate}\"||\"\"]} • Host: {addon.name}\n" +
                 "🔊 Audio: {stream.languages::default('Original')}\n" +
                 "{stream.subtitles::exists[\"📝 Subs: {stream.subtitles::join(', ')}\"||\"\"]}"
         ),
@@ -715,7 +730,7 @@ object StreamFormatter {
                 "{stream.match::exists[\"Matched: {stream.match::truncate(90)}\"||\"\"]}\n" +
                 "{stream.fileline::exists[\"{stream.fileline::truncate(120)}\"||\"\"]}\n" +
                 "{stream.specs::join(' • ')}\n" +
-                "{stream.size::>0[\"Size: {stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')} • \"||\"\"]}Audio: {stream.languages::default('Default')}"
+                "{stream.size::>0[\"Size: {stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')} • \"||\"\"]}{stream.bitrate::exists[\"Bitrate: {stream.bitrate} • \"||\"\"]}Audio: {stream.languages::default('Default')}"
         )
     )
 
@@ -758,8 +773,8 @@ object StreamFormatter {
         "{stream.languages::exists[\"🎧 Audio: {stream.languages::join(', ')}\"||\"\"]}\n" +
         "{stream.subtitles::exists[\"💬 Subs: {stream.subtitles::join(', ')}\"||\"\"]}"
 
-    /** Current layout: the extension's episode and the file name on one line. */
-    const val PRESET_DESCRIPTION =
+    /** The layout of 1.5.12 - 1.7.38 (size without the bitrate). */
+    private const val PRESET_DESCRIPTION_V6 =
         "{stream.seasonEpisode::exists[\"📡 {metadata.title} • {stream.seasonEpisode::join('')}\"||\"🍿 {metadata.title::default('CNCVerse stream')}\"]}\n" +
         "{stream.match::exists[\"🔎 Matched: {stream.match::truncate(90)}\"||\"\"]}\n" +
         "{stream.fileline::exists[\"📄 {stream.fileline::truncate(120)}\"||\"\"]}\n" +
@@ -771,6 +786,19 @@ object StreamFormatter {
         "{stream.languages::exists[\"🎧 Audio: {stream.languages::join(', ')}\"||\"\"]}\n" +
         "{stream.subtitles::exists[\"💬 Subs: {stream.subtitles::join(', ')}\"||\"\"]}"
 
+    /** Current layout: the extension's episode and the file name on one line. */
+    const val PRESET_DESCRIPTION =
+        "{stream.seasonEpisode::exists[\"📡 {metadata.title} • {stream.seasonEpisode::join('')}\"||\"🍿 {metadata.title::default('CNCVerse stream')}\"]}\n" +
+        "{stream.match::exists[\"🔎 Matched: {stream.match::truncate(90)}\"||\"\"]}\n" +
+        "{stream.fileline::exists[\"📄 {stream.fileline::truncate(120)}\"||\"\"]}\n" +
+        "{stream.label::exists[\"🏷️ {stream.label::truncate(90)}\"||\"\"]}\n" +
+        "{stream.audiokind::exists[\"🗣️ {stream.audiokind}{stream.subtype::exists[\" • {stream.subtype}\"||\"\"]}\"||\"\"]}\n" +
+        "🎞️ {stream.specs::length::>0[\"{stream.specs::join(' • ')}\"||\"{stream.resolution::default('Auto')} • {stream.streamType::default('HLS')}\"]}\n" +
+        "🛰️ {addon.name}{stream.source::exists[\" • {stream.source}\"||\"\"]}{stream.host::exists[\" • {stream.host}\"||\"\"]}\n" +
+        "{stream.size::>0[\"💾 {stream.size::bytes2::replace('GiB','GB')::replace('MiB','MB')}{stream.bitrate::exists[\" • 📶 {stream.bitrate}\"||\"\"]}\"||\"{stream.estsize::>0[\"💾 ~{stream.estsize::bytes2::replace('GiB','GB')::replace('MiB','MB')} (est.){stream.bitrate::exists[\" • 📶 {stream.bitrate}\"||\"\"]}\"||\"\"]}\"]}\n" +
+        "{stream.languages::exists[\"🎧 Audio: {stream.languages::join(', ')}\"||\"\"]}\n" +
+        "{stream.subtitles::exists[\"💬 Subs: {stream.subtitles::join(', ')}\"||\"\"]}"
+
     /** Built-in layouts of earlier versions: a saved copy of one of them is moved to the current layout. */
     private val OLD_PRESET_DESCRIPTIONS: List<String> = run {
         val v2 = PRESET_DESCRIPTION_V3.lines().filter { !it.contains("stream.host") }.joinToString("\n") +
@@ -778,7 +806,7 @@ object StreamFormatter {
         val srcLine = "🛰️ Source: {addon.name}{stream.source::exists[\" • {stream.source}\"||\"\"]}"
         val v2full = PRESET_DESCRIPTION_V3.lines().joinToString("\n") { if (it.contains("stream.host")) srcLine else it }
         val v1 = v2full.lines().filter { !it.contains("stream.audiokind") }.joinToString("\n")
-        listOf(PRESET_DESCRIPTION_V5, PRESET_DESCRIPTION_V4, PRESET_DESCRIPTION_V3, v2full, v1, v2.trimEnd())
+        listOf(PRESET_DESCRIPTION_V6, PRESET_DESCRIPTION_V5, PRESET_DESCRIPTION_V4, PRESET_DESCRIPTION_V3, v2full, v1, v2.trimEnd())
     }
     private val OLD_PRESET_NAME = "🌀 CNCVerse {stream.resolution::=2160p[\"❄️ 4K\"||\"{stream.resolution::=1080p[\"🧊 {stream.resolution::default('Auto')}\"||\"🎬 {stream.resolution::default('Auto')}\"]}\"]} • {addon.name}"
 

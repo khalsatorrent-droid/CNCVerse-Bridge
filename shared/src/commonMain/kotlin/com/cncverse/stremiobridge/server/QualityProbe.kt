@@ -183,7 +183,7 @@ object QualityProbe {
                 // Play the highest rendition every time (when the sound is inside it), and label it with that resolution
                 val top = if (bestOnly && !probe.externalAudio) topVariant(variants) else null
                 out += if (top != null && top.url != s.url) {
-                    s.copy(url = top.url, info = info.copy(quality = best, linkType = s.info?.linkType ?: "M3U8"))
+                    s.copy(url = top.url, info = info.copy(quality = best, linkType = s.info?.linkType ?: "M3U8", bandwidth = top.bandwidth.takeIf { it > 0 }))
                 } else s.copy(info = info.copy(quality = best))
                 continue
             }
@@ -197,7 +197,7 @@ object QualityProbe {
                 out += s.copy(
                     url = v.url,
                     name = (s.name ?: "") + " " + label,
-                    info = info.copy(quality = v.height, linkName = (base + " " + label).trim()),
+                    info = info.copy(quality = v.height, linkName = (base + " " + label).trim(), bandwidth = v.bandwidth.takeIf { it > 0 }),
                 )
             }
             out += s.copy(

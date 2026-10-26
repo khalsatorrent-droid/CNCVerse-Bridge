@@ -169,6 +169,8 @@ data class StreamInfo(
     val matchedName: String? = null,
     /** The episode of that entry this link belongs to, as the extension lists it ("S2E2 · Episode name"), so the user can judge if it is the right episode. */
     val matchedEpisode: String? = null,
+    /** HLS rendition bandwidth from the master playlist (bits per second), when this link is one rendition. */
+    val bandwidth: Long? = null,
 )
 
 @Serializable
