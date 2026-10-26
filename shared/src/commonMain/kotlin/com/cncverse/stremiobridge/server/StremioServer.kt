@@ -416,6 +416,7 @@ object StremioServer {
             loadDisabledPlugins()
             streamPrefsFile = File(cacheDir, "stream_prefs.json")
             loadStreamPrefs()
+            Profiles.load(cacheDir)
             catalogsOffMarker = File(cacheDir, "catalogs_disabled_globally")
             ServerState.disableCatalogsGlobally = catalogsOffMarker?.exists() == true
             com.cncverse.stremiobridge.format.StreamFormatter.init(cacheDir)
@@ -656,6 +657,8 @@ object StremioServer {
      * loaded plugin shares the same display name), preventing cross-repo collisions.
      */
     fun isGloballyDisabled(api: MainApiWrapper): Boolean {
+        // Serving an extra profile: it uses exactly the extensions it was given
+        Profiles.current.get()?.let { return !Profiles.allows(it, api) }
         // A source's own choice wins over its plugin's (multi-source plugins: PlayFy = Live
         // Events + Highlights + one source per playlist enabled in its settings)
         if (api.internalName != api.pluginInternalName) {
@@ -784,23 +787,37 @@ object StremioServer {
             get("/media/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
 
             // ── Addon ────────────────────────────────────────────────────────
-            // /u/{id}/… are older per-profile addon URLs; profiles are gone, so they
-            // serve the same addon (installs made with them keep working).
+            // /u/{id}/… are the links of the extra profiles (Settings > Profiles); an id that is not a profile
+            // serves the main add-on (older installs made with such links keep working).
             get("/manifest.json") { ServerState.info("[Request] manifest"); call.respond(buildManifest()) }
-            get("/u/{profileId}/manifest.json") { call.respond(buildManifest()) }
+            get("/u/{profileId}/manifest.json") { call.asProfile { call.respond(buildManifest()) } }
 
-            get("/catalog/{path...}") { call.respondCatalog() }
-            get("/u/{profileId}/catalog/{path...}") { call.respondCatalog() }
+            get("/catalog/{path...}") { call.asProfile { call.respondCatalog() } }
+            get("/u/{profileId}/catalog/{path...}") { call.asProfile { call.respondCatalog() } }
 
-            get("/meta/{type}/{id}.json") { call.respondMeta() }
-            get("/u/{profileId}/meta/{type}/{id}.json") { call.respondMeta() }
+            get("/meta/{type}/{id}.json") { call.asProfile { call.respondMeta() } }
+            get("/u/{profileId}/meta/{type}/{id}.json") { call.asProfile { call.respondMeta() } }
 
-            get("/stream/{type}/{id}.json") { call.respondStreams() }
-            get("/u/{profileId}/stream/{type}/{id}.json") { call.respondStreams() }
+            get("/stream/{type}/{id}.json") { call.asProfile { call.respondStreams() } }
+            get("/u/{profileId}/stream/{type}/{id}.json") { call.asProfile { call.respondStreams() } }
 
-            get("/subtitles/{type}/{id}.json") { call.respondSubtitles() }
-            get("/u/{profileId}/subtitles/{type}/{id}.json") { call.respondSubtitles() }
+            get("/subtitles/{type}/{id}.json") { call.asProfile { call.respondSubtitles() } }
+            get("/u/{profileId}/subtitles/{type}/{id}.json") { call.asProfile { call.respondSubtitles() } }
         }
+    }
+
+    /** Runs [block] as the profile named in the link (/u/{profileId}/…), or as the main profile. */
+    private suspend fun ApplicationCall.asProfile(block: suspend () -> Unit) {
+        Profiles.run(Profiles.find(parameters["profileId"])) { block() }
+    }
+
+    /** The stream cache, with the profile of the request carried into the shared fetch (it runs in a scope of its own). */
+    private suspend fun profiledFetch(
+        key: String, providerKey: String?,
+        fetcher: suspend () -> com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult,
+    ): List<StremioStream> {
+        val prof = Profiles.current.get()
+        return com.cncverse.stremiobridge.cache.StreamCacheManager.getOrFetchResult(key, providerKey) { Profiles.run(prof) { fetcher() } }
     }
 
     // ── Route handlers ───────────────────────────────────────────────────────
@@ -927,7 +944,7 @@ object StremioServer {
         // The player is not kept waiting for ever: after RESPONSE_CAP_MS an empty list goes out (late results
         // are in the cache for the next try)
         // The search runs detached: a player that hangs up (or this cap) must not cancel it, it keeps filling the cache
-        val search = streamSearchScope.async(pluginDispatcher) { buildStreams(type, id) }
+        val search = streamSearchScope.async(pluginDispatcher + Profiles.element()) { buildStreams(type, id) }
         val built = withTimeoutOrNull(RESPONSE_CAP_MS) { search.await() }
         if (built == null) ServerState.warn("[Request] $type/$id: search still running after ${RESPONSE_CAP_MS / 1000}s - answering now, results will be in the cache for the next try")
         val prep = prepareStreams(type, id, built, requestStart)
@@ -1972,9 +1989,9 @@ object StremioServer {
             .let { kotlin.math.abs(it) % 10000 }
 
         return StremioManifest(
-            id          = "com.cncverse.stremiobridge",
+            id          = "com.cncverse.stremiobridge" + (Profiles.current.get()?.let { "." + it.id } ?: ""),
             version     = "1.0.$configHash",
-            name        = "CNCVerse Bridge",
+            name        = "CNCVerse Bridge" + (Profiles.current.get()?.let { " - " + it.name } ?: ""),
             description = "Cloudstream plugin bridge for Stremio \u2014 Developed by NivinCNC",
             logo        = "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Bridge/refs/heads/main/logo.png",
             types       = types,
@@ -2886,7 +2903,7 @@ object StremioServer {
             val directCacheKey = "stream:direct:$pluginKey:$dataUrl"
             // Live TV / live events: links are short-lived session URLs — never cache them.
             val isLive = type == "tv" || matchingApis.all { api -> api.supportedTypes.all { it == "tv" } }
-            return com.cncverse.stremiobridge.cache.StreamCacheManager.getOrFetchResult(directCacheKey, pluginKey) {
+            return profiledFetch(directCacheKey, pluginKey) {
                 ServerState.info("Parallel stream load: ${matchingApis.size} API(s) for key '$pluginKey'")
 
                 val accumulated = java.util.concurrent.CopyOnWriteArrayList<StremioStream>()
@@ -2959,14 +2976,14 @@ object StremioServer {
             .map { it.internalName }.sorted().plus(UpstreamAddons.active().map { it.url }).joinToString(",").hashCode()
         val aggCacheKey = "stream:generic:$type:$id:$activeSig"
 
-        return com.cncverse.stremiobridge.cache.StreamCacheManager.getOrFetchResult(aggCacheKey, null) {
+        return profiledFetch(aggCacheKey, null) {
             try {
                 // Anime ids: every title the show is known by (English, romaji, synonyms) for the matching
                 val animeInfo = if (ext.scheme in ExternalIds.ANIME_SCHEMES) AnimeResolver.resolve(ext) else null
                 val resolved = resolveExternal(type, ext) ?: animeInfo?.let { it.titles.first() to it.year }
                 if (resolved == null) {
                     ServerState.warn("Media resolve failed: no title/year found for $id")
-                    return@getOrFetchResult com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult(emptyList())
+                    return@profiledFetch com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult(emptyList())
                 }
                 val (title, year) = resolved
                 com.cncverse.stremiobridge.state.StreamHistory.noteTitle(id, title)

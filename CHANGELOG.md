@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Profiles.** Settings > Profiles. Off by default: the bridge is one main profile (the extensions switched on in the Extensions screen, link `/manifest.json`). Switch "Use several profiles" on to make more: each profile has a name, its own add-on link (`/u/<id>/manifest.json`, shown for the internet address and for this network, with a Copy button) and its own set of extensions, picked from the installed ones. A new profile starts with the extensions that are on now. Stremio / Nuvio see each profile as a separate add-on, with its own catalogs, streams and subtitles.
+
 ## 1.7.44
 
 - **Manage Repos: the Add button is always reachable.** With many repositories the list pushed the address field and the Add / Cancel buttons off the screen, so no more could be added. The list now scrolls by itself and the field and buttons stay at the bottom.

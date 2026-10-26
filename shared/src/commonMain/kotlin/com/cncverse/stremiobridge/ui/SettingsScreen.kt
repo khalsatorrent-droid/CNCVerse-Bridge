@@ -49,6 +49,7 @@ fun SettingsScreen() {
             DnsCard()
             StreamsCard()
             CatalogsCard()
+            ProfilesCard()
             FormatterCard()
             StreamCacheCard()
             MediaServerCard()
