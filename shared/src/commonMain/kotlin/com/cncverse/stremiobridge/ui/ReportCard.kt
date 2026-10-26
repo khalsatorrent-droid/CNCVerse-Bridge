@@ -91,6 +91,7 @@ private fun gradeColor(g: String): Color = when (g) {
 fun ReportCardDialog(onDismiss: () -> Unit) {
     val plugins by ServerState.globalLoadedPlugins.collectAsState()
     var tick by remember { mutableStateOf(0) }
+    var confirmReset by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(3000); tick++ } }
     val rows = remember(plugins, tick) { buildRows(plugins) }
     val dead = rows.filter { (it.grade == "F" || it.grade == "D") && it.requests >= 3 && !it.off }
@@ -135,6 +136,9 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
                         dead.forEach { com.cncverse.stremiobridge.server.StremioServer.setPluginDisabled(it.id, disabled = true) }
                         tick++
                     }) { Text("Switch off ${dead.size} dead", color = Red400) }
+                    TextButton(onClick = {
+                        if (confirmReset) { StreamTracker.resetCounts(); confirmReset = false; tick++ } else confirmReset = true
+                    }) { Text(if (confirmReset) "Tap again to reset" else "Reset", color = Red400) }
                     TextButton(onClick = { tick++ }) { Text("Refresh", color = Violet400) }
                     TextButton(onClick = onDismiss) { Text("Close", color = TextPrimary) }
                 }

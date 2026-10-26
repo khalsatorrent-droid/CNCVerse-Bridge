@@ -310,6 +310,17 @@ object StreamTracker {
 
     fun getAllHealth(): Map<String, Stat> = stats
 
+    /** Starts the report card over: asks, hits, speed and last-success are zeroed; health probes and first-seen dates stay. */
+    fun resetCounts() {
+        for (s in stats.values) synchronized(s) {
+            s.totalRequests = 0; s.successRequests = 0; s.totalStreams = 0; s.noMatch = 0
+            s.totalMs = 0; s.timedRequests = 0; s.lastStreamCount = 0
+            s.lastSuccessTime = 0; s.lastProxySuccessTime = 0; s.lastError = null
+        }
+        dirty = true
+        saveIfDirty()
+    }
+
     fun clear() {
         stats.clear()
         dirty = true
