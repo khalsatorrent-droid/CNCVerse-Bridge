@@ -28,6 +28,8 @@ private fun clock(ms: Long): String {
 fun HistoryScreen(onCopy: (String) -> Unit = {}) {
     val entries by StreamHistory.entries.collectAsState()
     var open by remember { mutableStateOf<Long?>(null) }
+    var report by remember { mutableStateOf<HistoryEntry?>(null) }
+    report?.let { SearchReportDialog(it) { report = null } }
 
     Column(Modifier.fillMaxSize().background(AmoledBlack).systemBarsPadding()) {
         Row(
@@ -51,7 +53,7 @@ fun HistoryScreen(onCopy: (String) -> Unit = {}) {
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                itemsIndexed(entries, key = { i, it -> "${it.time}|${it.id}|$i" }) { _, e -> HistoryCard(e, open == e.time, { open = if (open == e.time) null else e.time }, onCopy) }
+                itemsIndexed(entries, key = { i, it -> "${it.time}|${it.id}|$i" }) { _, e -> HistoryCard(e, open == e.time, { open = if (open == e.time) null else e.time }, onCopy, { report = e }) }
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
@@ -69,7 +71,7 @@ private fun listText(e: HistoryEntry): String = buildString {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, onCopy: (String) -> Unit) {
+private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, onCopy: (String) -> Unit, onReport: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AmoledCard)
             .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
@@ -93,6 +95,7 @@ private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, 
             Text(e.providers.joinToString("  •  "), color = TextSecondary, fontSize = 11.sp)
         }
         Text(e.id, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        TextButton(onClick = onReport, contentPadding = PaddingValues(0.dp)) { Text("Search report: who found what, what was dropped and why", fontSize = 12.sp) }
         if (expanded) {
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(color = DividerColor)
@@ -116,4 +119,48 @@ private fun HistoryCard(e: HistoryEntry, expanded: Boolean, toggle: () -> Unit, 
             Text("Tap to see the list as shown - long press to copy it all", color = TextMuted, fontSize = 10.sp)
         }
     }
+}
+
+/** "Search completed": per extension how many links it found, how many were dropped (and for which reason) and how many were the same link. */
+@Composable
+private fun SearchReportDialog(e: HistoryEntry, onDismiss: () -> Unit) {
+    fun count(t: String) = t.substringAfterLast(": ").trim().toIntOrNull() ?: 0
+    val rejected = e.ext.sumOf { x -> x.rejected.sumOf { count(it) } }
+    val merged = e.ext.sumOf { it.merged }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = {
+            Column {
+                Text("Search completed", fontWeight = FontWeight.Bold)
+                Text(e.title + if (e.episode.isNotEmpty()) "  ·  ${e.episode}" else "", fontSize = 13.sp, color = TextSecondary)
+            }
+        },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Found ${e.found}  ·  sent ${e.shown}  ·  dropped $rejected  ·  same link merged $merged  ·  ${"%.1f".format(e.tookMs / 1000.0)}s",
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                )
+                if (e.ext.isEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (e.providers.isEmpty()) "No extension found a link." else "This request was answered by an older version, which did not keep the details.\n" + e.providers.joinToString("\n"),
+                        fontSize = 12.sp, color = TextMuted,
+                    )
+                }
+                e.ext.forEach { x ->
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = DividerColor)
+                    Spacer(Modifier.height(8.dp))
+                    Text(x.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    val lost = x.found > 0 && x.shown == 0
+                    Text("found ${x.found}  ·  sent ${x.shown}", fontSize = 12.sp, color = if (lost) Red400 else if (x.shown > 0) Green400 else TextSecondary)
+                    x.rejected.forEach { Text("dropped  ${it.substringAfterLast(": ")}  -  ${it.substringBeforeLast(": ")}", fontSize = 12.sp, color = TextSecondary) }
+                    if (x.merged > 0) Text("merged  ${x.merged}  -  same link as one that was already in the list", fontSize = 12.sp, color = TextSecondary)
+                    if (x.found > 0 && x.rejected.isEmpty() && x.merged == 0 && x.shown < x.found) Text("${x.found - x.shown} not in the list for another reason", fontSize = 12.sp, color = TextMuted)
+                }
+            }
+        },
+    )
 }

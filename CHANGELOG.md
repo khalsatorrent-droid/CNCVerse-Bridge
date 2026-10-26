@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Search report in History.** Every request in the History tab has a "Search report" button that opens a dialog: for each extension how many links it found and how many were sent, how many were dropped and for which setting or reason (hide HLS, minimum resolution, CAM, size, non-seekable ...), and how many were the same link as another and merged. The total line shows found, sent, dropped and merged for the whole search.
+
 ## 1.7.42
 
 - **Choose which TV extensions go into the combined TV catalog.** Settings > Catalogs > "Which extensions go into the TV catalog": tap an extension to leave it out of "All TV channels (A-Z)" (with All in / All out buttons). An extension left out keeps its own TV catalogs listed separately. The website's Live TV follows the same choice.
