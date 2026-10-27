@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.4
 
 - **Movies and series: CineStream's matching rules.** More extensions find the title (anime are not affected).
   - **Spelling:** names that differ only in spaces and punctuation match ("Spiderman" / "Spider-Man", "Wall E" / "WALL·E"), like CineStream's slug comparison.
