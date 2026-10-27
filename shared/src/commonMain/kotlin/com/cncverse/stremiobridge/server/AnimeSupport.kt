@@ -600,7 +600,10 @@ object AnimeEpisodes {
      * flat run (1..N), one run per season, or absolute numbers - all four are tried in that order.
      */
     fun pick(episodes: List<MediaInfoEpisode>?, season: Int?, episode: Int): MediaInfoEpisode? {
-        val list = episodes.orEmpty()
+        // Episodes named "Episode 12" / "Ep 12" but without a number get that number; a list that counts down is turned around
+        val list = TitleMatch.ordered(episodes.orEmpty().map { e ->
+            if (e.episode != null) e else TitleMatch.episodeNumberFromName(e.name)?.let { n -> e.copy(episode = n) } ?: e
+        })
         if (list.isEmpty()) return null
         val wantedSeason = season ?: 1
         // 1. exactly that season and episode

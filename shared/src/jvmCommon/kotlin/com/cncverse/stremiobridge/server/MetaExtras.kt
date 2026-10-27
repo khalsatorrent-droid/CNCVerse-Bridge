@@ -35,6 +35,16 @@ private fun Any.syncId(vararg keys: String): Int? {
     return null
 }
 
+/** IMDb / TMDB id the extension put on its LoadResponse (addImdbId / addTMDbId), through LoadResponse.Companion. */
+private fun Any.companionId(method: String): String? = runCatching {
+    val cls = Class.forName("com.lagradost.cloudstream3.LoadResponse", false, javaClass.classLoader)
+    val companion = cls.getField("Companion").get(null)
+    (companion.javaClass.getMethod(method, cls).invoke(companion, this) as? String)?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+}.getOrNull()
+
+private val IMDB_IN = Regex("tt[0-9]{5,10}")
+private val DIGITS = Regex("^[0-9]{1,9}$")
+
 fun MediaInfo.withExtras(resp: Any): MediaInfo {
     val genres = (resp.get("getTags") as? List<*>)?.mapNotNull { (it as? String)?.trim()?.takeIf { s -> s.isNotEmpty() } }
         ?.distinct()?.take(30)?.takeIf { it.isNotEmpty() }
@@ -55,6 +65,8 @@ fun MediaInfo.withExtras(resp: Any): MediaInfo {
         contentRating = resp.str("getContentRating"),
         aniListId = resp.syncId("anilist"),
         malId = resp.syncId("myanimelist", "mal"),
+        imdbId = resp.companionId("getImdbId")?.let { IMDB_IN.find(it)?.value },
+        tmdbId = resp.companionId("getTMDbId")?.substringAfterLast('/')?.takeIf { DIGITS.matches(it) },
     )
 }
 

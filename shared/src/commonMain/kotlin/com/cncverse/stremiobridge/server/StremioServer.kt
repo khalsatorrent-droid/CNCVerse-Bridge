@@ -423,6 +423,7 @@ object StremioServer {
             com.cncverse.stremiobridge.cache.StreamCacheManager.init(cacheDir)
             MediaServer.init(cacheDir)
             runCatching { NameStore.init(cacheDir) }
+            runCatching { MatchMemory.init(cacheDir) }
             // settings saved before the store was ready at the first lookup are read now
             runCatching { com.cncverse.stremiobridge.network.DohConfig.reload() }
             runCatching { SubtitleTools.init(cacheDir) }
@@ -3318,6 +3319,189 @@ object StremioServer {
         }
     }
 
+    /** A matched movie / series page of one extension: the result, its page, the link data to load and the episode label. */
+    private class GenericMatch(val match: SearchResult, val info: MediaInfo, val dataUrl: String, val episodeLabel: String?)
+
+    private fun episodeLabelOf(ep: MediaInfoEpisode): String? {
+        val numbers = listOfNotNull(ep.season?.let { "S$it" }, (ep.episode ?: TitleMatch.episodeNumberFromName(ep.name))?.let { "E$it" }).joinToString("")
+        return listOfNotNull(numbers.takeIf { it.isNotEmpty() }, ep.name?.trim()?.takeIf { it.isNotEmpty() })
+            .joinToString(" · ").takeIf { it.isNotEmpty() }
+    }
+
+    /** id -> other titles (TMDB alternative titles, Latin script), fetched once per id for the extra searches. */
+    private val genericAltTitles = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<String>>>()
+
+    private suspend fun altTitlesFor(type: String, id: String): List<String> {
+        val ext = ExternalIds.parse(id) ?: return emptyList()
+        if (ext.scheme !in setOf("imdb", "tmdb", "tvdb")) return emptyList()
+        val key = "$type:${ext.scheme}:${ext.key}"
+        if (genericAltTitles.size > 2_000) genericAltTitles.clear()
+        val job = genericAltTitles.getOrPut(key) {
+            streamSearchScope.async {
+                runCatching { if (type == "movie") tmdbMovieAltTitles(ext) else tmdbAlternativeTitles(ext) }.getOrDefault(emptyList())
+            }
+        }
+        return withTimeoutOrNull(4_000L) { job.await() } ?: emptyList()
+    }
+
+    /** TMDB's alternative titles of a movie (Latin script), like [tmdbAlternativeTitles] for series. */
+    private suspend fun tmdbMovieAltTitles(ext: ExternalId): List<String> {
+        val movieId = when (ext.scheme) {
+            "tmdb" -> ext.key
+            "imdb" -> fetchTmdbJson("find/${ext.key}?external_source=imdb_id")
+                ?.get("movie_results")?.let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                ?.get("id")?.jsonPrimitive?.contentOrNull
+            else -> null
+        } ?: return emptyList()
+        val details = fetchTmdbJson("movie/$movieId")
+        val original = details?.get("original_title")?.jsonPrimitive?.contentOrNull
+        val results = fetchTmdbJson("movie/$movieId/alternative_titles")?.get("titles") as? kotlinx.serialization.json.JsonArray
+        val names = (listOfNotNull(original) + results.orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull })
+            .map { it.trim() }
+            .filter { n -> n.length >= 3 && n.count { c -> c.code < 0x250 } * 10 >= n.length * 8 }
+            .distinctBy { AnimeMatcher.normalize(it) }
+        return names.take(10)
+    }
+
+    /**
+     * Finds the movie / episode in one extension that has its own catalog (no TMDB): the page remembered from an earlier
+     * match first, then the search results scored by [TitleMatch.score] (today's picks are kept as candidates too), up to 4
+     * pages opened two at a time. A page is accepted when its IMDb / TMDB id is the requested one, rejected when that id is
+     * another one; without an id a movie page must have about the same year and not be a series, and a series page must
+     * have the episode (the season can come from the entry's title). Nothing fits: up to two other spellings are searched.
+     */
+    private suspend fun matchGeneric(
+        api: MainApiWrapper, type: String, id: String, title: String, year: Int?, firstResults: List<SearchResult>,
+    ): GenericMatch? {
+        val cacheKey = api.internalName
+        val parsed = ExternalIds.parse(id)
+        val season = if (type == "series") parsed?.season else null
+        val episode = if (type == "series") parsed?.episode else null
+        val isEpisode = season != null && episode != null
+        val wantImdb = parsed?.takeIf { it.scheme == "imdb" }?.key
+        val wantTmdb = parsed?.takeIf { it.scheme == "tmdb" }?.key
+        val memKey = MatchMemory.key(api.internalName, id, season)
+        val tried = HashSet<String>()
+        var noEpisode = false
+
+        suspend fun loadInfo(url: String): MediaInfo? = try {
+            SearchLoadCache.getLoad(cacheKey, url)?.info
+                ?: api.load(url)?.also { SearchLoadCache.putLoad(cacheKey, url, it) }
+        } catch (e: Throwable) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            ServerState.debug("[${api.name}] load failed for $url: ${e.message}")
+            null
+        }
+
+        fun idVerdict(mi: MediaInfo): Boolean? {
+            if (wantImdb != null && mi.imdbId != null) return mi.imdbId.equals(wantImdb, true)
+            if (wantTmdb != null && mi.tmdbId != null) return mi.tmdbId == wantTmdb
+            return null
+        }
+
+        fun accept(c: SearchResult, mi: MediaInfo): GenericMatch? {
+            val verdict = idVerdict(mi)
+            if (verdict == false) {
+                ServerState.debug("[${api.name}] '${c.name}' is another title (id ${mi.imdbId ?: mi.tmdbId})")
+                return null
+            }
+            if (!isEpisode) {
+                if (verdict == null && type == "movie") {
+                    val my = mi.year
+                    if (year != null && my != null && kotlin.math.abs(my - year) > 1) {
+                        ServerState.debug("[${api.name}] '${c.name}' is from $my, not $year")
+                        return null
+                    }
+                    val t = mi.type.lowercase()
+                    if ((mi.episodes?.size ?: 0) > 1 && (t.contains("series") || t.contains("anime") || t.contains("drama") || t.contains("cartoon"))) {
+                        ServerState.debug("[${api.name}] '${c.name}' is a series page")
+                        return null
+                    }
+                }
+                return GenericMatch(c, mi, mi.dataUrl, null)
+            }
+            val entrySeason = TitleMatch.seasonFromTitle(c.name) ?: TitleMatch.seasonFromTitle(mi.name)
+            val ep = TitleMatch.findSeriesEpisode(mi.episodes, season!!, episode!!, entrySeason, absoluteEpisodes[id])
+            if (ep == null) {
+                noEpisode = true
+                ServerState.debug("[${api.name}] '${c.name}' has no S${season}E$episode")
+                return null
+            }
+            return GenericMatch(c, mi, ep.dataUrl, episodeLabelOf(ep))
+        }
+
+        suspend fun tryCandidates(cands: List<SearchResult>, how: String, budget: Int): GenericMatch? {
+            val todo = cands.filter { it.url !in tried }.take(budget)
+            tried.addAll(todo.map { it.url })
+            for (pair in todo.chunked(2)) {
+                val infos = coroutineScope { pair.map { c -> async { c to loadInfo(c.url) } }.awaitAll() }
+                val accepted = infos.mapNotNull { (c, mi) -> mi?.let { accept(c, it)?.let { m -> m to idVerdict(it) } } }
+                val pick = accepted.firstOrNull { it.second == true } ?: accepted.firstOrNull()
+                if (pick != null) {
+                    val m = pick.first
+                    ServerState.debug("[${api.name}] Match: '${m.match.name}' ($how${if (pick.second == true) ", id confirmed" else ""})")
+                    MatchMemory.put(memKey, m.match.url, m.match.name)
+                    return m
+                }
+            }
+            return null
+        }
+
+        // 1. the page that had this title / season last time
+        MatchMemory.get(memKey)?.let { (url, name) ->
+            tryCandidates(listOf(SearchResult(name, url, null, type, null)), "remembered page", 1)?.let { return it }
+            MatchMemory.forget(memKey)
+        }
+
+        // 2. the scored results of the first search, plus today's picks (exact "<title> season N" post, exact / partial title, fuzzy)
+        fun candidatesOf(results: List<SearchResult>): List<SearchResult> {
+            val ranked = TitleMatch.rank(results, title, year, season)
+            val legacy = buildList {
+                if (season != null) {
+                    val wanted = normalizeTitle(title)
+                    val seasonRx = Regex("^" + Regex.escape(wanted) + " (?:season 0*$season|s0*$season)(?: |$)")
+                    results.find { r -> seasonRx.containsMatchIn(normalizeTitle(r.name)) }?.let { add(it) }
+                }
+                pickBestMatch(results, title, year)?.let { add(it) }
+                AnimeMatcher.pickFuzzy(results, title, year, season)?.let { add(it) }
+            }
+            return (ranked + legacy).distinctBy { it.url }
+        }
+        var budget = 4
+        val first = candidatesOf(firstResults)
+        tryCandidates(first, "search '$title'", budget)?.let { return it }
+        budget -= minOf(budget, first.size)
+
+        // 3. other spellings: no punctuation, no subtitle, other titles, title + year (at most two more searches)
+        val variants = TitleMatch.queryVariants(title, year, if (first.isEmpty()) altTitlesFor(type, id) else emptyList(), max = 2)
+        for (q in variants) {
+            if (budget <= 0 && tried.isNotEmpty()) break
+            val more = try {
+                SearchLoadCache.getSearch(cacheKey, q)
+                    ?: api.search(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
+            } catch (e: Throwable) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                emptyList()
+            }
+            val cands = candidatesOf(more).filter { it.url !in tried }
+            if (cands.isEmpty()) continue
+            tryCandidates(cands, "search '$q'", budget.coerceAtLeast(2))?.let { return it }
+            budget -= minOf(budget, cands.size)
+        }
+
+        if (tried.isEmpty()) {
+            ServerState.debug("[${api.name}] No result matches '$title'" + (year?.let { " ($it)" } ?: ""))
+            StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No result matches '$title'", noMatch = true)
+        } else if (noEpisode) {
+            ServerState.debug("[STREAM_EMPTY] [${api.name}] Episode S${season}E$episode not found on ${tried.size} page(s)")
+            StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode S${season}E$episode not found", noMatch = true)
+        } else {
+            ServerState.debug("[${api.name}] ${tried.size} page(s) opened, none is '$title'")
+            StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No page of '$title' (${tried.size} checked)", noMatch = true)
+        }
+        return null
+    }
+
     /** Lower-cases and strips punctuation/extra spaces so "Spider-Man: No Way Home" == "spider man no way home". */
     private fun normalizeTitle(s: String): String = s.lowercase()
         .replace("&", " and ")
@@ -3408,6 +3592,13 @@ object StremioServer {
             emptyList<SearchResult>()
         }
         ServerState.debug("[${api.name}] Found ${searchResults.size} results")
+
+        // Movies and series: every fitting result is scored and up to 4 are opened, the extension's own IMDb / TMDB ids
+        // confirm a page, and a page without the episode makes way for the next one
+        if (anime == null && !id.startsWith("probe_")) {
+            val m = matchGeneric(api, type, id, title, year, searchResults) ?: return emptyList()
+            return linksFor(api, m.match.name, m.dataUrl, m.episodeLabel, title, year)
+        }
 
         val requestedSeason = if (type == "series" && id.contains(":")) ExternalIds.parse(id)?.season else null
 
@@ -3562,7 +3753,16 @@ object StremioServer {
                 // A later-season entry (kitsu "Season 2") numbers its own episodes from 1; a franchise page lists seasons
                 val wantSeason = if (target != null) (if (mergedList) 1 else target.index + 1)
                     else anime.seasonHint?.takeIf { it > 1 } ?: parsed?.season
-                var ep = if (epNo != null) AnimeEpisodes.pick(epList, wantSeason, epNo) else epList.first()
+                // A page in TMDB's own season numbering (several seasons the size of TMDB's), or one running list of the whole
+                // show: the request's TMDB numbers / the running number fit it better than the AniList entry's own numbers
+                val style = if (parsed != null && parsed.scheme in setOf("imdb", "tmdb", "tvdb") && parsed.season != null && parsed.episode != null)
+                    TitleMatch.numbering(epList, tmdbAllSeasonCounts(parsed)) else TitleMatch.Numbering.UNKNOWN
+                var ep = when (style) {
+                    TitleMatch.Numbering.TMDB -> AnimeEpisodes.pick(epList, parsed!!.season, parsed.episode!!)
+                    TitleMatch.Numbering.ABSOLUTE -> absoluteEpisodes[id]?.let { abs -> AnimeEpisodes.pick(epList, 1, abs) }
+                    else -> null
+                }?.also { ServerState.debug("[${api.name}] page numbered like ${style.name.lowercase()}: episode '${it.name}'") }
+                    ?: if (epNo != null) AnimeEpisodes.pick(epList, wantSeason, epNo) else epList.first()
                 if (ep == null && target != null) {
                     // Last resorts, so a correct entry still gives results: TMDB's own numbers, then the running number
                     ep = parsed?.season?.let { sn -> parsed.episode?.let { en -> AnimeEpisodes.pick(epList, sn, en) } }
@@ -3605,6 +3805,11 @@ object StremioServer {
                 }
             }
         }
+        return linksFor(api, bestMatch.name, dataUrlToLoad, matchedEpisode, title, year)
+    }
+
+    /** The links of the matched page / episode, labelled with the entry they came from. */
+    private suspend fun linksFor(api: MainApiWrapper, matchName: String, dataUrlToLoad: String, matchedEpisode: String?, title: String, year: Int?): List<StremioStream> {
         ServerState.debug("[${api.name}] Loading links for $dataUrlToLoad")
         try {
             val links = api.loadLinksAll(dataUrlToLoad)
@@ -3615,9 +3820,9 @@ object StremioServer {
                 ServerState.debug("[STREAM_EMPTY] [${api.name}] 0 streamable links returned for '$title'")
             }
             return links.map { stream ->
-                val newName = bestMatch.name + (if (!stream.name.isNullOrBlank()) "\n${stream.name}" else "")
+                val newName = matchName + (if (!stream.name.isNullOrBlank()) "\n${stream.name}" else "")
                 val info = (stream.info ?: com.cncverse.stremiobridge.model.StreamInfo(addonName = api.name))
-                    .copy(metadataTitle = title, metadataYear = year, matchedName = bestMatch.name, matchedEpisode = matchedEpisode)
+                    .copy(metadataTitle = title, metadataYear = year, matchedName = matchName, matchedEpisode = matchedEpisode)
                 stream.copy(name = newName, info = info)
             }
         } catch (e: Throwable) {
@@ -3817,6 +4022,9 @@ data class MediaInfo(
     /** AniList / MyAnimeList ids the extension reports for this entry (anime), null when it does not. */
     val aniListId: Int? = null,
     val malId: Int? = null,
+    /** IMDb ("tt…") / TMDB ids the extension reports for this page (addImdbId / addTMDbId): they confirm a match exactly. */
+    val imdbId: String? = null,
+    val tmdbId: String? = null,
 )
 
 fun SearchResult.toStremiMeta(pluginInternalName: String, stremioType: String): StremioMeta {
