@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.51
 
 - **Anime: the right episode between TMDB / IMDb and Kitsu.** The anime entry and episode for a TMDB / IMDb season and episode now come from the mapping Stremio's own Kitsu add-on keeps (each Kitsu episode lists its IMDb season and episode - the same data CineStream uses), with arm.haglund.dev for the ids. Adding up TMDB season sizes is only used when that mapping has no answer, since it gave the wrong episode whenever Kitsu / AniList split a show into cours, parts or specials differently from TMDB. This applies three ways: a TMDB / IMDb request is also searched as `kitsu:<entry>:<episode>`, the entry and episode handed to anime extensions come from the same mapping, and a Kitsu / MAL / AniList request is also searched as the matching IMDb `tt…:season:episode`.
 
