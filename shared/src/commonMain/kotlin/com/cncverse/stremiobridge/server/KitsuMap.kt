@@ -44,6 +44,9 @@ object KitsuMap {
     /** kitsu id -> (when, AniList id or 0 when none). */
     private val toAniList = ConcurrentHashMap<String, Pair<Long, Int>>()
 
+    /** Low memory: the episode lists go (fetched again when needed); the small id maps stay. */
+    fun trim() { metas.clear(); byImdb.clear() }
+
     private fun fresh(at: Long) = System.currentTimeMillis() - at < TTL_MS
 
     private fun fetch(url: String): JsonElement? = runCatching {

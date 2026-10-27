@@ -10,5 +10,5 @@ import kotlinx.coroutines.Dispatchers
  * cap. A view of Dispatchers.IO with its own, larger limit does not take threads from the rest of the app either.
  */
 object PluginThreads {
-    val io: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(192)
+    val io: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(96)
 }

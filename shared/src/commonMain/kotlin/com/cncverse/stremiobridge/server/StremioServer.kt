@@ -2940,9 +2940,19 @@ object StremioServer {
      * Modeled on CloudStream's APIRepository cache (LRU-style, keyed by
      * "pluginInternalName::query" or "pluginInternalName::url").
      */
+    /**
+     * Android says the phone is short of memory ([critical]: very short): cached extension pages, older searches and the
+     * Kitsu episode lists are dropped. Nothing is lost - they are fetched again when a search needs them.
+     */
+    fun trimMemory(critical: Boolean) {
+        runCatching { SearchLoadCache.trim(critical) }
+        runCatching { KitsuMap.trim() }
+        ServerState.debug("[Memory] Low memory: cached pages" + (if (critical) ", searches" else "") + " cleared")
+    }
+
     private object SearchLoadCache {
         private const val TTL_MS = 30 * 60 * 1_000L   // load() results: 30 minutes (the next episode of a series opens without loading its page again)
-        private const val MAX_ENTRIES = 500
+        private const val MAX_ENTRIES = 200
         // Search results (shared by Stremio's catalog search and the IMDb/TMDB stream lookup):
         // hits 30 min, empty results 5 min so a site that hiccupped isn't "no results" for long
         private const val SEARCH_TTL_MS = 30 * 60 * 1_000L
@@ -2988,9 +2998,32 @@ object StremioServer {
             return e.value
         }
 
+        /**
+         * Pages are kept by size, not only by count: a page of a long anime holds 1000+ episodes (One Piece on AnimePahe,
+         * with every episode's title, picture and summary), and 500 of those used to stay in memory for half an hour -
+         * enough to push other apps out of the phone's memory. At most [MAX_EPISODES] episodes in all; the oldest go first.
+         */
+        private const val MAX_EPISODES = 12_000
+        private fun weight(e: Entry<CachedLoad>) = 1 + (e.value.info?.episodes?.size ?: 0)
+
         fun putLoad(apiKey: String, url: String, value: MediaInfo?) {
-            if (loadCache.size >= MAX_ENTRIES) loadCache.keys.take(50).forEach { loadCache.remove(it) }
+            val now = System.currentTimeMillis()
+            loadCache.entries.filter { now - it.value.timestamp > TTL_MS }.forEach { loadCache.remove(it.key) }
             loadCache[loadKey(apiKey, url)] = Entry(CachedLoad(value))
+            var total = loadCache.values.sumOf { weight(it) }
+            if (total > MAX_EPISODES || loadCache.size > MAX_ENTRIES) {
+                for (old in loadCache.entries.sortedBy { it.value.timestamp }) {
+                    if (total <= MAX_EPISODES * 3 / 4 && loadCache.size <= MAX_ENTRIES) break
+                    if (loadCache.remove(old.key) != null) total -= weight(old.value)
+                }
+            }
+        }
+
+        /** The phone is short of memory: the pages go (they are loaded again when needed), and the older searches. */
+        fun trim(all: Boolean) {
+            loadCache.clear()
+            val now = System.currentTimeMillis()
+            searchCache.entries.filter { all || now - it.value.timestamp > 5 * 60_000L }.forEach { searchCache.remove(it.key) }
         }
 
         fun invalidate(apiKey: String) {
@@ -3813,7 +3846,8 @@ object StremioServer {
             if ((expected.isNotEmpty() || idVerdict(mediaInfo) != null) && !fits(mediaInfo)) {
                 ServerState.debug("[${api.name}] '${bestMatch.name}' has ${mediaInfo.episodes?.size} episodes, wanted about $expected - trying other entries")
                 var replaced = false
-                for (c in AnimeMatcher.rank(pool, anime, animeSeason).filter { it.url != bestMatch.url }) {
+                // at most 3 other entries are opened: each is a whole page (1000+ episodes for a long show)
+                for (c in AnimeMatcher.rank(pool, anime, animeSeason).filter { it.url != bestMatch.url }.take(3)) {
                     val mi = try {
                         SearchLoadCache.getLoad(cacheKey, c.url)?.info
                             ?: api.load(c.url)?.also { SearchLoadCache.putLoad(cacheKey, c.url, it) }

@@ -72,6 +72,24 @@ class StremioApp : Application() {
         }
     }
 
+    /**
+     * Android asks running apps to give memory back when the phone runs short (other apps would be closed otherwise):
+     * the bridge drops its cached extension pages and older searches - they are loaded again when needed.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        @Suppress("DEPRECATION")
+        val critical = level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL || level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+        @Suppress("DEPRECATION")
+        // not on UI_HIDDEN (the app's screen was just left - normal while watching in another app)
+        if (level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW || level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL || level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) runCatching { com.cncverse.stremiobridge.server.StremioServer.trimMemory(critical) }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        runCatching { com.cncverse.stremiobridge.server.StremioServer.trimMemory(true) }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(

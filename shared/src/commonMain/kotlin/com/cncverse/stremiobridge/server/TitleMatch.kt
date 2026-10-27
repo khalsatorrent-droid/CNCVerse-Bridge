@@ -172,7 +172,10 @@ object TitleMatch {
     /** The list in viewing order: by air date when every episode has one, reversed when the numbers count down. */
     fun ordered(episodes: List<MediaInfoEpisode>): List<MediaInfoEpisode> {
         if (episodes.size < 2) return episodes
-        if (episodes.all { numberOf(it) == null } && episodes.all { it.releasedMs != null }) return episodes.sortedBy { it.releasedMs }
+        // No numbers but dates: the site's own order is the viewing order (a date can be when the site uploaded the
+        // episode, not when it aired - AnimePahe), only a list that runs newest first is turned around
+        if (episodes.all { numberOf(it) == null } && episodes.all { it.releasedMs != null })
+            return if (episodes.first().releasedMs!! > episodes.last().releasedMs!!) episodes.reversed() else episodes
         val nums = episodes.mapNotNull { numberOf(it) }
         if (nums.size >= 2 && nums.first() > nums.last()) return episodes.reversed()
         return episodes

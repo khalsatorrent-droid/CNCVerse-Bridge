@@ -649,6 +649,9 @@ object AnimeEpisodes {
         }
         // 4. no episode numbers at all: the order of the list
         if (list.all { it.episode == null }) return list.getOrNull(episode - 1)
+        // 5. one flat list where only some episodes carry a number (AnimePahe names episodes by their titles): the
+        //    entry at that place, when it has no number of its own that says otherwise
+        if (seasons.size == 1) list.getOrNull(episode - 1)?.takeIf { it.episode == null }?.let { return it }
         return null
     }
 }
