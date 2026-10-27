@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.49
 
 - **Fixed link (pencarimovie relay) is set more reliably.** The relay is slow at times, and a single registration attempt with short time limits often failed ("the relay did not accept the registration"), so the fixed link kept leading to an old tunnel. Now each registration gets more time and is tried up to 4 times (after 5, 15 and 30 s), and while the tunnel runs the relay is told again every 15 minutes, so a link refused at start-up still gets fixed.
 
