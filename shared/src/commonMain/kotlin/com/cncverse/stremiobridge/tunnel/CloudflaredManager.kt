@@ -35,6 +35,9 @@ object CloudflaredManager {
      * it trusted were compromised, Oct 2026). An older downloaded copy is replaced (desktop); the Android app bundles
      * its own copy, which an app update replaces.
      */
+    /** The temporary link of the running quick tunnel (the fixed-link refresher stops when it changes). */
+    @Volatile private var currentQuickUrl: String? = null
+
     const val MIN_VERSION = "2026.10.2"
 
     @Volatile private var versionChecked: Pair<String, String?>? = null
@@ -278,11 +281,26 @@ object CloudflaredManager {
                             ServerState.info("🚀 Cloudflare tunnel ready: $url  (Stremio add-on: $url/manifest.json)")
                             // A temporary link gets a fixed address that redirects to it (opt-in, see StableLink)
                             if (quick && StableLink.enabled && QUICK_URL.matches(url)) {
+                                currentQuickUrl = url
                                 launch(Dispatchers.IO) {
                                     val fixed = StableLink.register(url)
                                     if (fixed != null && ServerState.activeTunnelUrl.value == url) {
                                         ServerState.activeTunnelUrl.value = fixed
                                         ServerState.info("🔗 Fixed link: $fixed  (Stremio add-on: $fixed/manifest.json) - redirects to $url")
+                                    }
+                                    // While this tunnel runs, the relay is told again every 15 minutes (and a link that
+                                    // was refused at start-up gets its next chance here)
+                                    while (isActive && process.isAlive && currentQuickUrl == url) {
+                                        delay(15 * 60_000L)
+                                        if (!isActive || !process.isAlive || currentQuickUrl != url) break
+                                        val again = StableLink.refresh(url)
+                                        val shown = ServerState.activeTunnelUrl.value
+                                        if (again != null && shown == url) {
+                                            ServerState.activeTunnelUrl.value = again
+                                            ServerState.info("🔗 Fixed link: $again  (Stremio add-on: $again/manifest.json) - redirects to $url")
+                                        } else if (again == null && shown != url && shown == StableLink.url) {
+                                            ServerState.warn("Fixed link: the relay did not take the new registration - it may still lead to an older tunnel; trying again in 15 minutes")
+                                        }
                                     }
                                 }
                             }

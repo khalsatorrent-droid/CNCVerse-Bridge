@@ -64,34 +64,64 @@ object StableLink {
 
     val url: String get() = "https://$id-tunnel.pencarimovie.com"
 
+    // The relay can be slow (its own client notes 8-9 s per registration): generous time limits
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns).connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
+            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
     }
+
+    /** One registration round on both relay addresses; true when either accepted it. */
+    private fun registerOnce(quickUrl: String): Boolean {
+        val json = """{"shortId":"$id","tunnelUrl":"$quickUrl"}"""
+        var accepted = false
+        for (endpoint in listOf(PRIMARY, FALLBACK)) {
+            val code = runCatching {
+                client.newCall(okhttp3.Request.Builder().url(endpoint).post(json.toRequestBody("application/json".toMediaType())).build())
+                    .execute().use { it.code }
+            }.getOrElse { -1 }
+            if (code in 200..299) accepted = true
+            else ServerState.debug("Fixed link: ${endpoint.substringAfter("//").substringBefore('/')} answered ${if (code < 0) "nothing (timed out)" else "HTTP $code"}")
+        }
+        return accepted
+    }
+
+    /** True when [url]/manifest.json answers. */
+    private fun fixedLinkAnswers(): Boolean = runCatching {
+        client.newCall(okhttp3.Request.Builder().url("$url/manifest.json").build()).execute().use { it.isSuccessful }
+    }.getOrDefault(false)
 
     /**
      * Registers [quickUrl] and returns the fixed address once it really leads to this bridge (its /manifest.json answers),
-     * or null when the relay could not be reached or the address does not work yet - the caller keeps the temporary link.
-     * Blocking: call from a background thread.
+     * or null when the relay did not take it - the caller keeps the temporary link (and may call again later).
+     * A refused or slow registration is tried again (after 5, 15 and 30 s) before giving up. Blocking: background thread.
      */
     fun register(quickUrl: String): String? {
-        val body = """{"shortId":"$id","tunnelUrl":"$quickUrl"}""".toRequestBody("application/json".toMediaType())
         var accepted = false
-        for (endpoint in listOf(PRIMARY, FALLBACK)) {
-            val ok = runCatching {
-                client.newCall(okhttp3.Request.Builder().url(endpoint).post(body).build()).execute().use { it.isSuccessful }
-            }.getOrDefault(false)
-            accepted = accepted || ok
+        for ((i, wait) in listOf(0L, 5_000L, 15_000L, 30_000L).withIndex()) {
+            if (wait > 0) Thread.sleep(wait)
+            if (registerOnce(quickUrl)) { accepted = true; break }
+            if (i < 3) ServerState.info("Fixed link: the relay did not take the registration (try ${i + 1} of 4) - trying again")
         }
-        if (!accepted) { ServerState.warn("Fixed link: the relay did not accept the registration - keeping the temporary link"); return null }
+        if (!accepted) { ServerState.warn("Fixed link: the relay did not accept the registration after 4 tries - keeping the temporary link (tried again in 15 minutes)"); return null }
         // The quick tunnel and the relay need a moment: check that the fixed address answers before it is shown
-        repeat(6) { attempt ->
-            val live = runCatching {
-                client.newCall(okhttp3.Request.Builder().url("$url/manifest.json").build()).execute().use { it.isSuccessful }
-            }.getOrDefault(false)
-            if (live) return url
-            if (attempt < 5) Thread.sleep(2_500)
+        repeat(8) { attempt ->
+            if (fixedLinkAnswers()) return url
+            if (attempt < 7) Thread.sleep(2_500)
         }
-        ServerState.warn("Fixed link: $url does not answer yet - keeping the temporary link")
+        ServerState.warn("Fixed link: $url does not answer yet - keeping the temporary link (tried again in 15 minutes)")
+        return null
+    }
+
+    /**
+     * Keeps the relay pointed at [quickUrl] while the tunnel runs: registers again (quietly) every 15 minutes, and when
+     * the fixed link does not lead here any more. Returns the fixed address when it works, null otherwise.
+     */
+    fun refresh(quickUrl: String): String? {
+        if (!registerOnce(quickUrl)) return null
+        repeat(4) { attempt ->
+            if (fixedLinkAnswers()) return url
+            if (attempt < 3) Thread.sleep(2_500)
+        }
         return null
     }
 }
