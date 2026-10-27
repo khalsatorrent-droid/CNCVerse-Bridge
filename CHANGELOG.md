@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.48
 
 - **Faster searches, without losing any results.** The extensions start searching sooner; every wait that decides how many links you get is unchanged:
   - a series is no longer checked against AniList before every request (the "not an anime" answer is remembered for 12 hours, a failed check is asked again);
