@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Bitrate on every link, whatever the layout.** The bitrate only showed with the current built-in layout; a custom layout, a preset saved before the bitrate existed or an older saved copy showed the size without it. Now the bitrate is added after the size (or on its own line) whenever the layout has none.
 - **Styled subtitles are now SSA.** The first 10 English subtitles are sent as SSA (SubStation Alpha v4.00, `.ssa` links) instead of ASS, with the same look: white bold text, black outline, bottom centre. Links handed out earlier keep working.
 
 ## 1.7.45

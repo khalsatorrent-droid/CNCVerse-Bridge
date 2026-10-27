@@ -298,7 +298,7 @@ object StreamVariables {
 
     private val RES_RX = Regex("(?<![0-9])(4320|2160|1440|1080|720|576|480|360|240)[pi](?![A-Za-z0-9])", RegexOption.IGNORE_CASE)
     private val UHD_RX = rx("4k|uhd")
-    private val SIZE_RX = Regex("(?<![A-Za-z0-9.])(\\d+(?:[.,]\\d+)?)\\s?(TB|TiB|GB|GiB|MB|MiB)(?![A-Za-z])", RegexOption.IGNORE_CASE)
+    internal val SIZE_RX = Regex("(?<![A-Za-z0-9.])(\\d+(?:[.,]\\d+)?)\\s?(TB|TiB|GB|GiB|MB|MiB)(?![A-Za-z])", RegexOption.IGNORE_CASE)
     private val SXE_RX = Regex("(?<![A-Za-z0-9])S(\\d{1,2})\\s?E(\\d{1,4})(?![0-9])", RegexOption.IGNORE_CASE)
 
     private val QUALITY_TAGS = listOf(
@@ -871,7 +871,7 @@ object StreamFormatter {
             val newName = name?.render(vars)?.trim()?.takeIf { it.isNotEmpty() } ?: stream.name
             val newDesc = desc?.render(vars)
                 ?.lines()?.map { it.trimEnd() }?.filter { it.isNotBlank() }?.joinToString("\n")
-                ?.takeIf { it.isNotEmpty() } ?: stream.title
+                ?.takeIf { it.isNotEmpty() }?.let { withBitrate(it, vars["stream.bitrate"] as? String) } ?: stream.title
             stream.copy(name = newName, title = newDesc)
         } catch (e: Throwable) {
             stream // never let a template problem drop a stream
@@ -879,6 +879,20 @@ object StreamFormatter {
     }
 
     /** Applies the saved templates to a stream response when the formatter is enabled. */
+    /**
+     * Layouts that have no bitrate of their own (a custom one, a saved copy of an older built-in one, a preset saved before the
+     * bitrate existed) still get it: it goes after the size on the size line, or on its own line when the layout shows no size.
+     */
+    internal fun withBitrate(desc: String, bitrate: String?): String {
+        if (bitrate == null || desc.contains("Mbps")) return desc
+        val lines = desc.lines().toMutableList()
+        val sized = { l: String -> StreamVariables.SIZE_RX.containsMatchIn(l) }
+        val i = lines.indexOfFirst { sized(it) && ("💾" in it || "📦" in it || it.contains("size", true)) }
+            .takeIf { it >= 0 } ?: lines.indexOfLast { sized(it) }
+        if (i >= 0) lines[i] = lines[i] + " • 📶 " + bitrate else lines += "📶 $bitrate"
+        return lines.joinToString("\n")
+    }
+
     fun apply(streams: List<StremioStream>, ctx: StreamRequestContext): List<StremioStream> {
         if (!config.enabled) return streams
         val n = nameTpl
