@@ -3128,7 +3128,8 @@ object StremioServer {
         val activeSig = loadedApis.asSequence()
             .filter { api -> !isGloballyDisabled(api) && api.supportedTypes.any { it != "tv" } }
             .map { it.internalName }.sorted().plus(UpstreamAddons.active().map { it.url }).joinToString(",").hashCode()
-        val aggCacheKey = "stream:generic:$type:$id:$activeSig"
+        // "k2": answers saved before the strict Kitsu matching are not served again
+        val aggCacheKey = "stream:generic:k2:$type:$id:$activeSig"
 
         return profiledFetch(aggCacheKey, null) {
             try {
@@ -3211,6 +3212,21 @@ object StremioServer {
                     }
                 }
                 val pathCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+                // Anime with a Kitsu entry (a Kitsu / MAL / AniList id, or the Kitsu episode found for a TMDB / IMDb one):
+                // strict mode - every extension only searches Kitsu's own names for that entry, takes only results named
+                // exactly like them and Kitsu's episode number in them. An extension without such an entry gives nothing
+                // (no TMDB / similar-name guessing, which brought the first season's episode for a later season).
+                val strictKitsuJob = streamSearchScope.async {
+                    val key = if (ext.scheme in ExternalIds.ANIME_SCHEMES && ext.episode != null) id
+                        else altIdJob.await()?.takeIf { it.startsWith("kitsu:") }
+                    val p = key?.let { ExternalIds.parse(it) } ?: return@async null
+                    val kid = if (p.scheme == "kitsu") p.key else runCatching { KitsuMap.kitsuOf(p.scheme, p.key) }.getOrNull()
+                    val names = kid?.let { withTimeoutOrNull(10_000L) { runCatching { KitsuMap.names(it) }.getOrNull() } }
+                    if (names == null) null else {
+                        ServerState.info("[Streams] '$title': anime - searching only Kitsu's names for kitsu:$kid (${names.titles.take(4).joinToString(" / ")}), episode ${p.episode}")
+                        key
+                    }
+                }
 
                 val sem = Semaphore(20)
                 val started = System.currentTimeMillis()
@@ -3257,8 +3273,16 @@ object StremioServer {
                                             take(runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList()), "other")
                                         }
                                     }
+                                    val strictKey = strictKitsuJob.await()
+                                    if (strictKey != null) {
+                                        val r = try { kitsuExactStreams(api, strictKey, title, year) }
+                                            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                            catch (e: Throwable) { ServerState.debug("[${api.name}] kitsu: ${e.message}"); null }
+                                        if (r == null) StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "No entry named like Kitsu's names", noMatch = true)
+                                        else take(r, "kitsu")
+                                    }
                                     // The Kitsu side first; the other side only when the Kitsu side found nothing in this extension
-                                    if (ownIsKitsu) { ownPath(); if (got.get() == 0) otherPath() }
+                                    else if (ownIsKitsu) { ownPath(); if (got.get() == 0) otherPath() }
                                     else {
                                         val alt = altIdJob.await()
                                         if (alt != null && alt.startsWith("kitsu:")) { otherPath(); if (got.get() == 0) ownPath() }
@@ -3304,6 +3328,8 @@ object StremioServer {
                 // names / the exact season entry and add whatever is new - to this answer if it is still open, else to the cache.
                 if (animeTimedOut) {
                     streamSearchScope.launch {
+                        // strict Kitsu mode: the extensions already searched Kitsu's exact names, no similar-name search after
+                        if (strictKitsuJob.await() != null) return@launch
                         val late = withTimeoutOrNull(STREAM_DEADLINE_MS) { animeResolution.await() } ?: return@launch
                         val (lateNames, lateTarget) = late
                         val lateSearch = lateTarget?.entry?.copy(titles = (lateTarget.entry.titles + (lateNames?.titles.orEmpty())).distinct()) ?: lateNames
@@ -3401,7 +3427,8 @@ object StremioServer {
      * The bigger list is remembered for [LAST_GOOD_MS]. [why] (when given) says why the new list is short, for the log.
      */
     private fun withLastGood(type: String, id: String, title: String, now: List<StremioStream>, why: String?): List<StremioStream> {
-        val key = "$type:$id"
+        // "k2": lists kept before the strict Kitsu matching (with other seasons' episodes) are never added back
+        val key = "k2:$type:$id"
         val t = System.currentTimeMillis()
         val prev = lastGood[key]?.takeIf { t - it.at < LAST_GOOD_MS }
         var out = now
