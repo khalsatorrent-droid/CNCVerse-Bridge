@@ -36,9 +36,9 @@ class SubtitleAssTest {
 
     @Test
     fun srtBecomesStyledAss() {
-        val a = SubtitleTools.toStyledAss("1\n00:00:01,000 --> 00:00:02,500\n<i>Hi</i> there\nline two\n", 500)!!
-        assertTrue(a.contains("Style: Default,Arial,64,&H00FFFFFF"))
-        assertTrue(a.contains("Dialogue: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Hi{\\i0} there\\Nline two"))
+        val a = SubtitleTools.toStyledSsa("1\n00:00:01,000 --> 00:00:02,500\n<i>Hi</i> there\nline two\n", 500)!!
+        assertTrue(a.contains("ScriptType: v4.00\n") && a.contains("[V4 Styles]") && a.contains("Style: Default,Arial,64,16777215,255,0,0,-1,0,1,3,1,2,"))
+        assertTrue(a.contains("Dialogue: Marked=0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Hi{\\i0} there\\Nline two"))
     }
 
     @Test
@@ -49,7 +49,7 @@ class SubtitleAssTest {
 
     @Test
     fun assInputKeepsTextDropsDrawings() {
-        val a = SubtitleTools.toStyledAss(ass + "\nDialogue: 0,0:00:05.00,0:00:06.00,Sign,,0,0,0,,{\\p1}m 0 0 l 5 5", 0)!!
+        val a = SubtitleTools.toStyledSsa(ass + "\nDialogue: 0,0:00:05.00,0:00:06.00,Sign,,0,0,0,,{\\p1}m 0 0 l 5 5", 0)!!
         assertTrue(a.contains("Hello, world\\NSecond line"))
         assertTrue(!a.contains("m 0 0"))
     }

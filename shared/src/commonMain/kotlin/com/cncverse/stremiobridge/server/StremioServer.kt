@@ -774,6 +774,9 @@ object StremioServer {
             }
 
             // The same subtitle as a styled ASS file (the .ass name helps players that go by the extension)
+            get("/subssa/{name}") { respondStyledSub(call) }
+            head("/subssa/{name}") { respondStyledSub(call) }
+            // links handed out before 1.7.46 (they now get the SSA file too)
             get("/subass/{name}") { respondStyledSub(call) }
             // some players check the file with HEAD first
             head("/subass/{name}") { respondStyledSub(call) }
@@ -1369,7 +1372,7 @@ object StremioServer {
         val u = call.request.queryParameters["u"]
         val ms = call.request.queryParameters["ms"]?.toIntOrNull()?.coerceIn(-60_000, 60_000) ?: 0
         val who = call.request.headers[HttpHeaders.UserAgent].orEmpty().take(60)
-        val what = "${if (srt) "SRT" else "ASS"} ${call.parameters["name"]} (${call.request.httpMethod.value}, $who)"
+        val what = "${if (srt) "SRT" else "SSA"} ${call.parameters["name"]} (${call.request.httpMethod.value}, $who)"
         if (u.isNullOrBlank() || !u.startsWith("http", true)) return call.respond(HttpStatusCode.BadRequest)
         val text = withContext(Dispatchers.IO) { SubtitleTools.fetchStyled(u, ms, srt) }
         if (text == null) {

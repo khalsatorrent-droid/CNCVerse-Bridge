@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Styled subtitles are now SSA.** The first 10 English subtitles are sent as SSA (SubStation Alpha v4.00, `.ssa` links) instead of ASS, with the same look: white bold text, black outline, bottom centre. Links handed out earlier keep working.
+
 ## 1.7.45
 
 - **Profiles.** Settings > Profiles. Off by default: the bridge is one main profile (the extensions switched on in the Extensions screen, link `/manifest.json`). Switch "Use several profiles" on to make more: each profile has a name, its own add-on link (`/u/<id>/manifest.json`, shown for the internet address and for this network, with a Copy button) and its own set of extensions, picked from the installed ones. A new profile starts with the extensions that are on now. Stremio / Nuvio see each profile as a separate add-on, with its own catalogs, streams and subtitles.

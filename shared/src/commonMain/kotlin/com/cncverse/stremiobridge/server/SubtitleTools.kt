@@ -47,7 +47,7 @@ object SubtitleTools {
         return buildString {
             append('#').append(n).append(' ').append(lang)
             if (cc) append(" · CC")
-            if (styled) append(" · ASS styled") else ext?.let { append(" · ").append(it.uppercase()) }
+            if (styled) append(" · SSA styled") else ext?.let { append(" · ").append(it.uppercase()) }
             if (rel.isNotEmpty() && !rel.all { it.isDigit() } && rel.length > 3) append(" · ").append(rel)
         }
     }
@@ -83,11 +83,11 @@ object SubtitleTools {
                 english++
                 if (s.url.startsWith("http", true)) {
                     val q = "?ms=$ms&u=" + URLEncoder.encode(s.url, "UTF-8")
-                    val root = base.trimEnd('/') + "/subass/sub$english"
+                    val root = base.trimEnd('/') + "/subssa/sub$english"
                     prefetch(s.url, ms)
                     val links = p.styledSubtitleLinks
-                    // ".ass" link: Stremio, TV players (libass / mpv draw the full style)
-                    if (links != "plain") result.add(s.copy(url = "$root.ass$q", id = label(result.size + 1, s, s.url in cc, true)))
+                    // ".ssa" link: Stremio, TV players (libass / mpv draw the full style)
+                    if (links != "plain") result.add(s.copy(url = "$root.ssa$q", id = label(result.size + 1, s, s.url in cc, true)))
                     // Nuvio mobile does not show ASS from add-ons: a bold SRT copy, drawn with the app's own subtitle style
                     if (links != "ass") result.add(s.copy(url = base.trimEnd('/') + "/subsrt/sub$english.srt$q", id = label(result.size + 1, s, s.url in cc, true) + " · Nuvio mobile"))
                     continue
@@ -100,7 +100,7 @@ object SubtitleTools {
         return result
     }
 
-    // ── Styled ASS ──────────────────────────────────────────────────────────────
+    // ── Styled SSA ──────────────────────────────────────────────────────────────
     private class Cue(val start: Long, val end: Long, val text: String)
 
     private val styledCache = object : LinkedHashMap<String, String>(64, 0.75f, true) {
@@ -116,9 +116,9 @@ object SubtitleTools {
         runCatching { warm.execute { try { fetchStyled(url, ms) } finally { warming.remove(key) } } }.onFailure { warming.remove(key) }
     }
 
-    /** The file at [url] as an ASS file in the house look, every cue moved by [ms]; null when it cannot be read or has no cues. */
+    /** The file at [url] as an SSA (v4.00) file in the house look, every cue moved by [ms]; null when it cannot be read or has no cues. */
     fun fetchStyled(url: String, ms: Int, srt: Boolean = false): String? {
-        val key = (if (srt) "srt|" else "") + "$ms|$url"
+        val key = (if (srt) "srt|" else "ssa|") + "$ms|$url"
         synchronized(styledCache) { styledCache[key] }?.let { return it }
         // Kept on disk too: after the app was stopped while paused, or once the extension's link expired, the
         // converted file is still there when the player asks again
@@ -133,7 +133,7 @@ object SubtitleTools {
         // one retry: a slow or briefly failing subtitle site is common
         val bytes = download(url) ?: run { Thread.sleep(800); download(url) } ?: return null
         val text = decode(bytes).removePrefix("\uFEFF")
-        val out = (if (srt) toBoldSrt(text, ms) else toStyledAss(text, ms)) ?: return null
+        val out = (if (srt) toBoldSrt(text, ms) else toStyledSsa(text, ms)) ?: return null
         synchronized(styledCache) { styledCache[key] = out }
         if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeText(out); trimDisk() }
         return out
@@ -180,15 +180,19 @@ object SubtitleTools {
         files.filter { it.exists() }.sortedByDescending { it.lastModified() }.drop(400).forEach { it.delete() }
     }
 
-    internal fun toStyledAss(text: String, ms: Int): String? {
+    /**
+     * SSA (SubStation Alpha v4.00) in the house look: white bold text, black outline, bottom centre. In SSA the outline
+     * colour is TertiaryColour, the shadow BackColour, and Alignment 2 is bottom centre (legacy numbering).
+     */
+    internal fun toStyledSsa(text: String, ms: Int): String? {
         val cues = parseCues(text.replace("\r\n", "\n").replace('\r', '\n'))
         if (cues.isEmpty()) return null
         val sb = StringBuilder()
-        sb.append("[Script Info]\nTitle: CNCVerse Bridge\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n")
-        sb.append("[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-        sb.append("Style: Default,Arial,64,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3.5,1.5,2,80,80,55,1\n\n")
-        sb.append("[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
-        for (c in cues) sb.append("Dialogue: 0,").append(assStamp(c.start + ms)).append(',').append(assStamp(c.end + ms)).append(",Default,,0,0,0,,").append(c.text).append('\n')
+        sb.append("[Script Info]\nTitle: CNCVerse Bridge\nScriptType: v4.00\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n")
+        sb.append("[V4 Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, TertiaryColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, AlphaLevel, Encoding\n")
+        sb.append("Style: Default,Arial,64,16777215,255,0,0,-1,0,1,3,1,2,80,80,55,0,1\n\n")
+        sb.append("[Events]\nFormat: Marked, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+        for (c in cues) sb.append("Dialogue: Marked=0,").append(assStamp(c.start + ms)).append(',').append(assStamp(c.end + ms)).append(",Default,,0,0,0,,").append(c.text).append('\n')
         return sb.toString()
     }
 
