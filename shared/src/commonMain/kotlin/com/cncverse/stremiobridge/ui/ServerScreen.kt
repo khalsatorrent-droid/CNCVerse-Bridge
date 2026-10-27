@@ -507,9 +507,15 @@ fun ServerScreen(
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                status.loadedPlugins.forEachIndexed { i, plugin ->
+                // A to Z by name (leading emoji / symbols ignored, capitals and small letters alike)
+                val sortedPlugins = remember(status.loadedPlugins) {
+                    status.loadedPlugins.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { p ->
+                        p.displayName.dropWhile { !it.isLetterOrDigit() }.ifEmpty { p.displayName }
+                    })
+                }
+                sortedPlugins.forEachIndexed { i, plugin ->
                     LoadedPluginRow(plugin, onOpenSettings)
-                    if (i < status.loadedPlugins.lastIndex) {
+                    if (i < sortedPlugins.lastIndex) {
                         HorizontalDivider(color = DividerColor, modifier = Modifier.padding(vertical = 6.dp))
                     }
                 }
