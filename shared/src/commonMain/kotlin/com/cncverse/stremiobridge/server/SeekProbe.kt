@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
  */
 object SeekProbe {
     private const val HOST_TTL_MS = 6 * 60 * 60_000L
-    private const val BUDGET_MS = 3_500L
+    private const val BUDGET_MS = 2_500L
 
     /** host -> (seekable, checkedAt) */
     private val verdicts = ConcurrentHashMap<String, Pair<Boolean, Long>>()

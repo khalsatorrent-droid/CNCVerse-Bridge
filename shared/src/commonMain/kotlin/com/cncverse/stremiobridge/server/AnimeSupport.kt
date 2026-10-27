@@ -278,9 +278,14 @@ object AnimeResolver {
      * Anime behind a tt / tmdb / tvdb id: the title is looked up on AniList (strictly: the name must match,
      * non-anime titles find nothing) and all alternative names are collected. Null when it is not an anime.
      */
+    /** Titles AniList does not know as an anime (most films and series): remembered for 12 h, so a series request does not ask AniList every time. */
+    private val notAnime = ConcurrentHashMap<String, Long>()
+
     suspend fun fromTitle(title: String, year: Int?): AnimeInfo? {
         val key = "title:" + title.lowercase() + ":" + year
         cache[key]?.let { return it }
+        notAnime[key]?.let { at -> if (System.currentTimeMillis() - at < 12 * 3_600_000L) return null else notAnime.remove(key) }
+        var failed = false
         val info = withContext(Dispatchers.IO) {
             try {
                 val raw = aniListSearchAll(title)
@@ -296,9 +301,12 @@ object AnimeResolver {
                 }
             } catch (e: Exception) {
                 ServerState.warn("Anime title lookup '$title' failed: ${e.message?.take(80)}")
+                failed = true
                 null
             }
         }
+        // a clear "not an anime" answer is remembered (a failed call is asked again next time)
+        if (info == null && !failed) { if (notAnime.size > 5_000) notAnime.clear(); notAnime[key] = System.currentTimeMillis() }
         if (info != null) {
             if (cache.size > 2_000) cache.clear()
             cache[key] = info

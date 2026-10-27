@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Faster searches.** The extensions start searching sooner and the first list comes back sooner:
+  - a series is no longer checked against AniList before every request (the "not an anime" answer is remembered for 12 hours); the anime lookup now holds the search back at most 4 s instead of 25 s (when it finishes later, the extensions are searched again with the anime names, as before);
+  - the second id of an anime (TMDB / Kitsu side) is worked out while the extensions already search, instead of holding them back for up to 8 s;
+  - 32 extensions search at the same time instead of 20;
+  - the first answer goes out after 5 s (was 8 s) once links have arrived, 2.5 s after the first ones (was 4 s); the slower extensions keep filling the list for the next reload;
+  - the HLS quality check and the seek check get 2 s / 2.5 s (were 4 s / 3.5 s; what they miss is checked for the next request);
+  - an extension's title page is reused for 30 minutes (was 10), so the next episode opens faster.
+
 ## 1.7.46
 
 - **Better matching in extensions with their own catalog (no TMDB).** Movies and series are no longer matched by the first search result that looks right: every result is scored (title without language / quality tags, year, season), and up to 4 pages are opened, two at a time, until one fits. An extension's own IMDb / TMDB id on its page confirms a match exactly (and rules out another title); without one a movie page must have about the same year and not be a series, and a series page must have the episode. Sites that list each season on its own get the season from the entry's title ("Season 2", "S02"), episodes named only "Episode 12" are found by that number (also on lists that count down), and a show numbered in one running list gets the running episode number. When nothing fits, up to two other spellings are searched (no punctuation that breaks a site's search, no subtitle, other TMDB titles, title + year). A confirmed page is remembered per extension for 5 days, so the next episode opens it straight away. Anime pages in TMDB's own season numbering, or one running list, now get TMDB's numbers / the running number instead of the AniList entry's.
