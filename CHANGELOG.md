@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Lighter anime searches.** The two ids of an anime are no longer searched at the same time: each extension searches the Kitsu side first and, when that is done, the TMDB / IMDb side, so every site gets half the requests at once and the device half the work. 20 extensions search at the same time again (was 32).
+- **"Prepare the next episode" waits for the current one.** The next episode's links are only searched once the current episode's search has completely finished (the extensions keep adding links in the background after the first answer), at most 4 minutes later.
+
 ## 1.7.52
 
 - **Searches no longer time out across the board.** The extensions' own calls (search, page, links, home pages) ran on the app's shared pool of 64 threads. With 32 extensions searching at once, anime searched under two ids, two pages opened at a time and the home pages loading alongside, the calls queued behind each other and most extensions hit the 120 s cap ("Timed out waiting for 120000 ms"). They now have their own, larger pool. The home-page pre-warm (the "🔥 Pre-warmed" lines) also holds back while a stream search is running (at most 3 minutes per refresh), so it no longer competes with the search.

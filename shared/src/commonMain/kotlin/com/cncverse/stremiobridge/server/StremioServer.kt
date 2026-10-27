@@ -1364,9 +1364,13 @@ object StremioServer {
         if (prefetchedNext.size > 500) prefetchedNext.clear()
         if (!prefetchedNext.add(next)) return
         streamSearchScope.launch {
+            // Only once the current episode's search is completely done (the extensions keep adding links in the
+            // background after the first answer): the two never run at the same time. At most 4 minutes of waiting.
             delay(1_500)
+            var waited = 0L
+            while (waited < 240_000L && searchStatus["$type:$id"]?.finished == false) { delay(2_000); waited += 2_000 }
             runCatching {
-                ServerState.info("[Streams] Preparing the next episode in the background: $next")
+                ServerState.info("[Streams] Preparing the next episode in the background: $next" + if (waited > 0) " (after the current episode's search finished)" else "")
                 withContext(pluginDispatcher) { buildStreams(type, next) }
             }.onFailure { kotlinx.coroutines.currentCoroutineContext().ensureActive() }
         }
@@ -3163,8 +3167,7 @@ object StremioServer {
                 }
                 val pathCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
-                // extensions spend nearly all their time waiting on websites: more of them search at the same time
-                val sem = Semaphore(32)
+                val sem = Semaphore(20)
                 val started = System.currentTimeMillis()
                 val accumulated = java.util.concurrent.CopyOnWriteArrayList<StremioStream>()
                 // Set once the request has been answered early: from then on every provider that
@@ -3182,14 +3185,26 @@ object StremioServer {
                         sem.withPermit {
                             val res = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                                 try {
-                                    val streams = coroutineScope {
-                                        val own = async { buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget) }
-                                        val other = async {
-                                            val altId = altIdJob.await() ?: return@async null
-                                            val altType = if (altId.startsWith("tmdb:") || altId.startsWith("tt")) "series" else type
-                                            runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList())
+                                    // The two ids of an anime one after the other, never at the same time (half the load on the
+                                    // device and on each site): the Kitsu side first, then the TMDB / IMDb side
+                                    val streams = run {
+                                        val ownIsKitsu = ext.scheme in ExternalIds.ANIME_SCHEMES
+                                        val ownPath: suspend () -> List<StremioStream> = { buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget) }
+                                        val otherPath: suspend () -> List<StremioStream>? = {
+                                            val altId = altIdJob.await()
+                                            if (altId == null) null else {
+                                                val altType = if (altId.startsWith("tmdb:") || altId.startsWith("tt")) "series" else type
+                                                runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList())
+                                            }
                                         }
-                                        val a = own.await(); val b = other.await() ?: return@coroutineScope a
+                                        val a: List<StremioStream>; val b: List<StremioStream>?
+                                        if (ownIsKitsu) { a = ownPath(); b = otherPath() }
+                                        else {
+                                            val alt = altIdJob.await()
+                                            if (alt != null && alt.startsWith("kitsu:")) { b = otherPath(); a = ownPath() }
+                                            else { a = ownPath(); b = otherPath() }
+                                        }
+                                        if (b == null) return@run a
                                         pathCounts.merge("own", a.size) { x, y -> x + y }; pathCounts.merge("other", b.size) { x, y -> x + y }
                                         val seenUrls = a.mapNotNull { it.url ?: it.infoHash }.toHashSet()
                                         a + b.filter { s -> (s.url ?: s.infoHash)?.let { seenUrls.add(it) } ?: true }
