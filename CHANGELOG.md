@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- **Faster searches.** The extensions start searching sooner and the first list comes back sooner:
-  - a series is no longer checked against AniList before every request (the "not an anime" answer is remembered for 12 hours); the anime lookup now holds the search back at most 4 s instead of 25 s (when it finishes later, the extensions are searched again with the anime names, as before);
-  - the second id of an anime (TMDB / Kitsu side) is worked out while the extensions already search, instead of holding them back for up to 8 s;
-  - 32 extensions search at the same time instead of 20;
-  - the first answer goes out after 5 s (was 8 s) once links have arrived, 2.5 s after the first ones (was 4 s); the slower extensions keep filling the list for the next reload;
-  - the HLS quality check and the seek check get 2 s / 2.5 s (were 4 s / 3.5 s; what they miss is checked for the next request);
+- **Faster searches, without losing any results.** The extensions start searching sooner; every wait that decides how many links you get is unchanged:
+  - a series is no longer checked against AniList before every request (the "not an anime" answer is remembered for 12 hours, a failed check is asked again);
+  - the second id of an anime (TMDB / Kitsu side) is worked out while the extensions already search, instead of holding all of them back for up to 8 s;
+  - 32 extensions search at the same time instead of 20 (the rest no longer queue);
   - an extension's title page is reused for 30 minutes (was 10), so the next episode opens faster.
+
+## 1.7.47
+
+- **Better matching in extensions with their own catalog (movies and series).** Search results are scored instead of taking the first that looks right, and up to 4 title pages are opened (two at a time): a page without the episode moves on to the next one. IMDb / TMDB ids on an extension's page confirm or reject a match; a movie page with a wrong year (more than 1 off) or a whole series is rejected. When a page's episodes carry no season, the season comes from its title ("Season 2", "S02", "2nd Season"). If nothing fits, up to 2 more searches try the title without punctuation that breaks some sites (& # ? : '), the title without its subtitle, TMDB alternative titles and title + year. Each page's numbering (per TMDB season, one running number, per entry) is detected, episodes named "Episode 12" / "Ep 12" / "#12" are numbered from their name, lists that count down are turned round, and a confirmed page is remembered for 5 days. The log and the History search report say which search and page matched and why an extension found nothing.
 
 ## 1.7.46
 

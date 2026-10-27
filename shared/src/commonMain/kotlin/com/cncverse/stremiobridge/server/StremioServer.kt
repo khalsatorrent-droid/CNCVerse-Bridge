@@ -1058,7 +1058,7 @@ object StremioServer {
         var byKind = streams
         if (type != "tv" && p.hideHlsLinks) { val n = byKind.filter { !isHlsLink(it) }; trace.step("Setting \"Hide HLS links\"", byKind, n); byKind = n }
         if (type != "tv" && p.hideDirectFiles) { val n = byKind.filter { !isDirectFileLink(it) }; trace.step("Setting \"Hide direct files\"", byKind, n); byKind = n }
-        val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(byKind, p.splitHls, 2_000L, p.bestHls) else byKind
+        val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(byKind, p.splitHls, 4_000L, p.bestHls) else byKind
         val tProbed = System.currentTimeMillis()
         val sorted = sortStreamsByQuality(probed)
 
@@ -2851,13 +2851,13 @@ object StremioServer {
     private val STREAM_DEADLINE_MS = 170_000L
     /** Answer with what has loaded after this long; the rest load into the cache until STREAM_DEADLINE_MS. */
     private val streamRequestStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val STREAM_SOFT_DEADLINE_MS = 5_000L
+    private val STREAM_SOFT_DEADLINE_MS = 8_000L
     /** Never keep a client waiting longer than this for the first answer. */
     private val STREAM_ANSWER_CAP_MS = 32_000L
     /** Hard limit for the whole search part of a stream request. */
     private val RESPONSE_CAP_MS = 38_000L
     /** Time budget for the anime name / episode mapping lookups before the providers are started. */
-    private val ANIME_RESOLVE_BUDGET_MS = 4_000L
+    private val ANIME_RESOLVE_BUDGET_MS = 25_000L
     /** The providers are always given at least this long before the answer cap can end the wait. */
     private val STREAM_MIN_WINDOW_MS = 12_000L
     private val PROVIDER_TIMEOUT_MS = 150_000L
@@ -3224,7 +3224,7 @@ object StremioServer {
                         if (accumulated.isNotEmpty() && firstFoundAt == 0L) firstFoundAt = now
                         // Something found: answer once 8 s have passed and the first links are 4 s old (others arriving
                         // right behind it are included); the rest keeps filling the cache for the next reload
-                        if (!waitAll && firstFoundAt != 0L && t >= STREAM_SOFT_DEADLINE_MS && now - firstFoundAt >= 2_500L) break
+                        if (!waitAll && firstFoundAt != 0L && t >= STREAM_SOFT_DEADLINE_MS && now - firstFoundAt >= 4_000L) break
                         // Never later than ANSWER_CAP after the request arrived (searching the title already took time) -
                         // but the providers always get STREAM_MIN_WINDOW_MS first: when the title lookup used up the
                         // cap, this used to break on the very first pass and answer 0 links with every provider
