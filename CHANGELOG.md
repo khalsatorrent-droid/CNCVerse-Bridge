@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.46
 
 - **cloudflared 2026.10.4 (Cloudflare security notice).** Cloudflare asked every tunnel to run cloudflared 2026.10.2 or later because certificates it trusted were compromised. The Android app now bundles cloudflared 2026.10.4 (it had 2026.2.0). The desktop app checks the version of its downloaded copy and downloads the current one when it is older than 2026.10.2. The log shows the cloudflared version each time the tunnel starts.
 - **Anime: the episode under both ids.** A request with an anime id (Kitsu / MyAnimeList / AniList) is also searched as the TMDB series with TMDB's season and episode, and a TMDB / IMDb request for an anime also as the anime entry with the running episode number; the links of both are merged. Sites that number a long show in one list (One Piece 1, 2, ... 1100) now get the running episode number worked out from TMDB's season sizes (season 9 episode 10 is episode 273), also when the anime lookup is slow.
