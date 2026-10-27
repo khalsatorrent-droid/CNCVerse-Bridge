@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.53
 
 - **Lighter anime searches.** The two ids of an anime are no longer searched at the same time: each extension searches the Kitsu side first and, when that is done, the TMDB / IMDb side, so every site gets half the requests at once and the device half the work. 20 extensions search at the same time again (was 32).
 - **"Prepare the next episode" waits for the current one.** The next episode's links are only searched once the current episode's search has completely finished (the extensions keep adding links in the background after the first answer), at most 4 minutes later.
