@@ -2257,6 +2257,30 @@ object StremioServer {
         } catch (e: Throwable) { null }
     }
 
+    private val imdbOfTmdb = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The IMDb id of the series behind a tt / tmdb / tvdb id (TMDB's external ids), or null. */
+    private suspend fun imdbIdOf(ext: ExternalId): String? {
+        if (ext.scheme == "imdb") return ext.key
+        val key = "${ext.scheme}:${ext.key}"
+        imdbOfTmdb[key]?.let { return it.ifEmpty { null } }
+        return try {
+            val tvId = when (ext.scheme) {
+                "tmdb" -> ext.key
+                "tvdb" -> fetchTmdbJson("find/${ext.key}?external_source=tvdb_id")
+                    ?.get("tv_results")?.let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                    ?.get("id")?.jsonPrimitive?.contentOrNull
+                else -> null
+            } ?: return null
+            val tt = fetchTmdbJson("tv/$tvId/external_ids")?.get("imdb_id")?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("tt") }
+            if (imdbOfTmdb.size > 5_000) imdbOfTmdb.clear()
+            imdbOfTmdb[key] = tt.orEmpty()
+            tt
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) { null }
+    }
+
     /** Request id -> running (absolute) episode number, for extensions that number a long show 1, 2, ... 1000+ (One Piece). */
     private val absoluteEpisodes = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
@@ -2271,6 +2295,17 @@ object StremioServer {
         if (absoluteEpisodes.size > 5_000) absoluteEpisodes.clear()
         return try {
             if (ext.scheme in setOf("imdb", "tmdb", "tvdb")) {
+                // 1) the Kitsu add-on's mapping: the exact Kitsu entry and its own episode number for this IMDb season / episode
+                val tt = imdbIdOf(ext)
+                val k = if (tt != null && sn != null) runCatching { KitsuMap.fromImdb(tt, sn, en) }.getOrNull() else null
+                if (k != null) {
+                    tmdbAllSeasonCounts(ext)?.let { counts ->
+                        val s = sn ?: 1
+                        if ((1 until s).all { counts[it] != null }) absoluteEpisodes[id] = (1 until s).sumOf { counts[it]!! } + en
+                    }
+                    return "kitsu:${k.first}:${k.second}"
+                }
+                // 2) otherwise the running number in the AniList entry (one entry for the whole show, e.g. One Piece)
                 val counts = tmdbAllSeasonCounts(ext) ?: return null
                 val s = sn ?: 1
                 if ((1 until s).any { counts[it] == null }) return null
@@ -2279,7 +2314,11 @@ object StremioServer {
                 val al = anime?.aniListId ?: return null
                 "anilist:$al:$abs".also { absoluteEpisodes[it] = abs }
             } else if (ext.scheme in setOf("kitsu", "mal", "anilist")) {
-                // a later-season entry numbers its own episodes from 1: only an entry that holds the whole show is mapped
+                // 1) the Kitsu add-on's mapping: this episode's IMDb series, season and episode (exact, for every entry)
+                val kid = if (ext.scheme == "kitsu") ext.key else runCatching { KitsuMap.kitsuOf(ext.scheme, ext.key) }.getOrNull()
+                val imdbPlace = kid?.let { runCatching { KitsuMap.toImdb(it, en) }.getOrNull() }
+                if (imdbPlace != null) return "${imdbPlace.first}:${imdbPlace.second}:${imdbPlace.third}"
+                // 2) otherwise TMDB's season sizes - a later-season entry numbers its own episodes from 1: only an entry that holds the whole show is mapped
                 if (anime != null && (anime.seasonHint ?: 1) > 1) return null
                 val src = when (ext.scheme) { "mal" -> "myanimelist"; else -> ext.scheme }
                 val tmdbId = getJson("https://arm.haglund.dev/api/v2/ids?source=$src&id=${ext.key}")
@@ -3069,7 +3108,9 @@ object StremioServer {
                     } else null
                     val target: AnimeTarget? = if (names != null && ext.scheme in setOf("imdb", "tmdb", "tvdb") &&
                         ext.season != null && ext.episode != null && names.aniListId != null) {
-                        tmdbAllSeasonCounts(ext)?.let { counts -> AnimeResolver.mapEpisode(names, ext.season, ext.episode, counts) }
+                        // the Kitsu add-on's own episode mapping first (exact per entry), the episode counts otherwise
+                        val kitsuHint = imdbIdOf(ext)?.let { tt -> runCatching { KitsuMap.fromImdb(tt, ext.season, ext.episode) }.getOrNull() }
+                        tmdbAllSeasonCounts(ext)?.let { counts -> AnimeResolver.mapEpisode(names, ext.season, ext.episode, counts, kitsuHint) }
                     } else null
                     // TMDB's own alternative titles of the series join the names (after AniList / Kitsu / MyAnimeList ones)
                     val named = if (names != null && ext.scheme in setOf("imdb", "tmdb", "tvdb") && type != "movie") {
@@ -3139,7 +3180,7 @@ object StremioServer {
                                         val own = async { buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget) }
                                         val other = async {
                                             val altId = altIdJob.await() ?: return@async null
-                                            val altType = if (altId.startsWith("tmdb:")) "series" else type
+                                            val altType = if (altId.startsWith("tmdb:") || altId.startsWith("tt")) "series" else type
                                             runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList())
                                         }
                                         val a = own.await(); val b = other.await() ?: return@coroutineScope a

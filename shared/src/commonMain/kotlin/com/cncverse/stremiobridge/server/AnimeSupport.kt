@@ -214,13 +214,31 @@ object AnimeResolver {
      * the episode number inside it: straight when both split the show the same way, else by the running episode number.
      * [tmdbCounts] = season number -> episodes TMDB lists. Null when the franchise cannot be read.
      */
-    suspend fun mapEpisode(base: AnimeInfo, season: Int, episode: Int, tmdbCounts: Map<Int, Int>): AnimeTarget? {
+    /**
+     * The anime entry and its own episode number for TMDB season [season] episode [episode]. [kitsu] is the exact answer of
+     * the Kitsu add-on's mapping (Kitsu entry, episode in it) when there is one: it wins over working it out from the
+     * episode counts, which goes wrong when AniList / Kitsu split the show differently from TMDB.
+     */
+    suspend fun mapEpisode(base: AnimeInfo, season: Int, episode: Int, tmdbCounts: Map<Int, Int>, kitsu: Pair<String, Int>? = null): AnimeTarget? {
         val id = base.aniListId ?: return null
+        val kitsuAniList = kitsu?.let { KitsuMap.aniListOf(it.first) }
         return withContext(Dispatchers.IO) {
             try {
                 val chain = franchise(id)
                 if (chain.isEmpty()) return@withContext null
                 val counts = chain.map { it.info.episodeCount }
+                if (kitsu != null && kitsuAniList != null) {
+                    val i = chain.indexOfFirst { it.anilistId == kitsuAniList }
+                    if (i >= 0) {
+                        val local = kitsu.second
+                        val before = (0 until i).map { counts[it] }
+                        val absolute = if (before.all { it != null }) before.sumOf { it!! } + local
+                            else (1 until season).sumOf { tmdbCounts[it] ?: 0 } + episode
+                        val entry = enrich(chain[i]).copy(seasonHint = i + 1)
+                        ServerState.debug("Anime S${season}E${episode} (TMDB) -> AniList $kitsuAniList entry ${i + 1}/${chain.size}, episode $local (Kitsu mapping kitsu:${kitsu.first})")
+                        return@withContext AnimeTarget(entry, local, absolute, i, counts)
+                    }
+                }
                 val prior = (1 until season).sumOf { tmdbCounts[it] ?: return@withContext null }
                 val absolute = prior + episode
                 // Both split the show the same way: season N is entry N
