@@ -48,6 +48,25 @@ object TitleMatch {
         return NON_ALNUM.replace(t, " ").trim()
     }
 
+    /** Several seasons in one post, the way CineStream reads them: "S01-S03", "S1-3", "Season 1-4", "Seasons 1 to 3", "Season 1 & 2". */
+    private val SEASON_RANGE_RX = listOf(
+        Regex("\\bs0*([0-9]{1,2})\\s*(?:-|–|~|to)\\s*s?0*([0-9]{1,2})\\b", RegexOption.IGNORE_CASE),
+        Regex("\\bseasons?\\s*0*([0-9]{1,2})\\s*(?:-|–|~|to|&|and)\\s*(?:season\\s*)?0*([0-9]{1,2})\\b", RegexOption.IGNORE_CASE),
+    )
+    fun seasonRange(name: String?): IntRange? {
+        val n = name ?: return null
+        for (rx in SEASON_RANGE_RX) rx.find(n)?.let { m ->
+            val a = m.groupValues[1].toIntOrNull() ?: return@let
+            val b = m.groupValues[2].toIntOrNull() ?: return@let
+            if (a in 0..60 && b in a + 1..60) return a..b
+        }
+        return null
+    }
+
+    /** "S02E05" in an episode's name -> 2 (sites that leave the episode's season empty but write it in the name). */
+    private val EP_SEASON_RX = Regex("\\bs0*([0-9]{1,2})\\s*e\\s*0*[0-9]{1,4}\\b", RegexOption.IGNORE_CASE)
+    fun seasonOfEpisodeName(name: String?): Int? = name?.let { EP_SEASON_RX.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+
     /** A year written in the name ("Movie (2019)"), when the site gave none. */
     fun yearOf(name: String): Int? = YEAR.find(name)?.groupValues?.get(1)?.toIntOrNull()
 
@@ -109,16 +128,26 @@ object TitleMatch {
         val br = baseName(resultName)
         val bt = baseName(title)
         if (br.isEmpty() || bt.isEmpty()) return 0.0
+        val ry = resultYear ?: yearOf(resultName)
+        val sameYear = year != null && ry != null && kotlin.math.abs(ry - year) <= 1
         var s = when {
             br == bt -> 1.0
+            // the same letters and digits, spaces aside ("Spider-Man" / "Spiderman", "WALL·E" / "Wall E") - CineStream's slug match
+            br.replace(" ", "") == bt.replace(" ", "") -> 0.97
             " $br ".startsWith(" $bt ") || " $br ".endsWith(" $bt ") -> {
                 val extra = br.split(' ').size - bt.split(' ').size
                 (0.88 - 0.06 * (extra - 1).coerceAtLeast(0)).coerceAtLeast(0.55)
             }
-            " $bt ".contains(" $br ") && br.length >= 4 -> 0.7 * br.length / bt.length + 0.15
+            // the whole title inside the post's name ("Watch The Boys Online Free") - CineStream accepts a name that contains the title
+            " $br ".contains(" $bt ") -> {
+                val extra = br.split(' ').size - bt.split(' ').size
+                (0.82 - 0.06 * (extra - 1).coerceAtLeast(0)).coerceAtLeast(0.5)
+            }
+            // the post's name inside the title ("No Way Home" for "Spider-Man: No Way Home"): fine when the year agrees too
+            " $bt ".contains(" $br ") && br.length >= 4 ->
+                if (sameYear && br.length >= 6) maxOf(0.7, 0.7 * br.length / bt.length + 0.15) else 0.7 * br.length / bt.length + 0.15
             else -> AnimeMatcher.dice(br, bt) * 0.95
         }
-        val ry = resultYear ?: yearOf(resultName)
         if (year != null && ry != null) {
             val d = ry - year
             when {
@@ -130,6 +159,12 @@ object TitleMatch {
                 season == null -> s -= 0.45
                 else -> s -= 0.3
             }
+        }
+        // a post with several seasons ("S01-S03") holds every season of its range
+        val range = seasonRange(resultName)
+        if (range != null) {
+            if (season != null) { if (season in range) s += 0.03 else s -= 0.5 }
+            return s.coerceIn(0.0, 1.0)
         }
         val rs = seasonFromTitle(resultName)
         if (season != null && rs != null && rs != season) s -= 0.5
@@ -190,7 +225,7 @@ object TitleMatch {
         val list = episodes.orEmpty()
         if (list.isEmpty()) return null
         val noSeasons = list.all { it.season == null }
-        fun effSeason(e: MediaInfoEpisode) = e.season ?: (if (noSeasons) entrySeason else null) ?: 1
+        fun effSeason(e: MediaInfoEpisode) = e.season ?: seasonOfEpisodeName(e.name) ?: (if (noSeasons) entrySeason else null) ?: 1
         list.firstOrNull { effSeason(it) == season && numberOf(it) == episode }?.let { return it }
         // a one-list page of the whole show
         if (absolute != null && season > 1) list.firstOrNull { effSeason(it) == 1 && numberOf(it) == absolute }?.let { return it }

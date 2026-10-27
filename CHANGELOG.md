@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Movies and series: CineStream's matching rules.** More extensions find the title (anime are not affected).
+  - **Spelling:** names that differ only in spaces and punctuation match ("Spiderman" / "Spider-Man", "Wall E" / "WALL·E"), like CineStream's slug comparison.
+  - **Longer post names:** a post whose name contains the whole title counts ("Watch The Boys Online Free").
+  - **Shorter post names:** a shorter name that is part of the title counts when the year agrees too ("No Way Home (2021)").
+  - **Season packs:** a post with several seasons ("S01-S04", "Seasons 1 to 5", "Season 1 & 2") counts for every season in its range, instead of being dropped as "season 1".
+  - **Episode names:** an episode named "S02E05" counts as season 2 when the site leaves the season empty.
+  - **More tries:** TMDB's original and other titles are always tried when the first search finds no fitting page (they were only tried when the first search was empty). Up to 5 pages are opened (was 4) and 3 other spellings searched (was 2).
+
 ## 1.8.3
 
 - **Strict anime matching by Kitsu.** When an anime has a Kitsu entry (a Kitsu / MAL / AniList id, or the Kitsu episode found for a TMDB / IMDb one), every extension now only searches the names Kitsu stores for that entry, takes only results named exactly like one of them, and Kitsu's episode number in them. An extension without such an entry gives nothing for it. There is no TMDB, similar-name or late "anime names" search any more, which is where another season's episodes came from. Movies and series (not anime) still go by their TMDB / IMDb id as before.

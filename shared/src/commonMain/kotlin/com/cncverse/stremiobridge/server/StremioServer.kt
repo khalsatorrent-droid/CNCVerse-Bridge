@@ -3573,7 +3573,9 @@ object StremioServer {
                 }
                 return GenericMatch(c, mi, mi.dataUrl, null)
             }
-            val entrySeason = TitleMatch.seasonFromTitle(c.name) ?: TitleMatch.seasonFromTitle(mi.name)
+            // a post of several seasons ("S01-S03") is not one season's entry
+            val entrySeason = if (TitleMatch.seasonRange(c.name) != null) null
+                else TitleMatch.seasonFromTitle(c.name) ?: TitleMatch.seasonFromTitle(mi.name)
             val ep = TitleMatch.findSeriesEpisode(mi.episodes, season!!, episode!!, entrySeason, absoluteEpisodes[id])
             if (ep == null) {
                 noEpisode = true
@@ -3620,13 +3622,14 @@ object StremioServer {
             }
             return (ranked + legacy).distinctBy { it.url }
         }
-        var budget = 4
+        var budget = 5
         val first = candidatesOf(firstResults)
         tryCandidates(first, "search '$title'", budget)?.let { return it }
         budget -= minOf(budget, first.size)
 
         // 3. other spellings: no punctuation, no subtitle, other titles, title + year (at most two more searches)
-        val variants = TitleMatch.queryVariants(title, year, if (first.isEmpty()) altTitlesFor(type, id) else emptyList(), max = 2)
+        // TMDB's original and other titles too (CineStream searches the original title when the English one misses)
+        val variants = TitleMatch.queryVariants(title, year, altTitlesFor(type, id), max = 3)
         for (q in variants) {
             if (budget <= 0 && tried.isNotEmpty()) break
             val more = try {
