@@ -121,10 +121,13 @@ object TitleMatch {
     }
 
     /**
+     * [loose]: CineStream's extra rules (same letters without spaces, the title inside a longer post name, a shorter name
+     * with the same year, season packs "S01-S04") - only for the fallback pass, after the strict TMDB-title pass found nothing.
+     *
      * 0..1 how well a search result fits [title] / [year] / [season]. The base names are compared; leftover words in the
      * result ("The Boys Presents ...") cost a little each, another season or a far-off year costs a lot.
      */
-    fun score(resultName: String, resultYear: Int?, title: String, year: Int?, season: Int?): Double {
+    fun score(resultName: String, resultYear: Int?, title: String, year: Int?, season: Int?, loose: Boolean = false): Double {
         val br = baseName(resultName)
         val bt = baseName(title)
         if (br.isEmpty() || bt.isEmpty()) return 0.0
@@ -133,19 +136,19 @@ object TitleMatch {
         var s = when {
             br == bt -> 1.0
             // the same letters and digits, spaces aside ("Spider-Man" / "Spiderman", "WALL·E" / "Wall E") - CineStream's slug match
-            br.replace(" ", "") == bt.replace(" ", "") -> 0.97
+            loose && br.replace(" ", "") == bt.replace(" ", "") -> 0.97
             " $br ".startsWith(" $bt ") || " $br ".endsWith(" $bt ") -> {
                 val extra = br.split(' ').size - bt.split(' ').size
                 (0.88 - 0.06 * (extra - 1).coerceAtLeast(0)).coerceAtLeast(0.55)
             }
             // the whole title inside the post's name ("Watch The Boys Online Free") - CineStream accepts a name that contains the title
-            " $br ".contains(" $bt ") -> {
+            loose && " $br ".contains(" $bt ") -> {
                 val extra = br.split(' ').size - bt.split(' ').size
                 (0.82 - 0.06 * (extra - 1).coerceAtLeast(0)).coerceAtLeast(0.5)
             }
             // the post's name inside the title ("No Way Home" for "Spider-Man: No Way Home"): fine when the year agrees too
             " $bt ".contains(" $br ") && br.length >= 4 ->
-                if (sameYear && br.length >= 6) maxOf(0.7, 0.7 * br.length / bt.length + 0.15) else 0.7 * br.length / bt.length + 0.15
+                if (loose && sameYear && br.length >= 6) maxOf(0.7, 0.7 * br.length / bt.length + 0.15) else 0.7 * br.length / bt.length + 0.15
             else -> AnimeMatcher.dice(br, bt) * 0.95
         }
         if (year != null && ry != null) {
@@ -161,7 +164,7 @@ object TitleMatch {
             }
         }
         // a post with several seasons ("S01-S03") holds every season of its range
-        val range = seasonRange(resultName)
+        val range = if (loose) seasonRange(resultName) else null
         if (range != null) {
             if (season != null) { if (season in range) s += 0.03 else s -= 0.5 }
             return s.coerceIn(0.0, 1.0)
@@ -174,9 +177,9 @@ object TitleMatch {
     }
 
     /** Results that fit, best first ([minScore] and above), at most [limit]. */
-    fun rank(results: List<SearchResult>, title: String, year: Int?, season: Int?, minScore: Double = 0.6, limit: Int = 6): List<SearchResult> =
+    fun rank(results: List<SearchResult>, title: String, year: Int?, season: Int?, minScore: Double = 0.6, limit: Int = 6, loose: Boolean = false): List<SearchResult> =
         results.distinctBy { it.url }
-            .map { it to score(it.name, it.year, title, year, season) }
+            .map { it to score(it.name, it.year, title, year, season, loose) }
             .filter { it.second >= minScore }
             .sortedByDescending { it.second }
             .take(limit)

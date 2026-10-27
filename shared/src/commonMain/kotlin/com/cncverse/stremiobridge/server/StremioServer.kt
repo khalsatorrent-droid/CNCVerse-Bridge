@@ -3609,7 +3609,10 @@ object StremioServer {
         }
 
         // 2. the scored results of the first search, plus today's picks (exact "<title> season N" post, exact / partial title, fuzzy)
+        // every result of every search, for the CineStream fallback pass at the end
+        val seenResults = LinkedHashMap<String, SearchResult>()
         fun candidatesOf(results: List<SearchResult>): List<SearchResult> {
+            results.forEach { seenResults.putIfAbsent(it.url, it) }
             val ranked = TitleMatch.rank(results, title, year, season)
             val legacy = buildList {
                 if (season != null) {
@@ -3643,6 +3646,14 @@ object StremioServer {
             if (cands.isEmpty()) continue
             tryCandidates(cands, "search '$q'", budget.coerceAtLeast(2))?.let { return it }
             budget -= minOf(budget, cands.size)
+        }
+
+        // 4. fallback: CineStream's looser rules over everything the searches returned (same letters without spaces,
+        //    the title inside a longer post name, a shorter name with the same year, season packs "S01-S04")
+        val loose = TitleMatch.rank(seenResults.values.toList(), title, year, season, loose = true).filter { it.url !in tried }
+        if (loose.isNotEmpty()) {
+            ServerState.debug("[${api.name}] No page by the TMDB title - trying CineStream-style matches: ${loose.take(3).joinToString { "'${it.name}'" }}")
+            tryCandidates(loose, "CineStream-style match", 3)?.let { return it }
         }
 
         if (tried.isEmpty()) {
