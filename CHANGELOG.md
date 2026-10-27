@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.3
 
 - **Strict anime matching by Kitsu.** When an anime has a Kitsu entry (a Kitsu / MAL / AniList id, or the Kitsu episode found for a TMDB / IMDb one), every extension now only searches the names Kitsu stores for that entry, takes only results named exactly like one of them, and Kitsu's episode number in them. An extension without such an entry gives nothing for it. There is no TMDB, similar-name or late "anime names" search any more, which is where another season's episodes came from. Movies and series (not anime) still go by their TMDB / IMDb id as before.
 - **Old answers are not served again.** Saved stream lists, and the earlier lists added back to a short answer, from before this change could still hold the first season's episodes for a later season; they are no longer used.
