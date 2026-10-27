@@ -422,6 +422,7 @@ object StremioServer {
             com.cncverse.stremiobridge.format.StreamFormatter.init(cacheDir)
             com.cncverse.stremiobridge.cache.StreamCacheManager.init(cacheDir)
             MediaServer.init(cacheDir)
+            runCatching { NameStore.init(cacheDir) }
             // settings saved before the store was ready at the first lookup are read now
             runCatching { com.cncverse.stremiobridge.network.DohConfig.reload() }
             runCatching { SubtitleTools.init(cacheDir) }
@@ -2255,6 +2256,49 @@ object StremioServer {
         } catch (e: Throwable) { null }
     }
 
+    /** Request id -> running (absolute) episode number, for extensions that number a long show 1, 2, ... 1000+ (One Piece). */
+    private val absoluteEpisodes = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /**
+     * The same episode under the other kind of id, searched next to the request's own: a TMDB / IMDb id gets the anime
+     * entry with the running episode number (AniList id), an anime id (Kitsu / MAL / AniList) gets the TMDB series with
+     * TMDB's season and episode. Also notes the running episode number of both. Null when there is no other path.
+     */
+    private suspend fun otherIdPath(type: String, id: String, ext: ExternalId, anime: AnimeInfo?): String? {
+        val sn = ext.season; val en = ext.episode ?: return null
+        if (type == "movie") return null
+        if (absoluteEpisodes.size > 5_000) absoluteEpisodes.clear()
+        return try {
+            if (ext.scheme in setOf("imdb", "tmdb", "tvdb")) {
+                val counts = tmdbAllSeasonCounts(ext) ?: return null
+                val s = sn ?: 1
+                if ((1 until s).any { counts[it] == null }) return null
+                val abs = (1 until s).sumOf { counts[it]!! } + en
+                absoluteEpisodes[id] = abs
+                val al = anime?.aniListId ?: return null
+                "anilist:$al:$abs".also { absoluteEpisodes[it] = abs }
+            } else if (ext.scheme in setOf("kitsu", "mal", "anilist")) {
+                // a later-season entry numbers its own episodes from 1: only an entry that holds the whole show is mapped
+                if (anime != null && (anime.seasonHint ?: 1) > 1) return null
+                val src = when (ext.scheme) { "mal" -> "myanimelist"; else -> ext.scheme }
+                val tmdbId = getJson("https://arm.haglund.dev/api/v2/ids?source=$src&id=${ext.key}")
+                    ?.get("themoviedb")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() && it != "null" } ?: return null
+                val counts = tmdbAllSeasonCounts(ExternalId("tmdb", tmdbId, null, null)) ?: return null
+                val abs = en
+                absoluteEpisodes[id] = abs
+                var cum = 0
+                for (s in counts.keys.sorted()) {
+                    val c = counts[s] ?: break
+                    if (abs <= cum + c) return "tmdb:$tmdbId:$s:${abs - cum}".also { absoluteEpisodes[it] = abs }
+                    cum += c
+                }
+                null
+            } else null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) { null }
+    }
+
     private val tmdbAltTitles = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
     /**
@@ -2287,6 +2331,16 @@ object StremioServer {
 
     /** Title + year for any supported id; null when the source has no such item. */
     private suspend fun resolveExternal(type: String, ext: ExternalId): Pair<String, Int?>? {
+        val storeKey = "title:$type:${ext.scheme}:${ext.key}"
+        // one retry, then the names found by an earlier lookup (a slow or failing Kitsu / AniList / TMDB must not mean "nothing found")
+        val found = resolveExternalOnce(type, ext) ?: run { delay(700); resolveExternalOnce(type, ext) }
+        if (found != null) { NameStore.put(storeKey, listOf(found.first, found.second?.toString().orEmpty())); return found }
+        val saved = NameStore.get(storeKey)?.takeIf { it.isNotEmpty() && it[0].isNotBlank() } ?: return null
+        ServerState.warn("Title lookup for ${ext.scheme}:${ext.key} failed - searching with the name saved earlier ('${saved[0]}')")
+        return saved[0] to saved.getOrNull(1)?.toIntOrNull()
+    }
+
+    private suspend fun resolveExternalOnce(type: String, ext: ExternalId): Pair<String, Int?>? {
         if (ext.scheme == "imdb" || ext.scheme == "tmdb") return resolveGenericMedia(type, ext.key)
         val cacheKey = "$type:${ext.scheme}:${ext.key}"
         genericMediaCache[cacheKey]?.let { return it }
@@ -3050,6 +3104,12 @@ object StremioServer {
                 }
                 ServerState.debug("Searching across ${activePlugins.size} plugin(s) (live-TV-only excluded)...")
 
+                // The same episode under the other kind of id (anime entry <-> TMDB series), searched next to this one
+                val altId = withTimeoutOrNull(8_000L) { otherIdPath(type, id, ext, animeForSearch) }
+                if (altId != null) ServerState.info("[Streams] '$title': also searching as $altId" + (absoluteEpisodes[id]?.let { " (running episode $it)" } ?: ""))
+                val altType = if (altId?.startsWith("tmdb:") == true) "series" else type
+                val pathCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
                 val sem = Semaphore(20)
                 val started = System.currentTimeMillis()
                 val accumulated = java.util.concurrent.CopyOnWriteArrayList<StremioStream>()
@@ -3057,7 +3117,7 @@ object StremioServer {
                 // finishes re-saves the cached list, so reloads see links arrive one by one.
                 val answered = java.util.concurrent.atomic.AtomicBoolean(false)
                 val publish = {
-                    com.cncverse.stremiobridge.cache.StreamCacheManager.put(aggCacheKey, sortStreamsByQuality(accumulated))
+                    com.cncverse.stremiobridge.cache.StreamCacheManager.put(aggCacheKey, withLastGood(type, id, title, sortStreamsByQuality(accumulated), null))
                 }
                 val status = SearchStatus(activePlugins.size + UpstreamAddons.active().size)
                 if (searchStatus.size > 100) searchStatus.keys.take(50).forEach { searchStatus.remove(it) }
@@ -3068,7 +3128,15 @@ object StremioServer {
                         sem.withPermit {
                             val res = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                                 try {
-                                    val streams = buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget)
+                                    val streams = if (altId == null) buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget)
+                                    else coroutineScope {
+                                        val own = async { buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget) }
+                                        val other = async { runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList()) }
+                                        val a = own.await(); val b = other.await()
+                                        pathCounts.merge("own", a.size) { x, y -> x + y }; pathCounts.merge("other", b.size) { x, y -> x + y }
+                                        val seenUrls = a.mapNotNull { it.url ?: it.infoHash }.toHashSet()
+                                        a + b.filter { s -> (s.url ?: s.infoHash)?.let { seenUrls.add(it) } ?: true }
+                                    }
                                     accumulated.addAll(streams)
                                     status.counts[api.name] = streams.size
                                 } catch (e: Throwable) {
@@ -3173,15 +3241,18 @@ object StremioServer {
                 } else if (remaining > 0) {
                     jobs.forEach { it.cancel() }
                 }
+                if (altId != null) ServerState.info("[Streams] '$title': $id found ${pathCounts["own"] ?: 0} link(s), $altId found ${pathCounts["other"] ?: 0} (so far)")
                 ServerState.info(
                     "[Streams] '$title': answered with ${accumulated.size} streams in ${elapsed / 1000.0}s, " +
                         "${activePlugins.size - remaining}/${activePlugins.size} providers done" +
                         (if (remaining > 0 && elapsed < STREAM_DEADLINE_MS) ", $remaining still loading into cache" else "")
                 )
                 // Cached even when partial: reloads get it at once while the cache keeps filling
+                val answer = withLastGood(type, id, title, sortStreamsByQuality(accumulated),
+                    if (remaining > 0) "$remaining of ${activePlugins.size} extensions had not answered yet" else "every extension answered")
                 com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult(
-                    sortStreamsByQuality(accumulated),
-                    cacheable = accumulated.isNotEmpty(),
+                    answer,
+                    cacheable = answer.isNotEmpty(),
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -3190,6 +3261,37 @@ object StremioServer {
                 com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult(emptyList())
             }
         }
+    }
+
+    private class GoodList(val at: Long, val streams: List<StremioStream>)
+    /** "type:id" -> the biggest recent list of links (any extension set / profile): a search that finds far fewer keeps these. */
+    private val lastGood = java.util.concurrent.ConcurrentHashMap<String, GoodList>()
+    private const val LAST_GOOD_MS = 30 * 60_000L
+
+    /**
+     * A new list that is much smaller than the one found for the same title a short while ago (sites slow or rate-limiting,
+     * extensions reloading, the saved results cleared) keeps the earlier links too, so a reload never drops from 45 links to 3.
+     * The bigger list is remembered for [LAST_GOOD_MS]. [why] (when given) says why the new list is short, for the log.
+     */
+    private fun withLastGood(type: String, id: String, title: String, now: List<StremioStream>, why: String?): List<StremioStream> {
+        val key = "$type:$id"
+        val t = System.currentTimeMillis()
+        val prev = lastGood[key]?.takeIf { t - it.at < LAST_GOOD_MS }
+        var out = now
+        if (prev != null && prev.streams.size >= 8 && now.size < prev.streams.size / 2) {
+            val have = now.mapNotNull { it.url ?: it.infoHash ?: it.externalUrl }.toHashSet()
+            val kept = prev.streams.filter { s -> (s.url ?: s.infoHash ?: s.externalUrl)?.let { have.add(it) } ?: false }
+            if (kept.isNotEmpty()) {
+                if (why != null) ServerState.warn("[Streams] '$title': this search found only ${now.size} link(s), ${prev.streams.size} were found " +
+                    "${(t - prev.at) / 60_000} min ago ($why) - the earlier ${kept.size} are kept")
+                out = sortStreamsByQuality(now + kept)
+            }
+        }
+        if (out.size >= (prev?.streams?.size ?: 0)) {
+            if (lastGood.size > 300) lastGood.clear()
+            lastGood[key] = GoodList(t, out)
+        }
+        return out
     }
 
     // ── Generic per-provider stream fetch (shared by buildStreams + buildStreamsForApi) ─
@@ -3467,6 +3569,13 @@ object StremioServer {
                         ?: AnimeEpisodes.pick(epList, 1, target.absolute)
                 }
                 if (ep == null) {
+                    // a site that numbers the whole show 1, 2, ... 1000+ (One Piece): the running number from TMDB's season counts
+                    absoluteEpisodes[id]?.takeIf { it != epNo }?.let { abs ->
+                        ep = AnimeEpisodes.pick(epList, 1, abs)
+                        if (ep != null) ServerState.debug("[${api.name}] episode $epNo not listed - running number $abs found")
+                    }
+                }
+                if (ep == null) {
                     ServerState.debug("[STREAM_EMPTY] [${api.name}] Episode $epNo not found")
                     StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Episode $epNo not found", noMatch = true)
                     return emptyList()
@@ -3482,6 +3591,9 @@ object StremioServer {
             if (season != null && episode != null) {
                 // Anime extensions often leave the season empty: that is season 1
                 val ep = mediaInfo.episodes?.find { (it.season ?: 1) == season && it.episode == episode }
+                    // anime sites number a long show 1, 2, ... 1000+ in one list: TMDB's season counts give the running number
+                    ?: absoluteEpisodes[id]?.takeIf { season > 1 }?.let { abs -> mediaInfo.episodes?.find { (it.season ?: 1) == 1 && it.episode == abs } }
+                        ?.also { ServerState.debug("[${api.name}] S${season}E${episode} found as running episode ${absoluteEpisodes[id]}") }
                 if (ep != null) {
                     dataUrlToLoad = ep.dataUrl
                     matchedEpisode = episodeLabel(ep)

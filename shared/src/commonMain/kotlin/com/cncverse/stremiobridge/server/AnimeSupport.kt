@@ -356,9 +356,14 @@ object AnimeResolver {
         if (info != null) {
             if (cache.size > 2_000) cache.clear()
             cache[key] = info
+            NameStore.put("anime:$key", NameStore.encode(info))
             ServerState.debug("Anime ${ext.scheme}:${ext.key} -> ${info.titles.take(3)} (${info.year}, ${info.format}, ${info.episodeCount} eps)")
+            return info
         }
-        return info
+        // the lookup failed (Kitsu / AniList slow or down): the names found by an earlier lookup of this id
+        val saved = NameStore.get("anime:$key")?.let { NameStore.decode(it) }
+        if (saved != null) ServerState.warn("Anime lookup ${ext.scheme}:${ext.key} failed - using the ${saved.titles.size} names saved earlier")
+        return saved
     }
 }
 

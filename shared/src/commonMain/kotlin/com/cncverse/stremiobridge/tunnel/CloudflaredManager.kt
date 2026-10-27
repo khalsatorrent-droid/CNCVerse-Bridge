@@ -30,10 +30,57 @@ object CloudflaredManager {
         HttpClient(CIO)
     }
 
+    /**
+     * Oldest cloudflared accepted: Cloudflare asked every tunnel to run 2026.10.2 or later (third-party certificates
+     * it trusted were compromised, Oct 2026). An older downloaded copy is replaced (desktop); the Android app bundles
+     * its own copy, which an app update replaces.
+     */
+    const val MIN_VERSION = "2026.10.2"
+
+    @Volatile private var versionChecked: Pair<String, String?>? = null
+
+    /** "2026.10.4" from `cloudflared --version`, or null when it cannot be run / read. */
+    fun installedVersion(): String? {
+        val path = getCloudflaredBinaryPath()
+        val f = File(path)
+        if (!f.exists()) return null
+        val sig = path + ":" + f.length() + ":" + f.lastModified()
+        versionChecked?.takeIf { it.first == sig }?.let { return it.second }
+        val v = runCatching {
+            setFileExecutable(path)
+            val p = ProcessBuilder(path, "--version").redirectErrorStream(true).start()
+            val out = p.inputStream.bufferedReader().readText()
+            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) p.destroy()
+            Regex("(20\\d{2})\\.(\\d{1,2})\\.(\\d+)").find(out)?.value
+        }.getOrNull()
+        versionChecked = sig to v
+        return v
+    }
+
+    internal fun versionAtLeast(v: String, min: String): Boolean {
+        val a = v.split('.').map { it.toIntOrNull() ?: 0 }
+        val b = min.split('.').map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val x = a.getOrElse(i) { 0 }
+            val y = b.getOrElse(i) { 0 }
+            if (x != y) return x > y
+        }
+        return true
+    }
+
     fun isInstalled(): Boolean {
         val path = getCloudflaredBinaryPath()
         val file = File(path)
-        return file.exists() && file.length() > 100_000 // Cloudflared binary is usually >10MB
+        if (!(file.exists() && file.length() > 100_000)) return false // Cloudflared binary is usually >10MB
+        // a downloaded copy older than MIN_VERSION is downloaded again (the bundled Android copy cannot be replaced here)
+        if (file.parentFile?.canWrite() == true) {
+            val v = installedVersion()
+            if (v != null && !versionAtLeast(v, MIN_VERSION)) {
+                ServerState.warn("cloudflared $v is older than $MIN_VERSION (Cloudflare security notice): downloading the current version")
+                return false
+            }
+        }
+        return true
     }
 
     suspend fun downloadCloudflared(onProgress: (Float) -> Unit): Boolean = withContext(Dispatchers.IO) {
@@ -61,7 +108,7 @@ object CloudflaredManager {
                 }
                 tempFile.renameTo(targetFile)
                 setFileExecutable(targetFile.absolutePath)
-                ServerState.info("Cloudflared downloaded successfully (${bytes.size / (1024 * 1024)} MB)")
+                ServerState.info("Cloudflared downloaded successfully (${bytes.size / (1024 * 1024)} MB, version ${installedVersion() ?: "unknown"})")
                 return@withContext true
             } else {
                 ServerState.error("Cloudflared download failed: HTTP ${response.status.value}")
@@ -170,6 +217,10 @@ object CloudflaredManager {
         scope.launch {
             try {
                 ServerState.info(if (quick) "Starting free Cloudflare quick tunnel (local port $port) ..." else "Starting Cloudflare Tunnel for $publicUrl (local port $port) ...")
+                installedVersion()?.let { v ->
+                    if (versionAtLeast(v, MIN_VERSION)) ServerState.info("cloudflared $v")
+                    else ServerState.warn("cloudflared $v is older than $MIN_VERSION: Cloudflare asks every tunnel to update (update the app to get the bundled $MIN_VERSION+ copy)")
+                }
 
                 // Get edge IPs (bypasses DNS issue on Android 10+)
                 val edgeIps = resolveCloudflareEdgeIps()
