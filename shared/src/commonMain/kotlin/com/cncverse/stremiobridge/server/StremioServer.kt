@@ -2324,24 +2324,36 @@ object StremioServer {
                 val al = anime?.aniListId ?: return null
                 "anilist:$al:$abs".also { absoluteEpisodes[it] = abs }
             } else if (ext.scheme in setOf("kitsu", "mal", "anilist")) {
-                // 1) the Kitsu add-on's mapping: this episode's IMDb series, season and episode (exact, for every entry)
+                // The request's own episode number is the Kitsu episode (kitsu:12:153 = episode 153): an entry that holds the
+                // whole show (One Piece) numbers it 1, 2, ... 1000+, so that is also the running number for sites that list it so
+                val wholeShow = anime == null || (anime.seasonHint ?: 1) <= 1
+                if (wholeShow) absoluteEpisodes[id] = en
                 val kid = if (ext.scheme == "kitsu") ext.key else runCatching { KitsuMap.kitsuOf(ext.scheme, ext.key) }.getOrNull()
                 val imdbPlace = kid?.let { runCatching { KitsuMap.toImdb(it, en) }.getOrNull() }
-                if (imdbPlace != null) return "${imdbPlace.first}:${imdbPlace.second}:${imdbPlace.third}"
-                // 2) otherwise TMDB's season sizes - a later-season entry numbers its own episodes from 1: only an entry that holds the whole show is mapped
-                if (anime != null && (anime.seasonHint ?: 1) > 1) return null
                 val src = when (ext.scheme) { "mal" -> "myanimelist"; else -> ext.scheme }
+                // The TMDB series: arm.haglund.dev, else TMDB's own lookup of the IMDb id the Kitsu add-on gave
                 val tmdbId = getJson("https://arm.haglund.dev/api/v2/ids?source=$src&id=${ext.key}")
-                    ?.get("themoviedb")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() && it != "null" } ?: return null
-                val counts = tmdbAllSeasonCounts(ExternalId("tmdb", tmdbId, null, null)) ?: return null
-                val abs = en
-                absoluteEpisodes[id] = abs
-                var cum = 0
-                for (s in counts.keys.sorted()) {
-                    val c = counts[s] ?: break
-                    if (abs <= cum + c) return "tmdb:$tmdbId:$s:${abs - cum}".also { absoluteEpisodes[it] = abs }
-                    cum += c
+                    ?.get("themoviedb")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: imdbPlace?.first?.let { tt ->
+                        fetchTmdbJson("find/$tt?external_source=imdb_id")?.get("tv_results")
+                            ?.let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                            ?.get("id")?.jsonPrimitive?.contentOrNull
+                    }
+                // TMDB season / episode from the running number and TMDB's season sizes (kitsu 153 -> TMDB S9E10): the
+                // numbering the TMDB side of every extension expects - IMDb splits One Piece into other seasons
+                if (wholeShow && tmdbId != null) {
+                    val counts = tmdbAllSeasonCounts(ExternalId("tmdb", tmdbId, null, null))
+                    if (counts != null) {
+                        var cum = 0
+                        for (s in counts.keys.filter { it >= 1 }.sorted()) {
+                            val c = counts[s] ?: break
+                            if (en <= cum + c) return "tmdb:$tmdbId:$s:${en - cum}".also { absoluteEpisodes[it] = en }
+                            cum += c
+                        }
+                    }
                 }
+                // A later-season entry (own numbering from 1): the Kitsu add-on's exact IMDb place of this episode
+                if (imdbPlace != null) return "${imdbPlace.first}:${imdbPlace.second}:${imdbPlace.third}"
                 null
             } else null
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3187,30 +3199,38 @@ object StremioServer {
                                 try {
                                     // The two ids of an anime one after the other, never at the same time (half the load on the
                                     // device and on each site): the Kitsu side first, then the TMDB / IMDb side
-                                    val streams = run {
-                                        val ownIsKitsu = ext.scheme in ExternalIds.ANIME_SCHEMES
-                                        val ownPath: suspend () -> List<StremioStream> = { buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget) }
-                                        val otherPath: suspend () -> List<StremioStream>? = {
-                                            val altId = altIdJob.await()
-                                            if (altId == null) null else {
-                                                val altType = if (altId.startsWith("tmdb:") || altId.startsWith("tt")) "series" else type
-                                                runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList())
-                                            }
-                                        }
-                                        val a: List<StremioStream>; val b: List<StremioStream>?
-                                        if (ownIsKitsu) { a = ownPath(); b = otherPath() }
-                                        else {
-                                            val alt = altIdJob.await()
-                                            if (alt != null && alt.startsWith("kitsu:")) { b = otherPath(); a = ownPath() }
-                                            else { a = ownPath(); b = otherPath() }
-                                        }
-                                        if (b == null) return@run a
-                                        pathCounts.merge("own", a.size) { x, y -> x + y }; pathCounts.merge("other", b.size) { x, y -> x + y }
-                                        val seenUrls = a.mapNotNull { it.url ?: it.infoHash }.toHashSet()
-                                        a + b.filter { s -> (s.url ?: s.infoHash)?.let { seenUrls.add(it) } ?: true }
+                                    // Each side's links join the answer as soon as that side is done (not after both)
+                                    val seenUrls = java.util.Collections.synchronizedSet(HashSet<String>())
+                                    val got = java.util.concurrent.atomic.AtomicInteger(0)
+                                    fun take(list: List<StremioStream>, side: String) {
+                                        val fresh = list.filter { s -> (s.url ?: s.infoHash)?.let { seenUrls.add(it) } ?: true }
+                                        if (fresh.isEmpty()) return
+                                        pathCounts.merge(side, fresh.size) { x, y -> x + y }
+                                        accumulated.addAll(fresh)
+                                        status.counts[api.name] = got.addAndGet(fresh.size)
+                                        if (answered.get()) publish()
                                     }
-                                    accumulated.addAll(streams)
-                                    status.counts[api.name] = streams.size
+                                    val ownIsKitsu = ext.scheme in ExternalIds.ANIME_SCHEMES
+                                    val ownPath: suspend () -> Unit = {
+                                        // one side failing does not stop the other side
+                                        try { take(buildGenericStreamsForApi(api, type, id, title, year, animeForSearch, animeTarget), "own") }
+                                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                        catch (e: Throwable) { ServerState.debug("[${api.name}] own id: ${e.message}") }
+                                    }
+                                    val otherPath: suspend () -> Unit = {
+                                        val altId = altIdJob.await()
+                                        if (altId != null) {
+                                            val altType = if (altId.startsWith("tmdb:") || altId.startsWith("tt")) "series" else type
+                                            take(runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList()), "other")
+                                        }
+                                    }
+                                    if (ownIsKitsu) { ownPath(); otherPath() }
+                                    else {
+                                        val alt = altIdJob.await()
+                                        if (alt != null && alt.startsWith("kitsu:")) { otherPath(); ownPath() }
+                                        else { ownPath(); otherPath() }
+                                    }
+                                    status.counts[api.name] = got.get()
                                 } catch (e: Throwable) {
                                     // Cancelled by the bridge (request gone / 45 s stop): not the provider's failure
                                     kotlinx.coroutines.currentCoroutineContext().ensureActive()

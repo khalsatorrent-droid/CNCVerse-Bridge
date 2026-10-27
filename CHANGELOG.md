@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Kitsu anime searches find streams again (One Piece).** A Kitsu request uses its own episode number directly: `kitsu:12:153` is episode 153, searched under the anime names. The second search now goes by TMDB's numbering, worked out from the Kitsu episode and TMDB's season sizes (kitsu:12:153 → TMDB S9E10), instead of the IMDb season / episode, which splits One Piece differently and missed. Sites that number the whole show 1, 2, … 1000+ get episode 153 on both sides.
+- **An extension's links show up as soon as one side is done.** With the Kitsu side and the TMDB side searched one after the other, an extension's links were only added once both had finished, often after the answer had already gone out with nothing. Each side's links now join the answer the moment that side finishes, and one side failing no longer drops the other.
+
 ## 1.7.53
 
 - **Lighter anime searches.** The two ids of an anime are no longer searched at the same time: each extension searches the Kitsu side first and, when that is done, the TMDB / IMDb side, so every site gets half the requests at once and the device half the work. 20 extensions search at the same time again (was 32).
