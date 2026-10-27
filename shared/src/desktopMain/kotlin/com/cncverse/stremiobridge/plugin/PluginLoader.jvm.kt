@@ -885,7 +885,7 @@ private class DirectMainApiWrapper(
         return staticSections
     }
 
-    override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO + netCtx) {
+    override suspend fun search(query: String): List<SearchResult> = withContext(com.cncverse.stremiobridge.server.PluginThreads.io + netCtx) {
         try {
             val rawResults: List<*>? = try {
                 api.search(query)
@@ -900,7 +900,7 @@ private class DirectMainApiWrapper(
         }
     }
 
-    override suspend fun getMainPage(page: Int, type: String, sectionName: String?): List<SearchResult> = withContext(Dispatchers.IO + netCtx) {
+    override suspend fun getMainPage(page: Int, type: String, sectionName: String?): List<SearchResult> = withContext(com.cncverse.stremiobridge.server.PluginThreads.io + netCtx) {
         try {
             val mainPageDataList = api.mainPage
             val allResults = mutableListOf<SearchResult>()
@@ -957,7 +957,7 @@ private class DirectMainApiWrapper(
         }
     }
 
-    override suspend fun load(url: String): MediaInfo? = withContext(Dispatchers.IO + netCtx) {
+    override suspend fun load(url: String): MediaInfo? = withContext(com.cncverse.stremiobridge.server.PluginThreads.io + netCtx) {
         try {
             val resp = api.load(url) ?: return@withContext null
             (resp as Any).reflectToMediaInfo(url)
@@ -967,7 +967,7 @@ private class DirectMainApiWrapper(
         }
     }
 
-    override suspend fun loadLinks(dataUrl: String): List<StremioStream> = withContext(Dispatchers.IO + netCtx) {
+    override suspend fun loadLinks(dataUrl: String): List<StremioStream> = withContext(com.cncverse.stremiobridge.server.PluginThreads.io + netCtx) {
         val streams = mutableListOf<StremioStream>()
         val subtitles = mutableListOf<StremioSubtitle>()
         ServerState.debug("loadLinks called: plugin=${plugin.name} dataUrl=$dataUrl")

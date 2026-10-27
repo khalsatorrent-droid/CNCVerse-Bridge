@@ -1806,10 +1806,16 @@ object StremioServer {
             // 3. Pre-warm home page catalogs into newHomePageCache
             val catalogsToPrewarm = newProviderCatalogs.values.flatten().distinctBy { it.id }
             ServerState.info("🔥 Pre-warming ${catalogsToPrewarm.size} fresh home page(s)…")
+            // Home pages are background work: while someone is waiting for a stream search they hold back (at most 3
+            // minutes in all per refresh), so the extensions' sites and the device's connections go to the search first
+            val yielded = java.util.concurrent.atomic.AtomicLong(0)
             coroutineScope {
                 catalogsToPrewarm.map { cat ->
                     async(pluginDispatcher) {
                         sem.withPermit {
+                            while (yielded.get() < 180_000L && searchStatus.values.any { !it.finished }) {
+                                delay(1_000L); yielded.addAndGet(1_000L)
+                            }
                             runCatching {
                                 val metas = withTimeoutOrNull(15_000) {
                                     fetchCatalogItemsDirect(cat.type, cat.id, null, 0, null)
