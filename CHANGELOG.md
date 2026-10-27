@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.52
 
 - **Searches no longer time out across the board.** The extensions' own calls (search, page, links, home pages) ran on the app's shared pool of 64 threads. With 32 extensions searching at once, anime searched under two ids, two pages opened at a time and the home pages loading alongside, the calls queued behind each other and most extensions hit the 120 s cap ("Timed out waiting for 120000 ms"). They now have their own, larger pool. The home-page pre-warm (the "🔥 Pre-warmed" lines) also holds back while a stream search is running (at most 3 minutes per refresh), so it no longer competes with the search.
 
