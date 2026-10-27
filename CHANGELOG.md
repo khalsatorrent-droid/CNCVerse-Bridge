@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.1
 
 - **Less memory, so other apps are no longer closed.** Opened extension pages were kept for half an hour, up to 500 of them. A long anime's page holds 1000+ episodes (One Piece on AnimePahe, with every episode's title, picture and summary), so this could take hundreds of MB. Pages are now kept by size (12,000 episodes in all, the oldest go first). When Android says the phone is short of memory, the bridge drops its cached pages, older searches and the Kitsu episode lists; they are loaded again when needed. The extensions' thread pool is 96 threads (was 192). A wrong-sized anime entry now tries at most 3 other entries instead of opening every result's page.
 - **AnimePahe-style episode lists.** AnimePahe gives One Piece's episodes no numbers, only their titles, and a date that is when the site uploaded the episode, not when it aired. The bridge used to re-sort such lists by that date, which could shuffle the order, and skipped lists where only some episodes carried a number. The site's own order is now kept (turned around only when it runs newest first), and an episode is also found by its place in the list, so kitsu:12:153 / TMDB S9E10 is the 153rd episode.
