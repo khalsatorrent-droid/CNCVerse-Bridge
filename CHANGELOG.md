@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.5
 
 - **CineStream rules only as a fallback.** Movies and series are matched by the TMDB title first, the strict way: the TMDB title and its other spellings and original title, with the page's own IMDb / TMDB id confirming it. Only when that finds no page in an extension are CineStream's looser rules tried, over all the results the searches already returned (no extra searches): same letters without spaces, the title inside a longer post name, a shorter name with the same year, and season packs. At most 3 more pages are opened for that.
 
