@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Anime found by Kitsu's own names and episode number.** For an anime with a Kitsu id (also the Kitsu id found for a TMDB / IMDb episode), every extension now first searches the names Kitsu stores for that entry: English, romaji, canonical and abbreviated. Only results named exactly like one of them count (case, punctuation and "(Dub)" / "(Sub)" ignored), and the episode is Kitsu's own number in that entry:
+  - Farming Life in Another World S2E6 → kitsu:50117:6 → "Farming Life in Another World Season 2" / "Isekai Nonbiri Nouka 2", episode 6.
+  - One Piece → kitsu:12:153 → "One Piece", episode 153.
+  - A site that keeps counting from the season before (13, 14, … for a second season) is handled too.
+  - The TMDB / similar-name search runs only for extensions where this finds nothing.
+- **No more first-season episodes for a later season.** When an extension only had the first season's page, a season 2 request took that page's episode with the same number (S2E6 played S1E6). A later-season Kitsu / MAL / AniList entry now only takes a page that is that season, or that lists that season.
+
 ## 1.8.1
 
 - **Less memory, so other apps are no longer closed.** Opened extension pages were kept for half an hour, up to 500 of them. A long anime's page holds 1000+ episodes (One Piece on AnimePahe, with every episode's title, picture and summary), so this could take hundreds of MB. Pages are now kept by size (12,000 episodes in all, the oldest go first). When Android says the phone is short of memory, the bridge drops its cached pages, older searches and the Kitsu episode lists; they are loaded again when needed. The extensions' thread pool is 96 threads (was 192). A wrong-sized anime entry now tries at most 3 other entries instead of opening every result's page.

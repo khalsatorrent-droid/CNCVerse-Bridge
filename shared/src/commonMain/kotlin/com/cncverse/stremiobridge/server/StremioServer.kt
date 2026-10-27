@@ -3257,10 +3257,11 @@ object StremioServer {
                                             take(runCatching { buildGenericStreamsForApi(api, altType, altId, title, year, animeForSearch, null) }.getOrDefault(emptyList()), "other")
                                         }
                                     }
-                                    if (ownIsKitsu) { ownPath(); otherPath() }
+                                    // The Kitsu side first; the other side only when the Kitsu side found nothing in this extension
+                                    if (ownIsKitsu) { ownPath(); if (got.get() == 0) otherPath() }
                                     else {
                                         val alt = altIdJob.await()
-                                        if (alt != null && alt.startsWith("kitsu:")) { otherPath(); ownPath() }
+                                        if (alt != null && alt.startsWith("kitsu:")) { otherPath(); if (got.get() == 0) ownPath() }
                                         else { ownPath(); otherPath() }
                                     }
                                     status.counts[api.name] = got.get()
@@ -3700,6 +3701,10 @@ object StremioServer {
         anime: AnimeInfo? = null,
         target: AnimeTarget? = null,
     ): List<StremioStream> {
+        // Anime with a Kitsu id: the entry whose name is exactly one of Kitsu's names for it, and Kitsu's episode number
+        // in it - no guessing from TMDB seasons or similar names. Only when that finds nothing, the other ways below.
+        if (type != "movie" && !id.startsWith("probe_")) kitsuExactStreams(api, id, title, year)?.let { return it }
+
         ServerState.debug("[${api.name}] Searching for '$title'")
         val cacheKey = api.internalName
         val searchResults = try {
@@ -3883,6 +3888,22 @@ object StremioServer {
                 // show: the request's TMDB numbers / the running number fit it better than the AniList entry's own numbers
                 val style = if (parsed != null && parsed.scheme in setOf("imdb", "tmdb", "tvdb") && parsed.season != null && parsed.episode != null)
                     TitleMatch.numbering(epList, tmdbAllSeasonCounts(parsed)) else TitleMatch.Numbering.UNKNOWN
+                // A later-season Kitsu / MAL / AniList entry ("... Season 2") that only matched the first season's page:
+                // its episode 6 would be the first season's episode 6 - not this entry
+                if (target == null && parsed != null && parsed.scheme in ExternalIds.ANIME_SCHEMES && wantSeason != null && wantSeason > 1 &&
+                    epList.none { it.season == wantSeason }) {
+                    fun seasonOfName(n: String?): Int? {
+                        val x = AnimeMatcher.normalize(n ?: return null)
+                        return AnimeMatcher.seasonNumber(x)
+                            ?: Regex("(?<!\\bno) ([2-9])$").find(x)?.groupValues?.get(1)?.toIntOrNull()
+                    }
+                    val entrySeason = seasonOfName(bestMatch.name) ?: seasonOfName(mediaInfo.name)
+                    if (entrySeason != wantSeason) {
+                        ServerState.debug("[STREAM_EMPTY] [${api.name}] '${bestMatch.name}' is not season $wantSeason")
+                        StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Only another season's entry found", noMatch = true)
+                        return emptyList()
+                    }
+                }
                 var ep = when (style) {
                     TitleMatch.Numbering.TMDB -> AnimeEpisodes.pick(epList, parsed!!.season, parsed.episode!!)
                     TitleMatch.Numbering.ABSOLUTE -> absoluteEpisodes[id]?.let { abs -> AnimeEpisodes.pick(epList, 1, abs) }
@@ -3935,6 +3956,78 @@ object StremioServer {
     }
 
     /** The links of the matched page / episode, labelled with the entry they came from. */
+    /** Kitsu's names compared the way sites write them: no case, punctuation or "(Dub)" / "(Sub)" tags, no trailing "TV". */
+    private fun exactName(n: String): String = AnimeMatcher.normalize(n).removeSuffix(" tv").trim()
+
+    /**
+     * The episode of a Kitsu entry in one extension, found the direct way: every name Kitsu stores for the entry
+     * ("Farming Life in Another World Season 2", "Isekai Nonbiri Nouka 2"; "One Piece") is searched, only results whose
+     * name is exactly one of them count, and the episode is Kitsu's own number in that entry (kitsu:50117:6 = episode 6 of
+     * "Isekai Nonbiri Nouka 2", kitsu:12:153 = episode 153 of "One Piece"). Null when the extension has no entry of that
+     * name or the entry lacks the episode: the other ways are tried then.
+     */
+    private suspend fun kitsuExactStreams(api: MainApiWrapper, id: String, title: String, year: Int?): List<StremioStream>? {
+        val p = ExternalIds.parse(id) ?: return null
+        if (p.scheme !in ExternalIds.ANIME_SCHEMES) return null
+        val ep = p.episode ?: return null
+        val kid = if (p.scheme == "kitsu") p.key else runCatching { KitsuMap.kitsuOf(p.scheme, p.key) }.getOrNull() ?: return null
+        val names = runCatching { KitsuMap.names(kid) }.getOrNull() ?: return null
+        val wanted = names.titles.map { exactName(it) }.filter { it.isNotEmpty() }.toHashSet()
+        // only Latin-script names are typed into the sites' searches
+        val queries = names.titles.filter { n -> n.count { c -> c.code < 0x250 } * 10 >= n.length * 8 }
+            .distinctBy { exactName(it) }.take(4)
+        val cacheKey = api.internalName
+        val matches = LinkedHashMap<String, SearchResult>()
+        for (q in queries) {
+            val results = try {
+                SearchLoadCache.getSearch(cacheKey, q) ?: api.search(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
+            } catch (e: Throwable) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                emptyList()
+            }
+            results.filter { exactName(it.name) in wanted }.forEach { matches.putIfAbsent(it.url, it) }
+            if (matches.isNotEmpty()) break
+        }
+        if (matches.isEmpty()) {
+            ServerState.debug("[${api.name}] No entry named exactly like kitsu:$kid (${queries.joinToString(" / ")})")
+            return null
+        }
+        val out = ArrayList<StremioStream>()
+        var found = false
+        // the entry and, when the site lists it separately, its dubbed twin
+        for (m in matches.values.take(2)) {
+            val mi = try {
+                SearchLoadCache.getLoad(cacheKey, m.url)?.info ?: api.load(m.url)?.also { SearchLoadCache.putLoad(cacheKey, m.url, it) }
+            } catch (e: Throwable) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                null
+            } ?: continue
+            val list = mi.episodes
+            val e: MediaInfoEpisode? = if (list.isNullOrEmpty()) null else run {
+                val nums = list.mapNotNull { TitleMatch.numberOf(it) }
+                list.firstOrNull { TitleMatch.numberOf(it) == ep && (it.season ?: 1) <= 1 }
+                    ?: list.firstOrNull { TitleMatch.numberOf(it) == ep }
+                    // a site that keeps counting from the season before (13, 14, ... for a second season of 12)
+                    ?: nums.minOrNull()?.takeIf { it > 1 && (names.episodeCount == null || nums.size <= names.episodeCount + 2) }
+                        ?.let { first -> list.firstOrNull { TitleMatch.numberOf(it) == first + ep - 1 } }
+                    ?: AnimeEpisodes.pick(list, null, ep)
+            }
+            val dataUrl = when {
+                e != null -> e.dataUrl
+                list.isNullOrEmpty() && ep == 1 -> mi.dataUrl
+                else -> null
+            }
+            if (dataUrl == null) {
+                ServerState.debug("[${api.name}] '${m.name}' (kitsu:$kid) has no episode $ep")
+                continue
+            }
+            found = true
+            ServerState.debug("[${api.name}] kitsu:$kid episode $ep -> '${m.name}'" + (e?.let { " · " + (episodeLabelOf(it) ?: "") } ?: ""))
+            out += linksFor(api, m.name, dataUrl, e?.let { episodeLabelOf(it) }, title, year)
+        }
+        return if (found) out else null
+    }
+
     private suspend fun linksFor(api: MainApiWrapper, matchName: String, dataUrlToLoad: String, matchedEpisode: String?, title: String, year: Int?): List<StremioStream> {
         ServerState.debug("[${api.name}] Loading links for $dataUrlToLoad")
         try {

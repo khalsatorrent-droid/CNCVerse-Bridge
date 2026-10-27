@@ -44,6 +44,41 @@ object KitsuMap {
     /** kitsu id -> (when, AniList id or 0 when none). */
     private val toAniList = ConcurrentHashMap<String, Pair<Long, Int>>()
 
+    /** The names Kitsu stores for one entry, and its episode count. */
+    class Names(val titles: List<String>, val episodeCount: Int?, val subtype: String?)
+
+    /** kitsu id -> (when, its names, or null when Kitsu does not know it). */
+    private val names = ConcurrentHashMap<String, Pair<Long, Names?>>()
+
+    /**
+     * Every name of Kitsu entry [kitsuId] as Kitsu lists it - English ("Farming Life in Another World Season 2"), romaji
+     * ("Isekai Nonbiri Nouka 2"), the canonical and abbreviated titles, Japanese last. Null when Kitsu cannot be reached.
+     */
+    suspend fun names(kitsuId: String): Names? = withContext(Dispatchers.IO) {
+        names[kitsuId]?.takeIf { fresh(it.first) }?.let { return@withContext it.second }
+        val el = runCatching {
+            client.newCall(okhttp3.Request.Builder().url("https://kitsu.io/api/edge/anime/$kitsuId")
+                .header("Accept", "application/vnd.api+json").build()).execute().use { r ->
+                if (r.code == 404) JsonObject(emptyMap())
+                else if (!r.isSuccessful) null
+                else r.body?.string()?.takeIf { it.isNotBlank() }?.let { json.parseToJsonElement(it) }
+            }
+        }.getOrNull() ?: return@withContext null
+        val a = el.obj()?.get("data").obj()?.get("attributes").obj()
+        val result = a?.let {
+            val t = it["titles"].obj()
+            val abbr = (it["abbreviatedTitles"] as? JsonArray).orEmpty().mapNotNull { x -> (x as? JsonPrimitive)?.contentOrNull?.trim() }
+            val all = (listOfNotNull(t?.str("en"), t?.str("en_us"), t?.str("en_jp"), it.str("canonicalTitle")) +
+                t?.entries.orEmpty().filter { (k, _) -> k !in setOf("en", "en_us", "en_jp", "ja_jp") }.mapNotNull { (_, v) -> (v as? JsonPrimitive)?.contentOrNull?.trim() } +
+                abbr + listOfNotNull(t?.str("ja_jp")))
+                .filter { n -> n.isNotBlank() }.distinct()
+            if (all.isEmpty()) null else Names(all, it.int("episodeCount"), it.str("subtype"))
+        }
+        if (names.size > 2_000) names.clear()
+        names[kitsuId] = System.currentTimeMillis() to result
+        result
+    }
+
     /** Low memory: the episode lists go (fetched again when needed); the small id maps stay. */
     fun trim() { metas.clear(); byImdb.clear() }
 
