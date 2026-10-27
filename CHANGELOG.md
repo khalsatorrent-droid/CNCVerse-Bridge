@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.2
 
 - **Anime found by Kitsu's own names and episode number.** For an anime with a Kitsu id (also the Kitsu id found for a TMDB / IMDb episode), every extension now first searches the names Kitsu stores for that entry: English, romaji, canonical and abbreviated. Only results named exactly like one of them count (case, punctuation and "(Dub)" / "(Sub)" ignored), and the episode is Kitsu's own number in that entry:
   - Farming Life in Another World S2E6 → kitsu:50117:6 → "Farming Life in Another World Season 2" / "Isekai Nonbiri Nouka 2", episode 6.
