@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -378,6 +379,19 @@ fun DnsCard() {
         }
         SwitchRow("Use normal DNS if the resolver does not answer", "Off = requests fail when the DoH resolver cannot be reached", s.fallbackToSystem) { update(s.copy(fallbackToSystem = it)) }
 
+        var testResult by remember { mutableStateOf<String?>(null) }
+        val testScope = rememberCoroutineScope()
+        Spacer(Modifier.height(8.dp))
+        ActionButton("Test DoH") {
+            testResult = "Asking the resolver..."
+            val snapshot = s
+            testScope.launch {
+                testResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.cncverse.stremiobridge.network.DohResolver.test(snapshot, "example.com")
+                }
+            }
+        }
+        testResult?.let { Text(it, color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
         Spacer(Modifier.height(8.dp))
         ActionButton("Save", primary = true) {
             DohConfig.update(s)

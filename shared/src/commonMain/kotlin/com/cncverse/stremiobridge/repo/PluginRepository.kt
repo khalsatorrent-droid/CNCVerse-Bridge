@@ -68,6 +68,17 @@ object PluginRepository {
         return "https://cdn.jsdelivr.net/gh/$user/$repo@$branch/$path"
     }
 
+    /** With DNS over HTTPS on, repositories and extensions are downloaded through OkHttp (Ktor's CIO engine cannot use it). */
+    private fun dohHeaders(url: String): Map<String, String> = buildMap {
+        put("User-Agent", BROWSER_USER_AGENT)
+        put("Accept", "*/*")
+        if (url.contains("githubusercontent.com") || url.contains("github.com")) {
+            put("Referer", "https://github.com/"); put("Origin", "https://github.com"); put("Cache-Control", "no-cache"); put("Pragma", "no-cache")
+        }
+    }
+    private fun dohText(url: String) = com.cncverse.stremiobridge.network.DohHttp.text(url, dohHeaders(url))
+    private fun dohBytes(url: String) = com.cncverse.stremiobridge.network.DohHttp.bytes(url, dohHeaders(url))
+
     private fun HttpRequestBuilder.applyGitHubBrowserHeaders(url: String) {
         if (url.contains("githubusercontent.com") || url.contains("github.com")) {
             header(HttpHeaders.Referrer, "https://github.com/")
@@ -137,7 +148,7 @@ object PluginRepository {
         val urls = getCandidateUrls(url)
         for (candidate in urls) {
             try {
-                val text = httpClient.get(candidate) {
+                val text = if (com.cncverse.stremiobridge.network.DohConfig.enabled) dohText(candidate) else httpClient.get(candidate) {
                     applyGitHubBrowserHeaders(candidate)
                 }.bodyAsText()
                 val result = repoJson.decodeFromString<CncRepository>(text)
@@ -160,7 +171,7 @@ object PluginRepository {
         val urls = getCandidateUrls(listUrl)
         for (candidate in urls) {
             try {
-                val text = httpClient.get(candidate) {
+                val text = if (com.cncverse.stremiobridge.network.DohConfig.enabled) dohText(candidate) else httpClient.get(candidate) {
                     applyGitHubBrowserHeaders(candidate)
                 }.bodyAsText()
                 val result = repoJson.decodeFromString<List<SitePlugin>>(text)
@@ -200,7 +211,7 @@ object PluginRepository {
             for (candidate in urls) {
                 try {
                     ServerState.info("Downloading '${plugin.name}' from $candidate")
-                    val bytes = httpClient.get(candidate) {
+                    val bytes = if (com.cncverse.stremiobridge.network.DohConfig.enabled) dohBytes(candidate) else httpClient.get(candidate) {
                         applyGitHubBrowserHeaders(candidate)
                     }.readRawBytes()
 

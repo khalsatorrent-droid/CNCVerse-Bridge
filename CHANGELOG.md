@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **DNS over HTTPS: it now covers more, and you can see it work.** Found and fixed: TMDB, Cinemeta, repository and extension downloads went through Ktor's CIO engine, which cannot use DNS over HTTPS (they now go through the DoH resolver); on Android, extensions that make their own NiceHttp `Requests()` did not get it either; and a setting read before the settings store was ready was remembered as "off" until the next save. The log now says "DNS over HTTPS is ON: every lookup goes to ..." and "DoH (Cloudflare) resolved host -> ip" once per host, and Settings > DNS over HTTPS has a **Test DoH** button that asks the chosen resolver for example.com and shows the answer and the time. Still not covered: the Cloudflare tunnel program, WebView pages, the app's update check and the cloudflared download.
 - **Bitrate on every link, whatever the layout.** The bitrate only showed with the current built-in layout; a custom layout, a preset saved before the bitrate existed or an older saved copy showed the size without it. Now the bitrate is added after the size (or on its own line) whenever the layout has none.
 - **Styled subtitles are now SSA.** The first 10 English subtitles are sent as SSA (SubStation Alpha v4.00, `.ssa` links) instead of ASS, with the same look: white bold text, black outline, bottom centre. Links handed out earlier keep working.
 

@@ -103,6 +103,24 @@ actual class PluginLoader(private val context: Context) {
         } catch (t: Throwable) {
             Log.w(TAG, "Failed to configure AdaptiveHostDns network on app.client: ${t.message}")
         }
+        // Extensions that make their own `Requests()` start from NiceHttp's shared base client: it gets the same DNS
+        // (so DNS over HTTPS and the fallback chain cover those requests too)
+        try {
+            val requestsClass = Class.forName("com.lagradost.nicehttp.Requests")
+            val companion = runCatching { requestsClass.getDeclaredField("Companion").also { it.isAccessible = true }.get(null) }.getOrNull()
+            val target: Any = companion ?: requestsClass
+            val field = (target.javaClass.declaredFields + requestsClass.declaredFields)
+                .firstOrNull { it.type.name.contains("OkHttpClient") }?.also { it.isAccessible = true }
+            val existing = field?.let { f -> runCatching { f.get(target) }.getOrNull() ?: runCatching { f.get(null) }.getOrNull() } as? okhttp3.OkHttpClient
+            if (field != null && existing != null && existing.dns !== com.cncverse.stremiobridge.network.AdaptiveHostDns) {
+                val patched = existing.newBuilder().dns(com.cncverse.stremiobridge.network.AdaptiveHostDns).build()
+                runCatching { field.set(target, patched) }
+                runCatching { field.set(null, patched) }
+                ServerState.info("Configured AdaptiveHostDns on NiceHttp Requests.baseClient")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to configure NiceHttp Requests.baseClient: ${t.message}")
+        }
     }
 
     private suspend fun preWarmPluginHosts() {

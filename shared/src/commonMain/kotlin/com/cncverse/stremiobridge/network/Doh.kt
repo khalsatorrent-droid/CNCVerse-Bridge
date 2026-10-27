@@ -61,21 +61,37 @@ object DohConfig {
     @Volatile private var cur: DohSettings? = null
 
     val settings: DohSettings
-        get() = cur ?: load().also { cur = it }
+        get() {
+            cur?.let { return it }
+            val s = load() ?: return DohSettings()
+            cur = s
+            announce(s)
+            return s
+        }
+
+    /** Read again from storage (server start): settings saved before the store was ready are picked up. */
+    fun reload() { cur = null; settings }
+
+    private fun announce(s: DohSettings) {
+        val p = s.provider()
+        if (s.enabled && p != null) com.cncverse.stremiobridge.state.ServerState.info("DNS over HTTPS is ON: every lookup goes to ${p.name} (${p.url})")
+    }
 
     val enabled: Boolean get() = settings.let { it.enabled && it.provider() != null }
 
     fun update(s: DohSettings) {
         cur = s
+        announce(s)
         runCatching { setExtensionSetting(KEY, "doh1;" + listOf(if (s.enabled) "1" else "0", s.providerId, if (s.fallbackToSystem) "1" else "0", s.customUrl, s.customBootstrap).joinToString(";") { URLEncoder.encode(it, "UTF-8") }) }
         DohResolver.reset()
     }
 
-    private fun load(): DohSettings = runCatching {
+    /** The saved settings; null when the settings store could not be read yet (then nothing is remembered and the next lookup asks again). */
+    private fun load(): DohSettings? = runCatching {
         val raw = getExtensionSetting(KEY)?.takeIf { it.startsWith("doh1;") } ?: return@runCatching DohSettings()
         val p = raw.removePrefix("doh1;").split(';').map { URLDecoder.decode(it, "UTF-8") }
         DohSettings(enabled = p.getOrNull(0) == "1", providerId = p.getOrNull(1)?.ifBlank { null } ?: "cloudflare", fallbackToSystem = p.getOrNull(2) != "0", customUrl = p.getOrNull(3).orEmpty(), customBootstrap = p.getOrNull(4).orEmpty())
-    }.getOrDefault(DohSettings())
+    }.getOrNull()
 }
 
 /** DNS over HTTPS (RFC 8484, binary DNS messages) for every lookup while the setting is on. */
@@ -83,7 +99,21 @@ object DohResolver {
     private class Entry(val addrs: List<InetAddress>, val until: Long)
     private val cache = ConcurrentHashMap<String, Entry>()
 
-    fun reset() = cache.clear()
+    private val logged: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile private var lastError: String? = null
+
+    fun reset() { cache.clear(); logged.clear() }
+
+    /** For the settings card's Test button: asks [s]'s resolver for [host] directly (no cache, no fallback). */
+    fun test(s: DohSettings, host: String = "example.com"): String {
+        val p = s.provider() ?: return "Not a valid https:// DoH address"
+        val t0 = System.currentTimeMillis()
+        return try {
+            val r = query(p, host, remember = false)
+            val ms = System.currentTimeMillis() - t0
+            if (r.isEmpty()) "${p.name} gave no answer for $host" + (lastError?.let { " ($it)" } ?: "") else "${p.name}: $host -> ${r.take(3).joinToString(", ") { it.hostAddress ?: "?" }} ($ms ms)"
+        } catch (e: Exception) { "${p.name} failed: ${e.message ?: e.javaClass.simpleName}" }
+    }
 
     private fun bootstrapDns(p: DohProvider): Dns {
         val providerHost = p.url.substringAfter("://").substringBefore('/').substringBefore(':')
@@ -111,14 +141,17 @@ object DohResolver {
         val p = s.provider()
         if (p != null) {
             val found = runCatching { query(p, host) }.getOrDefault(emptyList())
-            if (found.isNotEmpty()) return found
+            if (found.isNotEmpty()) {
+                if (logged.add(key) && logged.size < 2_000) com.cncverse.stremiobridge.state.ServerState.info("DoH (${p.name}) resolved $host -> ${found.first().hostAddress}")
+                return found
+            }
             com.cncverse.stremiobridge.state.ServerState.warn("DoH (${p.name}) gave no answer for $host")
         }
         if (s.fallbackToSystem || p == null) return Dns.SYSTEM.lookup(host)
         throw java.net.UnknownHostException("DNS over HTTPS (${p.name}) could not resolve $host")
     }
 
-    private fun query(p: DohProvider, host: String): List<InetAddress> {
+    private fun query(p: DohProvider, host: String, remember: Boolean = true): List<InetAddress> {
         val key = host.lowercase()
         val out = LinkedHashSet<InetAddress>()
         var ttl = 300L
@@ -129,15 +162,15 @@ object DohResolver {
                 .post(body.toRequestBody("application/dns-message".toMediaType())).build()
             runCatching {
                 clientFor(p).newCall(req).execute().use { r ->
-                    if (!r.isSuccessful) return@use
+                    if (!r.isSuccessful) { lastError = "HTTP ${r.code}"; return@use }
                     val bytes = r.body?.bytes() ?: return@use
                     val ans = DohWire.parseAnswers(bytes)
                     ans.forEach { out.add(it.first); ttl = minOf(ttl, it.second.coerceAtLeast(30L)) }
                 }
-            }
+            }.onFailure { lastError = it.message ?: it.javaClass.simpleName }
         }
         val list = out.filter { !it.isAnyLocalAddress && !it.isLoopbackAddress }.sortedByDescending { it is java.net.Inet4Address }
-        if (list.isNotEmpty()) cache[key] = Entry(list, System.currentTimeMillis() + minOf(ttl, 900L) * 1000)
+        if (remember && list.isNotEmpty()) cache[key] = Entry(list, System.currentTimeMillis() + minOf(ttl, 900L) * 1000)
         return list
     }
 
@@ -206,4 +239,23 @@ object AppDns : Dns {
 
     override fun lookup(hostname: String): List<InetAddress> =
         if (DohConfig.enabled) DohResolver.lookup(hostname) else adaptive.lookup(hostname)
+}
+
+/** Plain HTTP GETs through OkHttp with [AppDns], for the code that used Ktor's CIO engine (which has no way to plug in DNS over HTTPS). */
+object DohHttp {
+    private val client by lazy {
+        okhttp3.OkHttpClient.Builder().dns(AppDns).followRedirects(true)
+            .connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
+    }
+
+    fun bytes(url: String, headers: Map<String, String> = emptyMap()): ByteArray {
+        val b = okhttp3.Request.Builder().url(url)
+        headers.forEach { (k, v) -> b.header(k, v) }
+        client.newCall(b.build()).execute().use { r ->
+            if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
+            return r.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
+    fun text(url: String, headers: Map<String, String> = emptyMap()): String = String(bytes(url, headers), Charsets.UTF_8)
 }

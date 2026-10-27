@@ -422,6 +422,8 @@ object StremioServer {
             com.cncverse.stremiobridge.format.StreamFormatter.init(cacheDir)
             com.cncverse.stremiobridge.cache.StreamCacheManager.init(cacheDir)
             MediaServer.init(cacheDir)
+            // settings saved before the store was ready at the first lookup are read now
+            runCatching { com.cncverse.stremiobridge.network.DohConfig.reload() }
             runCatching { SubtitleTools.init(cacheDir) }
             UpstreamAddons.init(cacheDir); com.cncverse.stremiobridge.state.StreamHistory.init(cacheDir)
             com.cncverse.stremiobridge.network.CfCookieStore.initIfNeeded(cacheDir)
@@ -2126,7 +2128,7 @@ object StremioServer {
                     val url = "$host/$cleanPath${delimiter}api_key=$TMDB_API_KEY"
                     ServerState.debug("Fetching TMDB: $url")
                     val json = try {
-                        serverJson.parseToJsonElement(httpClient.get(url).bodyAsText()).jsonObject
+                        serverJson.parseToJsonElement(withContext(Dispatchers.IO) { com.cncverse.stremiobridge.network.DohHttp.text(url) }).jsonObject
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -2378,7 +2380,7 @@ object StremioServer {
                 val cinemetaType = if (type == "series") "series" else "movie"
                 val cinemetaUrl = "https://v3-cinemeta.strem.io/meta/$cinemetaType/$tmdbId.json"
                 val responseText = withTimeoutOrNull(8_000) {
-                    httpClient.get(cinemetaUrl).bodyAsText()
+                    withContext(Dispatchers.IO) { com.cncverse.stremiobridge.network.DohHttp.text(cinemetaUrl) }
                 }
                 if (responseText != null) {
                     val json = serverJson.parseToJsonElement(responseText).jsonObject
