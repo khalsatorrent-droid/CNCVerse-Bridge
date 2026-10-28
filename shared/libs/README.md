@@ -2,6 +2,11 @@
 
 ## cloudstream-api.jar (patched)
 
+Built from recloudstream/cloudstream `5024ace2` (2026-10-28), the Android variant of `:library`
+(`classes.jar` of its AAR). The "CloudStream library" workflow (`.github/workflows/cloudstream-lib.yml`,
+run by hand) builds it from any branch / commit, applies the patcher and pushes both jars to the
+`cloudstream-lib` branch to copy from.
+
 `cloudstream-api.jar` is `cloudstream-api.original.jar` with one bytecode change, made by
 `patcher/PatchCloudstreamApi.java`:
 
@@ -28,7 +33,7 @@ Patch it with the same patcher: `PatchCloudstreamApi NiceHttp-0.4.16.original.ja
 
 ### Updating the jar
 
-1. Replace `cloudstream-api.original.jar` with the new upstream jar.
+1. Replace `cloudstream-api.original.jar` with the new upstream jar (or run the workflow above, which also does step 2).
 2. Re-run the patcher (it fails if a rule patches an unexpected number of call sites):
 
 ```bash

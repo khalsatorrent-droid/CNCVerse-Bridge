@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **CloudStream library updated** to CloudStream's current code (28 Oct 2026; it was from mid-July). It now has:
+  - **New video-host handlers:** Playmate, hubu.cloud, Vixeo and Hexload.
+  - **Fixed handlers:** the Vidara mirrors and file-code links, firestream.site with a choice of mirror, Vidsonic.
+  - **Better HLS quality reading**, a faster subtitle-language check, and the handlers moved from Gson / Jackson to kotlinx.serialization.
+  - **Newer extensions:** extensions built against the current library (its new locale and context functions) now run.
+  - The bridge's two patches still apply (faster host matching, quiet error logs).
+- **Cloudflare / WebView context.** CloudStream changed how the app hands its context to the library. The bridge calls the new function, otherwise extensions that open a WebView for Cloudflare would have had none.
+
 ## 1.8.5
 
 - **CineStream rules only as a fallback.** Movies and series are matched by the TMDB title first, the strict way: the TMDB title and its other spellings and original title, with the page's own IMDb / TMDB id confirming it. Only when that finds no page in an extension are CineStream's looser rules tried, over all the results the searches already returned (no extra searches): same letters without spaces, the title inside a longer post name, a shorter name with the same year, and season packs. At most 3 more pages are opened for that.

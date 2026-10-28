@@ -16,10 +16,13 @@ class StremioApp : Application() {
         AndroidContextHolder.appContext = this
         // The Cloudstream library's WebViewResolver (Cloudflare-protected sites) needs this, otherwise
         // every call fails with "No base context in WebViewResolver"
+        // CloudStream library from Oct 2026 on: setContext(Any?) keeps its own WeakReference; older copies took one
+        // (setCtx / setContext(WeakReference)) - whichever this library has is called
         runCatching {
             val helper = Class.forName("com.lagradost.api.ContextHelper_androidKt")
-            helper.getMethod("setCtx", java.lang.ref.WeakReference::class.java).invoke(null, java.lang.ref.WeakReference<Any>(this))
-            helper.getMethod("setContext", java.lang.ref.WeakReference::class.java).invoke(null, java.lang.ref.WeakReference<Any>(this))
+            runCatching { helper.getMethod("setContext", Any::class.java).invoke(null, this) }
+            runCatching { helper.getMethod("setCtx", java.lang.ref.WeakReference::class.java).invoke(null, java.lang.ref.WeakReference<Any>(this)) }
+            runCatching { helper.getMethod("setContext", java.lang.ref.WeakReference::class.java).invoke(null, java.lang.ref.WeakReference<Any>(this)) }
         }
         // Shared bridge runtime (same lifecycle code as the desktop app); the scope lives
         // as long as the process so health sweeps / updates outlive the activity
