@@ -1,0 +1,2 @@
+com/lagradost/cloudstream3/utils/ExtractorApiKt.class: com/lagradost/cloudstream3/utils/Levenshtein.partialRatio$default -> com/cncverse/stremiobridge/plugin/FastExtractorMatch.partialRatioForExtractor x1
+com/lagradost/cloudstream3/mvvm/ArchComponentExtKt.class: java/lang/Throwable.printStackTrace -> com/cncverse/stremiobridge/plugin/PluginErrorLog.printStackTrace x1
