@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.6
 
 - **CloudStream library updated** to CloudStream's current code (28 Oct 2026; it was from mid-July). It now has:
   - **New video-host handlers:** Playmate, hubu.cloud, Vixeo and Hexload.
