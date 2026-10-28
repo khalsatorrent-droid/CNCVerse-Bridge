@@ -1,0 +1,53 @@
+name: CloudStream library
+
+# Builds CloudStream's extension library (the Android variant extensions run against) from
+# recloudstream/cloudstream at the given ref, applies the bridge's patches (shared/libs/patcher) and
+# uploads both jars as an artifact. Nothing is committed: check the jars, then copy them into
+# shared/libs/ (cloudstream-api.original.jar and cloudstream-api.jar). Run by hand from the Actions tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "CloudStream branch, tag or commit"
+        default: master
+
+jobs:
+  library:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: recloudstream/cloudstream
+          ref: ${{ inputs.ref }}
+          path: cs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the library (Android variant)
+        working-directory: cs
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :library:assemble -x lint
+          find library/build -name '*.aar' -o -name '*.jar' | grep -v '/tmp/' | sort
+      - name: Extract and patch
+        run: |
+          set -e
+          mkdir -p out x
+          aar=$(find cs/library/build/outputs -name '*release*.aar' | head -1)
+          [ -n "$aar" ] || aar=$(find cs/library/build/outputs -name '*.aar' | head -1)
+          echo "AAR: $aar"
+          (cd x && unzip -q -o "../$aar" classes.jar)
+          cp x/classes.jar out/cloudstream-api.original.jar
+          (cd cs && git log -1 --format='%H %cd %s' --date=short) > out/SOURCE.txt
+          curl -sSL -o asm.jar https://repo1.maven.org/maven2/org/ow2/asm/asm/9.8/asm-9.8.jar
+          javac -d pcs -cp asm.jar shared/libs/patcher/PatchCloudstreamApi.java
+          java -cp "asm.jar:pcs" PatchCloudstreamApi out/cloudstream-api.original.jar out/cloudstream-api.jar | tee out/PATCH.txt
+          cat out/SOURCE.txt; ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloudstream-library
+          path: out/
