@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Wrong-episode links dropped (series).** A link whose own file name names another episode than the one asked for is no longer shown. MoviesDrive handed out "VisionQuest.S01E03…" files for S1E5 while its page only had episodes 1-4. The file name, the release name and the link's address are checked for "S01E03", "S1 E3", "1x03" and the like. Links that name no episode, season packs ("S01"), ranges that hold the episode ("S01E01-E08") and double episodes ("S01E04E05") are kept, as is a show's running number (One Piece "S01E153"). Anime are left alone (their files often use the entry's own numbers).
+
 ## 1.8.6
 
 - **CloudStream library updated** to CloudStream's current code (28 Oct 2026; it was from mid-July). It now has:

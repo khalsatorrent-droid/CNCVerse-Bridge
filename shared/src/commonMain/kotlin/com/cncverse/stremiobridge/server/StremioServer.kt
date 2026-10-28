@@ -3252,7 +3252,10 @@ object StremioServer {
                                     val seenUrls = java.util.Collections.synchronizedSet(HashSet<String>())
                                     val got = java.util.concurrent.atomic.AtomicInteger(0)
                                     fun take(list: List<StremioStream>, side: String) {
-                                        val fresh = list.filter { s -> (s.url ?: s.infoHash)?.let { seenUrls.add(it) } ?: true }
+                                        // Series (not anime): a link whose own file name says another episode ("S01E03" for
+                                        // S1E5 - a site that has not added the episode yet and hands out the last one) is dropped
+                                        val checked = if (side == "own" && animeForSearch == null) dropOtherEpisodes(api.name, id, ext, list) else list
+                                        val fresh = checked.filter { s -> (s.url ?: s.infoHash)?.let { seenUrls.add(it) } ?: true }
                                         if (fresh.isEmpty()) return
                                         pathCounts.merge(side, fresh.size) { x, y -> x + y }
                                         accumulated.addAll(fresh)
@@ -3997,6 +4000,53 @@ object StremioServer {
     }
 
     /** The links of the matched page / episode, labelled with the entry they came from. */
+    /** "S01E03", "S1 E3", "S01.E03", "S01E01-E08" / "S01E01-08" (a range); not "S01" alone (a season pack). */
+    private val FILE_EPISODE_RX = Regex("(?i)(?<![a-z0-9])s(\\d{1,2})[ ._-]?e(\\d{1,4})((?:[ ._]?e\\d{1,4})*)(?:[ ._]?[-–~][ ._]?e?(\\d{1,4}))?(?![0-9])")
+    private val EXTRA_E_RX = Regex("(?i)e(\\d{1,4})")
+    /** "1x05" (not "1920x1080"). */
+    private val FILE_X_RX = Regex("(?<![0-9a-zA-Z])(\\d{1,2})x(\\d{2,3})(?![0-9])")
+
+    /**
+     * The links of a series episode whose own name (the release / file name the extension gives) names another episode
+     * of the show - MoviesDrive hands out "VisionQuest.S01E03..." for S1E5 while its page only has episodes 1-4. A link that
+     * names no episode, a season pack, or a range that holds the episode is kept. The running number (One Piece "S01E153")
+     * counts as the episode too.
+     */
+    private fun dropOtherEpisodes(apiName: String, id: String, ext: ExternalId, list: List<StremioStream>): List<StremioStream> {
+        if (ext.scheme !in setOf("imdb", "tmdb", "tvdb")) return list
+        val season = ext.season ?: return list
+        val episode = ext.episode ?: return list
+        val abs = absoluteEpisodes[id]
+        fun fits(s: Int, e1: Int, e2: Int?, extra: List<Int> = emptyList()): Boolean {
+            val range = if (e2 != null && e2 > e1) e1..e2 else e1..e1
+            if (s == season && (episode in range || episode in extra)) return true
+            // a show numbered in one run: the running number in season 1
+            if (abs != null && s <= 1 && (abs in range || abs in extra)) return true
+            return false
+        }
+        val out = list.filter { st ->
+            val names = listOfNotNull(st.info?.linkName, st.behaviorHints?.filename,
+                st.url?.substringBefore('?')?.substringAfterLast('/')?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) })
+            var named = false
+            var ok = false
+            for (n in names) {
+                for (m in FILE_EPISODE_RX.findAll(n)) {
+                    named = true
+                    // "S01E04E05": every episode the file holds
+                    val extra = EXTRA_E_RX.findAll(m.groupValues[3]).mapNotNull { it.groupValues[1].toIntOrNull() }.toList()
+                    if (fits(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[4].toIntOrNull(), extra)) ok = true
+                }
+                if (!named) for (m in FILE_X_RX.findAll(n)) {
+                    named = true
+                    if (fits(m.groupValues[1].toInt(), m.groupValues[2].toInt(), null)) ok = true
+                }
+            }
+            !named || ok
+        }
+        if (out.size < list.size) ServerState.info("[$apiName] ${list.size - out.size} link(s) dropped: their file is another episode than S${season}E$episode")
+        return out
+    }
+
     /** Kitsu's names compared the way sites write them: no case, punctuation or "(Dub)" / "(Sub)" tags, no trailing "TV". */
     private fun exactName(n: String): String = AnimeMatcher.normalize(n).removeSuffix(" tv").trim()
 
