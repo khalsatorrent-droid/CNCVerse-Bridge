@@ -2,8 +2,9 @@ name: CloudStream library
 
 # Builds CloudStream's extension library (the Android variant extensions run against) from
 # recloudstream/cloudstream at the given ref, applies the bridge's patches (shared/libs/patcher) and
-# uploads both jars as an artifact. Nothing is committed: check the jars, then copy them into
-# shared/libs/ (cloudstream-api.original.jar and cloudstream-api.jar). Run by hand from the Actions tab.
+# uploads both jars as an artifact and to the "cloudstream-lib" branch (main is not touched): check the
+# jars, then copy them into shared/libs/ (cloudstream-api.original.jar and cloudstream-api.jar).
+# Run by hand from the Actions tab.
 
 on:
   workflow_dispatch:
@@ -11,6 +12,9 @@ on:
       ref:
         description: "CloudStream branch, tag or commit"
         default: master
+
+permissions:
+  contents: write
 
 jobs:
   library:
@@ -51,3 +55,15 @@ jobs:
         with:
           name: cloudstream-library
           path: out/
+      - name: Push to the cloudstream-lib branch
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan cloudstream-lib
+          git rm -rq --cached . && git clean -fdq -e out -e cs
+          rm -rf cs
+          mkdir -p lib && cp out/* lib/
+          git add lib
+          git commit -qm "CloudStream library $(cut -c1-12 out/SOURCE.txt)"
+          git push -f origin cloudstream-lib
