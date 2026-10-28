@@ -68,7 +68,7 @@ A **tunnel** is a private doorway from the internet to your device, so Stremio c
 5. In the app open **Settings → Cloudflare Tunnel**, paste the token and the hostname, and save.
 6. Turn on **Stremio Mode** on the Server tab. Your add-on address is `https://bridge.yourdomain.com/manifest.json`.
 
-The app downloads `cloudflared` on first use.
+The Android app has `cloudflared` built in (kept on a current version); the desktop app downloads it on first use. The fixed link is registered again every 15 minutes while the tunnel runs, and the registration retries by itself when the relay is slow.
 
 ---
 
@@ -95,6 +95,12 @@ The app downloads `cloudflared` on first use.
 - 🔄 **FORCE REFRESH entry**: the first item of every list shows how many results were found, how many *each* extension found, and whether the search is still running. Tap it to clear that title and search again.
 - 🎛️ **Stream formatter**: choose how every line looks, with presets and a live preview.
 - ⏭️ **Next episode ready in advance** (optional) and **"show results once"** when you prefer one complete list.
+
+### 🎯 Finding the right title and episode
+- 🎬 **Movies and series go by TMDB**: each extension is searched with the TMDB title (then its other spellings and original title), the result pages are scored, and a page whose own IMDb / TMDB id is the one asked for is confirmed. A page of another year (movies) or without the episode (series) is skipped.
+- 🧩 **CineStream's rules as a fallback**: only when that finds nothing, the looser rules CineStream uses are tried on the same results: the same letters without spaces ("Spiderman" / "Spider-Man"), the title inside a longer post name, a shorter name with the same year, and season packs ("S01-S04", "Seasons 1 to 5").
+- 🚫 **Wrong episodes dropped**: a series link whose own file name says another episode ("S01E03" when you asked for S1E5) is removed. Season packs, ranges ("S01E01-E08") and double episodes are kept.
+- 🧠 Pages that had the episode are remembered for 5 days, so the next episode is found without searching again.
 
 ### ⚡ The media server: smooth playback
 Many links only play with special "headers" or cookies, and many websites are slow. The Bridge can fetch the video **for** your player:
@@ -131,19 +137,21 @@ Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 - 🌍 Pick your languages (e.g. `English, Hindi`): they come first, or are the *only* ones.
 - 🧽 Duplicates removed.
 - ⏲️ Optional **delay** if subtitles are out of sync.
-- ✍️ **Styled English subtitles**: the first 10 English subtitles are downloaded by the bridge and sent as ASS files with one look (white bold text, black outline, bottom centre). They are also kept on the device, so they still load after a long pause.
-- 📱 **Nuvio mobile**: it cannot show ASS from add-ons, so each styled track also comes as a bold SRT copy ("· Nuvio mobile") that Nuvio draws with its own style.
-- 🏷️ **Readable names** like `#2 English · CC · ASS styled · Show.S01E01.1080p`, and for anime the CC tracks come first.
+- ✍️ **Styled English subtitles**: the first 10 English subtitles are downloaded by the bridge and sent as SSA files with one look (white bold text, black outline, bottom centre). They are also kept on the device, so they still load after a long pause.
+- 📱 **Nuvio mobile**: it cannot show SSA / ASS from add-ons, so each styled track also comes as a bold SRT copy ("· Nuvio mobile") that Nuvio draws with its own style.
+- 🏷️ **Readable names** like `#2 English · CC · SSA styled · Show.S01E01.1080p`, and for anime the CC tracks come first.
 
 ### 🎌 Anime made easier
-- 🔎 Every known name of a show (AniList, Kitsu, MyAnimeList, TMDB) is searched, with fuzzy matching and season checks.
-- 🔢 Season and episode numbers are translated between databases, so "S2 E5" finds the right episode.
+- 🎯 **Strict Kitsu matching**: when an anime has a Kitsu entry (a Kitsu / MAL / AniList id, or the one found for a TMDB / IMDb episode through the Kitsu add-on's own mapping), every extension only searches the names Kitsu stores for that entry, takes only results named exactly like one of them, and Kitsu's own episode number in it. *Farming Life in Another World* S2E6 is episode 6 of "Isekai Nonbiri Nouka 2"; One Piece TMDB S9E10 is episode 153 of "One Piece". An extension without such an entry gives nothing, instead of another season's episode.
+- 🔎 Without a Kitsu entry, every known name of the show (AniList, Kitsu, MyAnimeList, TMDB) is searched, with fuzzy matching and season checks, and a later season never takes the first season's page.
+- 🔢 Long shows numbered in one run (One Piece 1…1100) and sites that keep counting from the season before are handled, and lists without episode numbers (AnimePahe) are read in their own order.
 - 🏷️ **Sub / Dub / Hardsub** labels (only for anime), hardsub first, and an *Anime audio* setting.
 
 ### 🛡️ Cloudflare and network
 - 🧩 Cloudflare "checking your browser" pages are solved once in a hidden web view, and the cookie is reused for later requests (also across a site's other hosts).
 - 🌐 A real **DNS-over-HTTPS** fallback (Cloudflare, Google, Quad9) when your network's DNS fails.
-- 🔒 **DNS over HTTPS for every request** (Settings → DNS over HTTPS): 16 resolvers to pick from (Cloudflare, Google, Quad9, AdGuard, OpenDNS, NextDNS, CleanBrowsing, Mullvad, DNS.SB, Control D, LibreDNS and their filtered versions) or your own address, with an optional fallback to normal DNS.
+- 🔒 **DNS over HTTPS for every request** (Settings → DNS over HTTPS): 16 resolvers to pick from (Cloudflare, Google, Quad9, AdGuard, OpenDNS, NextDNS, CleanBrowsing, Mullvad, DNS.SB, Control D, LibreDNS and their filtered versions) or your own address, with an optional fallback to normal DNS. It covers the extensions, the media server, subtitles and the bridge's own lookups.
+- 🐢 **Gentle on sites and the device**: 20 extensions search at a time, on their own thread pool; the home pages wait while a search runs; the next episode is only prepared after the current search is done.
 
 ### 🔗 Other add-ons and special hosts
 - ➕ **Upstream add-ons**: merge another Stremio add-on (like your own Telegram server). Links to a home-network address are served through the Bridge so they also play away from home.
@@ -153,7 +161,9 @@ Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 - 🗂️ **Backup & import**: all settings, repositories and extensions in one file.
 - 👥 **Profiles** (optional, *Settings → Profiles*): one bridge, several add-on links. Each profile has its own link and its own set of extensions (for example one for the family, one for you). Off by default.
 - 📊 **Extension report card** (Extensions screen): grades every extension A to F from how often it gave links, how many, how fast it answered (search to links) and when it last worked. Titles an extension simply does not have are not held against it. One tap switches off the dead ones (D or F), and *Reset* starts the counting over.
-- 📶 **Bitrate in the results**: each link with a known size shows its bitrate (size / running time).
+- 📶 **Bitrate in the results**: each link with a known size shows its bitrate in Mbps (size / running time), in every layout.
+- 🔤 **Active extensions in A-Z order** on the Server tab.
+- 🧠 **Light on memory**: opened extension pages are kept by size (not by count), and when Android says the phone is short of memory they are dropped, so other apps are not closed.
 - 🚫 **No popups**: the donation popup follows the "support the project" switch (off by default), and popups that extensions open on their own (donation / Telegram ads) are closed at once (switch: *Block extension popups*).
 - 🩺 **Stays up 24/7**: a watchdog restarts the Stremio Mode tunnel when it dies, extensions load several at a time and never stay at 0, and the notification shows the live status.
 - 🔔 **In-app updates**: a dialog shows the release notes with *Update / Later / Skip*.
@@ -190,6 +200,10 @@ Upload the project to a GitHub repository (branch `main`). The *Build APK* workf
 ./gradlew :desktopApp:packageReleaseDistributionForCurrentOS # Windows .msi/.exe or Linux .deb
 ./gradlew :desktopApp:createDistributable                    # desktop portable folder
 ```
+
+### The CloudStream library
+
+Extensions run on CloudStream's extension library, which the bridge carries as `shared/libs/cloudstream-api.jar` (with two small patches: faster video-host matching and quieter error logs). It is currently CloudStream's code of 28 Oct 2026. To refresh it, run **Actions → CloudStream library → Run workflow** (any CloudStream branch or commit): it builds the library, applies the patches and puts both jars on the `cloudstream-lib` branch to copy into `shared/libs/`. Details in [shared/libs/README.md](shared/libs/README.md).
 
 ### Releases
 
