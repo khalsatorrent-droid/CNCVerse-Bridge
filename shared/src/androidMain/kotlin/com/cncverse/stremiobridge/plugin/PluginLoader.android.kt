@@ -94,6 +94,8 @@ actual class PluginLoader(private val context: Context) {
                 .dns(com.cncverse.stremiobridge.network.AdaptiveHostDns)
                 .addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
                 .fastFallback(true)
+                // HTTP/2 keepalive: a silently dead connection fails its ping and is dropped instead of reused (upstream)
+                .pingInterval(10, java.util.concurrent.TimeUnit.SECONDS)
                 .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(35, java.util.concurrent.TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
@@ -113,7 +115,7 @@ actual class PluginLoader(private val context: Context) {
                 .firstOrNull { it.type.name.contains("OkHttpClient") }?.also { it.isAccessible = true }
             val existing = field?.let { f -> runCatching { f.get(target) }.getOrNull() ?: runCatching { f.get(null) }.getOrNull() } as? okhttp3.OkHttpClient
             if (field != null && existing != null && existing.dns !== com.cncverse.stremiobridge.network.AdaptiveHostDns) {
-                val patched = existing.newBuilder().dns(com.cncverse.stremiobridge.network.AdaptiveHostDns).build()
+                val patched = existing.newBuilder().dns(com.cncverse.stremiobridge.network.AdaptiveHostDns).pingInterval(10, java.util.concurrent.TimeUnit.SECONDS).build()
                 runCatching { field.set(target, patched) }
                 runCatching { field.set(null, patched) }
                 ServerState.info("Configured AdaptiveHostDns on NiceHttp Requests.baseClient")

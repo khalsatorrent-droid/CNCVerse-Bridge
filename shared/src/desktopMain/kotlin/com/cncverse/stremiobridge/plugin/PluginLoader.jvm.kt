@@ -170,6 +170,7 @@ actual class PluginLoader {
                 .connectionPool(okhttp3.ConnectionPool(50, 90, java.util.concurrent.TimeUnit.SECONDS))
                 .addInterceptor(TMDB_HOST_REWRITE)
                 .dispatcher(PLUGIN_DISPATCHER)
+                .pingInterval(PLUGIN_PING_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
                 .eventListenerFactory(LeakSafeEventListener.FACTORY)
                 .build()
             okClientField.set(currentNiceClient, newOk)
@@ -207,6 +208,7 @@ actual class PluginLoader {
                             .connectionPool(okhttp3.ConnectionPool(50, 90, java.util.concurrent.TimeUnit.SECONDS))
                             .addInterceptor(TMDB_HOST_REWRITE)
                             .dispatcher(PLUGIN_DISPATCHER)
+                            .pingInterval(PLUGIN_PING_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
                             .eventListenerFactory(LeakSafeEventListener.FACTORY)
                             .build()
                         runCatching { baseClientField.set(target, patched) }
@@ -252,6 +254,7 @@ actual class PluginLoader {
                         .addInterceptor(cfKiller)
                         .addInterceptor(TMDB_HOST_REWRITE)
                         .dispatcher(PLUGIN_DISPATCHER)
+                        .pingInterval(PLUGIN_PING_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
                         .eventListenerFactory(LeakSafeEventListener.FACTORY)
                         .build()
                     okField.set(requests, patched)
@@ -724,6 +727,16 @@ internal val PLUGIN_DISPATCHER = okhttp3.Dispatcher().apply {
     maxRequests = 256
     maxRequestsPerHost = 8
 }
+
+/**
+ * HTTP/2 keepalive ping for extension clients. A site's connection can die silently (NAT
+ * drop): OkHttp kept sending every new request down it and waited for headers that never came.
+ * The 25 s detail-page limit cancels those calls before the 35 s read timeout, and a cancel
+ * doesn't mark the connection bad — so 4khdhub.one stayed stuck for 10+ min while curl answered
+ * in 0.3 s. An unanswered ping fails the connection and the next request opens a fresh one.
+ */
+internal const val PLUGIN_PING_SECONDS = 10L
+
 
 /**
  * OkHttp EventListener that auto-closes any [Response] body left open when
