@@ -3089,6 +3089,7 @@ object StremioServer {
     fun trimMemory(critical: Boolean) {
         runCatching { SearchLoadCache.trim(critical) }
         runCatching { KitsuMap.trim() }
+        runCatching { com.cncverse.stremiobridge.network.TmdbGateway.trim() }
         ServerState.debug("[Memory] Low memory: cached pages" + (if (critical) ", searches" else "") + " cleared")
     }
 

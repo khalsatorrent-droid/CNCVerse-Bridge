@@ -93,6 +93,8 @@ actual class PluginLoader(private val context: Context) {
             val newOk = existingOk.newBuilder()
                 .dns(com.cncverse.stremiobridge.network.AdaptiveHostDns)
                 .addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
+                // TMDB: api.tmdb.org on its own HTTP/1.1 client, answers shared between extensions for an hour (upstream)
+                .addInterceptor(com.cncverse.stremiobridge.network.TmdbGateway)
                 .fastFallback(true)
                 // HTTP/2 keepalive: a silently dead connection fails its ping and is dropped instead of reused (upstream)
                 .pingInterval(10, java.util.concurrent.TimeUnit.SECONDS)
