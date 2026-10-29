@@ -165,6 +165,8 @@ object StremioServer {
     private const val LIVE_PLAYLIST_TTL_MS = 15 * 60_000L
     /** Non-live home pages: refreshed on request once older than this. */
     private const val HOME_PAGE_TTL_MS = 30 * 60_000L
+    /** A refresh that came back broken (far fewer items) is retried after this. */
+    private const val CATALOG_REFRESH_RETRY_MS = 2 * 60_000L
 
     /**
      * Cached binary bytes for the official CNCVerse logo / favicon.
@@ -2772,7 +2774,13 @@ object StremioServer {
                     streamSearchScope.launch {
                         try {
                             val fresh = fetchCatalogItemsDirect(type, id, null, 0, genre)
-                            if (fresh.isNotEmpty()) {
+                            if (cached.size >= 20 && fresh.size < cached.size / 10) {
+                                // A broken answer, not a smaller catalog: PlayFy's JIO TV (IND) page of
+                                // ~1300 channels became one "Unknown Channel" whenever its playlist
+                                // came back wrong once. Keep the good page; try again in 2 min.
+                                ServerState.warn("Catalog ${api.name}: refresh gave ${fresh.size} items (had ${cached.size}), keeping the cached page")
+                                homePageCachedAt[cacheKey] = System.currentTimeMillis() - ttl + CATALOG_REFRESH_RETRY_MS
+                            } else if (fresh.isNotEmpty()) {
                                 homePageCatalogCache[cacheKey] = fresh
                                 homePageCachedAt[cacheKey] = System.currentTimeMillis()
                             }
@@ -3090,6 +3098,7 @@ object StremioServer {
         runCatching { SearchLoadCache.trim(critical) }
         runCatching { KitsuMap.trim() }
         runCatching { com.cncverse.stremiobridge.network.TmdbGateway.trim() }
+        runCatching { com.cncverse.stremiobridge.network.ResponseCache.trim() }
         ServerState.debug("[Memory] Low memory: cached pages" + (if (critical) ", searches" else "") + " cleared")
     }
 

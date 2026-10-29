@@ -95,6 +95,8 @@ actual class PluginLoader(private val context: Context) {
                 .addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
                 // TMDB: api.tmdb.org on its own HTTP/1.1 client, answers shared between extensions for an hour (upstream)
                 .addInterceptor(com.cncverse.stremiobridge.network.TmdbGateway)
+                // Cinemeta, TVmaze, IMDb, Kitsu, ani.zip answers shared between extensions for 30 min (upstream)
+                .addInterceptor(com.cncverse.stremiobridge.network.ResponseCache)
                 .fastFallback(true)
                 // HTTP/2 keepalive: a silently dead connection fails its ping and is dropped instead of reused (upstream)
                 .pingInterval(10, java.util.concurrent.TimeUnit.SECONDS)
