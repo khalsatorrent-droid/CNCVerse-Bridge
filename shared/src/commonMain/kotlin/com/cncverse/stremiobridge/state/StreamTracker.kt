@@ -283,6 +283,34 @@ object StreamTracker {
         }
     }
 
+    /** The report card's letter for [st]: A (gives links nearly always, quickly) to F; "?" while it has been asked fewer than 3 times. */
+    fun gradeOf(st: Stat?): String {
+        val asked = ((st?.totalRequests ?: 0) - (st?.noMatch ?: 0)).coerceAtLeast(0)
+        val pct = if (asked > 0) (st?.successRequests ?: 0) * 100 / asked else 0
+        val avgMs = st?.avgMs() ?: -1L
+        return when {
+            asked < 3 -> "?"
+            pct >= 80 && (avgMs < 0 || avgMs < 8_000) -> "A"
+            pct >= 60 -> "B"
+            pct >= 35 -> "C"
+            pct >= 10 -> "D"
+            else -> "F"
+        }
+    }
+
+    /**
+     * Where an extension stands in a search: best first = report card order (grade A..C, then not yet graded, then D, F; inside
+     * a grade the higher hit rate, then the faster one). Smaller = earlier.
+     */
+    fun searchOrderKey(pluginInternalName: String): Long {
+        val st = totalsOf(pluginInternalName)
+        val tier = when (gradeOf(st)) { "A" -> 0; "B" -> 1; "C" -> 2; "?" -> 3; "D" -> 4; else -> 5 }
+        val asked = ((st?.totalRequests ?: 0) - (st?.noMatch ?: 0)).coerceAtLeast(0)
+        val pct = if (asked > 0) (st?.successRequests ?: 0) * 100 / asked else 0
+        val ms = (st?.avgMs() ?: -1L).let { if (it < 0) 99_999L else it.coerceAtMost(99_999L) }
+        return tier * 100_000_000L + (100 - pct) * 100_000L + ms
+    }
+
     fun getHealth(internalName: String, pluginName: String, enabled: Boolean, iconUrl: String? = null): PluginStreamHealth {
         return find(internalName)?.toHealth(enabled, iconUrl) ?: PluginStreamHealth(
             internalName = internalName,

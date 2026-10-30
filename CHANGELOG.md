@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Searches follow the report card, 8 extensions at a time.** A link search now starts with the extensions that give links most often and fastest (report card order: A, B, C, not yet graded, then D and F), so the answer fills with good links first and the dead ones come last. Only 8 extensions are searched at the same time (it was 20), which uses much less memory and leaves the tablet responsive. The quality, seek and size checks of the links also run fewer at a time (8 / 8 / 16 instead of 16 / 16 / 32), and the pool of threads for extension work is halved (32).
+
 ## 1.8.7
 
 - **Wrong-episode links dropped (series).** A link whose own file name names another episode than the one asked for is no longer shown. MoviesDrive handed out "VisionQuest.S01E03…" files for S1E5 while its page only had episodes 1-4. The file name, the release name and the link's address are checked for "S01E03", "S1 E3", "1x03" and the like. Links that name no episode, season packs ("S01"), ranges that hold the episode ("S01E01-E08") and double episodes ("S01E04E05") are kept, as is a show's running number (One Piece "S01E153"). Anime are left alone (their files often use the entry's own numbers).
