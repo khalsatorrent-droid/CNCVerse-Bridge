@@ -146,7 +146,7 @@ object StremioServer {
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val pluginDispatcher: kotlinx.coroutines.CoroutineDispatcher =
-        Dispatchers.IO.limitedParallelism(64)
+        Dispatchers.IO.limitedParallelism(32)
 
     /**
      * Shared provider catalog cache: provider internalName -> list of StremioCatalogDef.
@@ -2916,6 +2916,8 @@ object StremioServer {
     /** Never keep a client waiting longer than this for the first answer. */
     private val STREAM_ANSWER_CAP_MS = 32_000L
     /** Hard limit for the whole search part of a stream request. */
+    /** Extensions searched at the same time (more of them at once used a lot of memory on a tablet). */
+    private const val SEARCH_PARALLEL = 8
     private val RESPONSE_CAP_MS = 38_000L
     /** Time budget for the anime name / episode mapping lookups before the providers are started. */
     private val ANIME_RESOLVE_BUDGET_MS = 25_000L
@@ -3196,10 +3198,12 @@ object StremioServer {
                         com.cncverse.stremiobridge.plugin.GlobalPluginManager.isPluginsLoaded.first { it }
                     }
                 }
+                // In report-card order: the extensions that give links most often and fastest are searched first
+                // (the best ones answer early, the dead ones come last and may never get their turn before the answer goes out)
                 val activePlugins = loadedApis.filter { api ->
                     !isGloballyDisabled(api) &&
                     api.supportedTypes.any { it != "tv" }
-                }
+                }.sortedWith(compareBy({ StreamTracker.searchOrderKey(it.pluginInternalName) }, { it.name.lowercase() }))
                 ServerState.debug("Searching across ${activePlugins.size} plugin(s) (live-TV-only excluded)...")
 
                 // The same episode under the other kind of id (anime entry <-> TMDB series), searched next to this one
@@ -3228,7 +3232,7 @@ object StremioServer {
                     }
                 }
 
-                val sem = Semaphore(20)
+                val sem = Semaphore(SEARCH_PARALLEL)
                 val started = System.currentTimeMillis()
                 val accumulated = java.util.concurrent.CopyOnWriteArrayList<StremioStream>()
                 // Set once the request has been answered early: from then on every provider that
@@ -3241,8 +3245,9 @@ object StremioServer {
                 if (searchStatus.size > 100) searchStatus.keys.take(50).forEach { searchStatus.remove(it) }
                 searchStatus["$type:$id"] = status
                 searchPartial["$type:$id"] = accumulated
+                // UNDISPATCHED: every extension queues for its turn (a first-come, first-served queue) right here, in the order above
                 val jobs = activePlugins.map { api ->
-                    streamSearchScope.launch {
+                    streamSearchScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                         sem.withPermit {
                             val res = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                                 try {

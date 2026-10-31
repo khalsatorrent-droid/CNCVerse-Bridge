@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  */
 object SizeProbe {
     private val sizes = ConcurrentHashMap<String, Long>()
-    private val limit = Semaphore(16)
+    private val limit = Semaphore(8)
     private val SIZE_IN_TEXT = Regex("\\d\\s?(?:GB|MB|GiB|MiB)\\b", RegexOption.IGNORE_CASE)
 
     private val client by lazy {

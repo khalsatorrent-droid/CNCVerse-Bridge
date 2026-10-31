@@ -33,15 +33,6 @@ private data class CardRow(
     val off: Boolean,
 )
 
-private fun gradeOf(requests: Int, okPct: Int, avgMs: Long): String = when {
-    requests < 3 -> "?"
-    okPct >= 80 && (avgMs < 0 || avgMs < 8_000) -> "A"
-    okPct >= 60 -> "B"
-    okPct >= 35 -> "C"
-    okPct >= 10 -> "D"
-    else -> "F"
-}
-
 private fun ago(ms: Long): String {
     if (ms <= 0) return "never"
     val d = (currentTimeMillis() - ms) / 1000
@@ -71,7 +62,7 @@ private fun buildRows(plugins: List<LoadedPluginInfo>): List<CardRow> =
             avgMs = avgMs,
             lastOkMs = st?.lastSuccessTime ?: 0L,
             lastError = st?.lastError,
-            grade = gradeOf(req, pct, avgMs),
+            grade = StreamTracker.gradeOf(st),
             noMatch = nm,
             off = com.cncverse.stremiobridge.server.StremioServer.disabledPlugins.contains(p.internalName),
         )

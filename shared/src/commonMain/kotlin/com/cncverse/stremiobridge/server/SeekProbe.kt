@@ -29,7 +29,7 @@ object SeekProbe {
 
     /** host -> (seekable, checkedAt) */
     private val verdicts = ConcurrentHashMap<String, Pair<Boolean, Long>>()
-    private val probeLimit = Semaphore(16)
+    private val probeLimit = Semaphore(8)
 
     /** Tests only: forget every host verdict. */
     internal fun resetForTest() = verdicts.clear()
