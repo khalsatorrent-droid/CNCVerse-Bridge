@@ -118,6 +118,10 @@ object MediaServer {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val prefetchLimit = Semaphore(12)
+    /** A segment download that gets no data for this long is dropped and started again (a dead connection used to hold playback for up to 45 s). */
+    private const val SEG_STALL_S = 8
+    /** segments being fetched ahead right now (a second request for the same one must not take a download slot while it waits) */
+    private val prefetching = ConcurrentHashMap.newKeySet<String>()
 
     private val sources = ConcurrentHashMap<String, MediaSource>()
     private val files = ConcurrentHashMap<String, FileEntry>()
@@ -1235,10 +1239,11 @@ object MediaServer {
         File(File(root!!, "$id/hls").also { it.mkdirs() }, sha256(url).take(32))
 
     /** Downloads one playlist / segment, trying up to three times (hosts that hiccup must not stall the player). */
-    private fun fetchRemote(id: String, src: MediaSource, url: String): Pair<ByteArray, String?> {
-        val client = clientFor(id, src)
+    private fun fetchRemote(id: String, src: MediaSource, url: String, stallS: Int = 0, attempts: Int = 3): Pair<ByteArray, String?> {
+        // stallS > 0: a connection that sends nothing for that long is dropped and retried on a new one (video segments)
+        val client = clientFor(id, src).let { if (stallS > 0) it.newBuilder().readTimeout(stallS.toLong(), TimeUnit.SECONDS).build() else it }
         var last: Exception? = null
-        for (attempt in 1..3) {
+        for (attempt in 1..attempts) {
             try {
                 client.newCall(requestFor(src, url)).execute().use { r ->
                     if (!r.isSuccessful) {
@@ -1253,7 +1258,7 @@ object MediaServer {
             } catch (e: IllegalStateException) {
                 last = IOException(e.message)
             }
-            if (attempt < 3) Thread.sleep(250L * attempt)
+            if (attempt < attempts) Thread.sleep(250L * attempt)
         }
         throw last ?: IOException("download failed")
     }
@@ -1410,8 +1415,12 @@ object MediaServer {
             val url = list[i]
             val f = segFile(id, url)
             if (f.exists()) continue
+            val key = "$id|$url"
+            if (!prefetching.add(key)) continue
             scope.launch {
-                prefetchLimit.withPermit { runCatching { ensureSegment(id, src, url) } }
+                try {
+                    prefetchLimit.withPermit { runCatching { ensureSegment(id, src, url) } }
+                } finally { prefetching.remove(key) }
             }
         }
     }
@@ -1424,7 +1433,7 @@ object MediaServer {
         try {
             synchronized(lock) {
                 if (f.exists()) return f
-                val (bytes, mime) = fetchRemote(id, src, url)
+                val (bytes, mime) = fetchRemote(id, src, url, stallS = SEG_STALL_S, attempts = 5)
                 val tmp = File(f.parentFile, f.name + ".tmp")
                 tmp.writeBytes(bytes)
                 mime?.let { runCatching { File(f.parentFile, f.name + ".ct").writeText(it) } }
