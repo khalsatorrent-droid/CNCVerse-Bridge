@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Smoother HLS playback.** A video segment whose connection went silent used to hold playback for up to 45 s before it was retried (the "buffers for about 20 s" stop). Segment downloads now drop a connection that sends nothing for 8 s and retry on a fresh one (up to 5 tries). The read-ahead also no longer queues the same segment again and again, which used up download slots and slowed the ones the player was waiting for.
+
 ## 1.8.9
 
 - **Buffering no longer stops after a while.** When the read-ahead window was full (your player had plenty buffered and stopped reading for a bit), the download gave up after 3 minutes and the extra connections left too, so playback stalled once the player used up its own buffer. They now only give up when nobody is watching the file any more, and the extra connections are brought back as soon as the player reads again.
