@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Buffering no longer stops after a while.** When the read-ahead window was full (your player had plenty buffered and stopped reading for a bit), the download gave up after 3 minutes and the extra connections left too, so playback stalled once the player used up its own buffer. They now only give up when nobody is watching the file any more, and the extra connections are brought back as soon as the player reads again.
+
 ## 1.8.8
 
 - **Searches follow the report card, 8 extensions at a time.** A link search now starts with the extensions that give links most often and fastest (report card order: A, B, C, not yet graded, then D and F), so the answer fills with good links first and the dead ones come last. Only 8 extensions are searched at the same time (it was 20), which uses much less memory and leaves the tablet responsive. The quality, seek and size checks of the links also run fewer at a time (8 / 8 / 16 instead of 16 / 16 / 32), and the pool of threads for extension work is halved (32).

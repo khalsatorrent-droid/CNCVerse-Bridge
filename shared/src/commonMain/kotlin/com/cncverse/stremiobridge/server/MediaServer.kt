@@ -887,7 +887,7 @@ object MediaServer {
                     i++
                 }
                 if (!did) {
-                    if (System.currentTimeMillis() - idleSince > 180_000) break
+                    if (e.readers.isEmpty() && System.currentTimeMillis() - idleSince > 180_000) break
                     Thread.sleep(300)
                 }
             }
@@ -1048,7 +1048,8 @@ object MediaServer {
                         val ahead = prefs.readAheadMb * 1024L * 1024L
                         // An origin that cannot seek is downloaded completely, at full speed: stopping would mean starting over
                         if (ahead > 0 && e.ranges && off - playPos(e) > ahead) {
-                            if (System.currentTimeMillis() - e.lastAccess > 180_000) { e.stop = true; break }
+                            // (a player whose own buffer is full stops reading for a while but still has its connection open: that is not idle)
+                            if (e.readers.isEmpty() && System.currentTimeMillis() - e.lastAccess > 180_000) { e.stop = true; break }
                             Thread.sleep(400)
                             continue
                         }
@@ -1167,6 +1168,7 @@ object MediaServer {
                 var pos = start
                 val buf = ByteArray(256 * 1024)
                 var lastProgress = System.currentTimeMillis()
+                var lastEnsure = 0L
                 while (pos <= end) {
                     e.lastAccess = System.currentTimeMillis()
                     e.lastRead = pos
@@ -1174,7 +1176,8 @@ object MediaServer {
                     val avail = e.have.contiguousEnd(pos)
                     if (avail <= pos) {
                         // Not on disk yet: make sure the downloader is heading here, then wait
-                        if (e.worker == null) ensureWorker(e)
+                        // (also when the main download is alive: the extra connections may have left while the window was full)
+                        if (e.worker == null || System.currentTimeMillis() - lastEnsure > 1_000L) { lastEnsure = System.currentTimeMillis(); ensureWorker(e) }
                         val near = e.writePos in (pos - 1)..(pos + 8L * 1024 * 1024)
                         if (e.ranges && !near && e.focus < 0) e.focus = pos
                         if (e.error != null && e.worker == null) throw IOException(e.error)
