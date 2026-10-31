@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.9
 
 - **Buffering no longer stops after a while.** When the read-ahead window was full (your player had plenty buffered and stopped reading for a bit), the download gave up after 3 minutes and the extra connections left too, so playback stalled once the player used up its own buffer. They now only give up when nobody is watching the file any more, and the extra connections are brought back as soon as the player reads again.
 
