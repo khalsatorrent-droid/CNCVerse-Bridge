@@ -223,8 +223,13 @@ object RepoManager {
         wrapped.forEach { ap ->
             val inst = installed.find { it.internalName == ap.plugin.internalName }
             if (inst != null && inst.repoUrl == ap.repoEntry.url) {
+                // A changed hash only counts at the same version. The repo listing can come from a
+                // jsDelivr copy or a raw.githubusercontent edge that is still serving the previous
+                // index, so its hash belongs to an OLDER build: taken as an update, the plugin
+                // bounced vN -> vN+1 -> vN on every refresh, downloading and reloading each time.
                 val hasNewVersion = ap.plugin.version > inst.version ||
-                        (ap.plugin.fileHash != null && ap.plugin.fileHash != inst.fileHash)
+                        (ap.plugin.version == inst.version &&
+                            ap.plugin.fileHash != null && ap.plugin.fileHash != inst.fileHash)
                 if (hasNewVersion) {
                     RepoState.setInstallState(
                         ap.plugin.internalName,
