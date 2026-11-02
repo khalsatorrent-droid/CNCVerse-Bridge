@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.12
 
 - **Search time limit raised to 240 s** (it was 170 s). With many extensions installed, the ones at the end of the queue now get time to finish before the search is stopped.
 - **Report card shows the time of each step.** Every extension line has its average and last time for the three steps - searching the site, opening the title's page, getting the links - and the top of the card shows the average of each step over all extensions, so you can see which step is slow. Only real calls count (an answer taken from the cache is not timed). Reset clears these times too.
