@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Search time limit is now 250 s** (it was 240 s): extensions still running when the first answer goes out keep searching for up to 250 seconds and add their links to the saved list for the next reload.
+
+- **Search load setting + no long waits for dead extensions.** Settings > Streams > "Search load": Gentle searches 4 extensions at a time (light on a tablet), Balanced 8 (as before), Fast 12, Super Fast 16 (most memory and battery). Extensions graded D or F in the report card now get 30 seconds per title instead of 150, so a dead extension no longer holds one of the places for minutes while the good ones wait behind it.
+
 ## 1.8.13
 
 - **History keeps every request again.** A search was only written to History when the answer was being sent. When the player hung up before that (the first answer can take 30+ s with many extensions) nothing was recorded, so the tab stayed empty for those. Such a request now gets an entry too (what was found so far, and a line saying no answer was sent). The start-up also no longer skips History when another add-on file fails to load first.

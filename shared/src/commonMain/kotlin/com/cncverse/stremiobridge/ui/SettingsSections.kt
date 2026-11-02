@@ -496,6 +496,22 @@ fun StreamsCard() {
             }
         }
         Spacer(Modifier.height(6.dp))
+        Text("Search load", color = TextSecondary, fontSize = 11.sp)
+        Text("How many extensions are searched at the same time. Gentle (4) is light on a tablet but takes longer to reach every extension; Fast (12) and Super Fast (16) use more memory and battery. Extensions graded D or F get 30 s instead of 150 s, so they do not hold a place for minutes.", color = TextMuted, fontSize = 10.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("gentle" to "Gentle (4)", "balanced" to "Balanced (8)", "fast" to "Fast (12)", "superfast" to "Super Fast (16)").forEach { (value, label) ->
+                FilterChip(
+                    selected = p.searchLoad == value,
+                    onClick = { update(p.copy(searchLoad = value)) },
+                    label = { Text(label, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
         Text("Hide links below", color = TextSecondary, fontSize = 11.sp)
         Text("Links whose resolution is known to be lower are hidden (links of unknown quality stay, listed last)", color = TextMuted, fontSize = 10.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
