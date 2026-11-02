@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **History keeps every request again.** A search was only written to History when the answer was being sent. When the player hung up before that (the first answer can take 30+ s with many extensions) nothing was recorded, so the tab stayed empty for those. Such a request now gets an entry too (what was found so far, and a line saying no answer was sent). The start-up also no longer skips History when another add-on file fails to load first.
+
 ## 1.8.12
 
 - **Search time limit raised to 240 s** (it was 170 s). With many extensions installed, the ones at the end of the queue now get time to finish before the search is stopped.

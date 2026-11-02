@@ -427,9 +427,11 @@ object StremioServer {
             // settings saved before the store was ready at the first lookup are read now
             runCatching { com.cncverse.stremiobridge.network.DohConfig.reload() }
             runCatching { SubtitleTools.init(cacheDir) }
-            UpstreamAddons.init(cacheDir); com.cncverse.stremiobridge.state.StreamHistory.init(cacheDir)
-            com.cncverse.stremiobridge.network.CfCookieStore.initIfNeeded(cacheDir)
-            WebSite.load(cacheDir)
+            // one of them failing must not leave the ones after it (History among them) unstarted
+            runCatching { UpstreamAddons.init(cacheDir) }
+            runCatching { com.cncverse.stremiobridge.state.StreamHistory.init(cacheDir) }
+            runCatching { com.cncverse.stremiobridge.network.CfCookieStore.initIfNeeded(cacheDir) }
+            runCatching { WebSite.load(cacheDir) }
             configLoadedFrom = cacheDir
         }
     }
@@ -951,6 +953,10 @@ object StremioServer {
         // The player is not kept waiting for ever: after RESPONSE_CAP_MS an empty list goes out (late results
         // are in the cache for the next try)
         // The search runs detached: a player that hangs up (or this cap) must not cancel it, it keeps filling the cache
+        // Every request ends up in History, also one the player gave up on while it was still waiting (that one used to leave
+        // nothing at all there: the entry was only written once the answer was being sent)
+        var recorded = false
+        try {
         val search = streamSearchScope.async(pluginDispatcher + Profiles.element()) { buildStreams(type, id) }
         val built = withTimeoutOrNull(RESPONSE_CAP_MS) { search.await() }
         if (built == null) ServerState.warn("[Request] $type/$id: search still running after ${RESPONSE_CAP_MS / 1000}s - answering now, results will be in the cache for the next try")
@@ -970,9 +976,39 @@ object StremioServer {
             }
             ServerState.info("[Request] sent ${out.size} link(s) for $type/$id (${(System.currentTimeMillis() - requestStart) / 1000.0}s)")
         } finally {
+            recorded = true
             withContext(kotlinx.coroutines.NonCancellable) { recordHistory(type, id, prep, requestStart) }
         }
         if (p.prefetchNext) prefetchNextEpisode(type, id)
+        } finally {
+            if (!recorded) withContext(kotlinx.coroutines.NonCancellable) {
+                ServerState.warn("[Request] $type/$id: the request ended before an answer was sent (the player hung up after ${(System.currentTimeMillis() - requestStart) / 1000}s?) - noted in History")
+                recordUnanswered(type, id, requestStart)
+            }
+        }
+    }
+
+    /** A request that ended without an answer: what the extensions had found so far is kept in History. */
+    private fun recordUnanswered(type: String, id: String, requestStart: Long) {
+        runCatching {
+            val partial = searchPartial["$type:$id"]?.toList().orEmpty()
+            val parts = id.split(':')
+            val ep = if ((type == "series" || type == "anime") && parts.size >= 3) {
+                if (parts[0] == "kitsu" || parts[0] == "mal" || parts[0] == "anilist" || parts[0] == "anidb") "E${parts.last()}"
+                else "S${parts[parts.size - 2]} E${parts.last()}"
+            } else ""
+            val by = partial.groupingBy { it.info?.addonName ?: it.name ?: "?" }.eachCount()
+            com.cncverse.stremiobridge.state.StreamHistory.add(
+                com.cncverse.stremiobridge.state.HistoryEntry(
+                    time = System.currentTimeMillis(), type = type, id = id,
+                    title = com.cncverse.stremiobridge.state.StreamHistory.titleFor(id) ?: id.substringBefore(':'),
+                    episode = ep, found = partial.size, shown = 0,
+                    tookMs = System.currentTimeMillis() - requestStart,
+                    providers = by.entries.sortedByDescending { it.value }.map { "${it.key}: ${it.value}" },
+                    lines = listOf("No answer was sent: the player hung up (or the request ended) before the search was done. The links found so far (${partial.size}) are in the cache for the next try."),
+                )
+            )
+        }
     }
 
     private fun recordHistory(type: String, id: String, prep: Prepared, requestStart: Long) {
