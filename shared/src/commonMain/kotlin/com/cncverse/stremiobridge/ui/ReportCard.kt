@@ -31,7 +31,12 @@ private data class CardRow(
     val grade: String,
     val noMatch: Int,
     val off: Boolean,
+    /** average / latest time of each step in ms (-1 = not timed yet) */
+    val msSearch: Long, val msLoad: Long, val msLinks: Long,
+    val lastSearch: Long, val lastLoad: Long, val lastLinks: Long,
 )
+
+private fun secs(ms: Long): String = if (ms < 0) "-" else if (ms < 1000) "$ms ms" else "${ms / 100 / 10.0} s"
 
 private fun ago(ms: Long): String {
     if (ms <= 0) return "never"
@@ -65,6 +70,8 @@ private fun buildRows(plugins: List<LoadedPluginInfo>): List<CardRow> =
             grade = StreamTracker.gradeOf(st),
             noMatch = nm,
             off = com.cncverse.stremiobridge.server.StremioServer.disabledPlugins.contains(p.internalName),
+            msSearch = st?.avgSearchMs() ?: -1L, msLoad = st?.avgLoadMs() ?: -1L, msLinks = st?.avgLinksMs() ?: -1L,
+            lastSearch = st?.lastSearchMs ?: -1L, lastLoad = st?.lastLoadMs ?: -1L, lastLinks = st?.lastLinksMs ?: -1L,
         )
     }.sortedWith(compareBy({ it.off }, { it.grade == "?" }, { -it.okPct }, { if (it.avgMs < 0) Long.MAX_VALUE else it.avgMs }))
 
@@ -85,6 +92,14 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
     var confirmReset by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(3000); tick++ } }
     val rows = remember(plugins, tick) { buildRows(plugins) }
+    val avgs = remember(plugins, tick) {
+        // call-weighted average of each step over every loaded extension
+        var sm = 0L; var sn = 0; var lm = 0L; var ln = 0; var km = 0L; var kn = 0
+        for (p in plugins) if (p.apiRegistered) StreamTracker.totalsOf(p.internalName)?.let { st ->
+            sm += st.searchMs; sn += st.searchN; lm += st.loadMs; ln += st.loadN; km += st.linksMs; kn += st.linksN
+        }
+        Triple(if (sn > 0) sm / sn else -1L, if (ln > 0) lm / ln else -1L, if (kn > 0) km / kn else -1L)
+    }
     val dead = rows.filter { (it.grade == "F" || it.grade == "D") && it.requests >= 3 && !it.off }
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp), color = AmoledCard, modifier = Modifier.border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(16.dp))) {
@@ -93,6 +108,10 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
                 Text(
                     "Based on every time the extension was asked for links. A = gives links almost always and quickly. F = rarely gives links. ? = asked fewer than 3 times. Titles an extension does not have are not counted against it.",
                     color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+                )
+                Text(
+                    "Average time of a step over all extensions: search ${secs(avgs.first)} · title page ${secs(avgs.second)} · links ${secs(avgs.third)}",
+                    color = Violet400, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 8.dp),
                 )
                 if (rows.isEmpty()) {
                     Text("No extension is loaded yet.", color = TextMuted, fontSize = 13.sp)
@@ -113,6 +132,14 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
                                     if (r.requests == 0) (if (r.noMatch > 0) "Never had a title it was asked for (${r.noMatch}x)" else "Not asked yet")
                                     else "${r.okPct}% gave links (${r.requests} asks) · about ${(r.avgLinks * 10).toInt() / 10.0} links · $speed",
                                     color = TextMuted, fontSize = 11.sp,
+                                )
+                                if (r.msSearch >= 0 || r.msLoad >= 0 || r.msLinks >= 0) Text(
+                                    "Average: search ${secs(r.msSearch)} · page ${secs(r.msLoad)} · links ${secs(r.msLinks)}",
+                                    color = TextMuted, fontSize = 11.sp,
+                                )
+                                if (r.lastSearch >= 0 || r.lastLoad >= 0 || r.lastLinks >= 0) Text(
+                                    "Last time: search ${secs(r.lastSearch)} · page ${secs(r.lastLoad)} · links ${secs(r.lastLinks)}",
+                                    color = TextMuted, fontSize = 10.sp,
                                 )
                                 Text("Last links: ${ago(r.lastOkMs)}" + (if (r.noMatch > 0 && r.requests > 0) " · title not found ${r.noMatch}x" else "") + (if (r.off) " · switched off" else ""), color = TextMuted, fontSize = 11.sp)
                                 if (r.grade == "F" || r.grade == "D") r.lastError?.takeIf { it.isNotBlank() }?.let {

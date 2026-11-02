@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Search time limit raised to 240 s** (it was 170 s). With many extensions installed, the ones at the end of the queue now get time to finish before the search is stopped.
+- **Report card shows the time of each step.** Every extension line has its average and last time for the three steps - searching the site, opening the title's page, getting the links - and the top of the card shows the average of each step over all extensions, so you can see which step is slow. Only real calls count (an answer taken from the cache is not timed). Reset clears these times too.
+
 ## 1.8.10
 
 - **Smoother HLS playback.** A video segment whose connection went silent used to hold playback for up to 45 s before it was retried (the "buffers for about 20 s" stop). Segment downloads now drop a connection that sends nothing for 8 s and retry on a fresh one (up to 5 tries). The read-ahead also no longer queues the same segment again and again, which used up download slots and slowed the ones the player was waiting for.

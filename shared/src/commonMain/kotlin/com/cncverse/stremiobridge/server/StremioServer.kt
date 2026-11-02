@@ -2909,7 +2909,7 @@ object StremioServer {
      * cancelled and whatever has accumulated is returned — ensuring Stremio always
      * gets a response well within its 60-second addon timeout.
      */
-    private val STREAM_DEADLINE_MS = 170_000L
+    private val STREAM_DEADLINE_MS = 240_000L
     /** Answer with what has loaded after this long; the rest load into the cache until STREAM_DEADLINE_MS. */
     private val streamRequestStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val STREAM_SOFT_DEADLINE_MS = 8_000L
@@ -3547,7 +3547,7 @@ object StremioServer {
 
         suspend fun loadInfo(url: String): MediaInfo? = try {
             SearchLoadCache.getLoad(cacheKey, url)?.info
-                ?: api.load(url)?.also { SearchLoadCache.putLoad(cacheKey, url, it) }
+                ?: api.loadTimed(url)?.also { SearchLoadCache.putLoad(cacheKey, url, it) }
         } catch (e: Throwable) {
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             ServerState.debug("[${api.name}] load failed for $url: ${e.message}")
@@ -3645,7 +3645,7 @@ object StremioServer {
             if (budget <= 0 && tried.isNotEmpty()) break
             val more = try {
                 SearchLoadCache.getSearch(cacheKey, q)
-                    ?: api.search(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
+                    ?: api.searchTimed(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
             } catch (e: Throwable) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 emptyList()
@@ -3758,7 +3758,7 @@ object StremioServer {
         val cacheKey = api.internalName
         val searchResults = try {
             SearchLoadCache.getSearch(cacheKey, title)
-                ?: api.search(title).also { SearchLoadCache.putSearch(cacheKey, title, it) }
+                ?: api.searchTimed(title).also { SearchLoadCache.putSearch(cacheKey, title, it) }
         } catch (e: Throwable) {
             // Cancelled by the bridge (request gone / 45 s stop): not the provider's failure
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -3796,7 +3796,7 @@ object StremioServer {
                 for (term in AnimeMatcher.searchTerms(anime, animeSeason).filter { !it.equals(title, true) }) {
                     val more = try {
                         SearchLoadCache.getSearch(cacheKey, term)
-                            ?: api.search(term).also { SearchLoadCache.putSearch(cacheKey, term, it) }
+                            ?: api.searchTimed(term).also { SearchLoadCache.putSearch(cacheKey, term, it) }
                     } catch (e: Throwable) {
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
                         emptyList()
@@ -3827,7 +3827,7 @@ object StremioServer {
             for (q in AnimeMatcher.altQueries(title)) {
                 val more = try {
                     SearchLoadCache.getSearch(cacheKey, q)
-                        ?: api.search(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
+                        ?: api.searchTimed(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
                 } catch (e: Throwable) {
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     emptyList()
@@ -3848,7 +3848,7 @@ object StremioServer {
             if (cachedLoad != null) {
                 cachedLoad.info
             } else {
-                val fresh = api.load(bestMatch.url)
+                val fresh = api.loadTimed(bestMatch.url)
                 SearchLoadCache.putLoad(cacheKey, bestMatch.url, fresh)
                 fresh
             }
@@ -3904,7 +3904,7 @@ object StremioServer {
                 for (c in AnimeMatcher.rank(pool, anime, animeSeason).filter { it.url != bestMatch.url }.take(3)) {
                     val mi = try {
                         SearchLoadCache.getLoad(cacheKey, c.url)?.info
-                            ?: api.load(c.url)?.also { SearchLoadCache.putLoad(cacheKey, c.url, it) }
+                            ?: api.loadTimed(c.url)?.also { SearchLoadCache.putLoad(cacheKey, c.url, it) }
                     } catch (e: Throwable) { kotlinx.coroutines.currentCoroutineContext().ensureActive(); null }
                     if (mi != null && fits(mi)) { bestMatch = c; mediaInfo = mi; replaced = true; break }
                 }
@@ -4076,7 +4076,7 @@ object StremioServer {
         val matches = LinkedHashMap<String, SearchResult>()
         for (q in queries) {
             val results = try {
-                SearchLoadCache.getSearch(cacheKey, q) ?: api.search(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
+                SearchLoadCache.getSearch(cacheKey, q) ?: api.searchTimed(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
             } catch (e: Throwable) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 emptyList()
@@ -4093,7 +4093,7 @@ object StremioServer {
         // the entry and, when the site lists it separately, its dubbed twin
         for (m in matches.values.take(2)) {
             val mi = try {
-                SearchLoadCache.getLoad(cacheKey, m.url)?.info ?: api.load(m.url)?.also { SearchLoadCache.putLoad(cacheKey, m.url, it) }
+                SearchLoadCache.getLoad(cacheKey, m.url)?.info ?: api.loadTimed(m.url)?.also { SearchLoadCache.putLoad(cacheKey, m.url, it) }
             } catch (e: Throwable) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 null
@@ -4252,10 +4252,22 @@ object VariantData {
  * loadLinks for every variant a merged episode carries, each stream labelled "[Sub]" / "[Dub]",
  * and every stream tagged with this extension's display name (provider ordering matches on it).
  */
+/** [search] / [load] that note how long the call really took (feeds the report card); a failed call is not timed. */
+internal suspend fun MainApiWrapper.searchTimed(q: String): List<SearchResult> {
+    val t0 = System.currentTimeMillis()
+    return search(q).also { runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordStep(pluginInternalName, internalName, name, "search", System.currentTimeMillis() - t0) } }
+}
+
+internal suspend fun MainApiWrapper.loadTimed(url: String): MediaInfo? {
+    val t0 = System.currentTimeMillis()
+    return load(url).also { runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordStep(pluginInternalName, internalName, name, "load", System.currentTimeMillis() - t0) } }
+}
+
 suspend fun MainApiWrapper.loadLinksAll(dataUrl: String): List<StremioStream> {
     val t0 = System.currentTimeMillis()
     // Not cancelled: a request the bridge stopped says nothing about the extension's speed
     val out = loadLinksAllTimed(dataUrl)
+    runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordStep(pluginInternalName, internalName, name, "links", System.currentTimeMillis() - t0) }
     if (kotlin.coroutines.coroutineContext[StremioServer.WholeRequestTimed.Key] == null) {
         runCatching { com.cncverse.stremiobridge.state.StreamTracker.recordTime(pluginInternalName, internalName, System.currentTimeMillis() - t0, name) }
     }
