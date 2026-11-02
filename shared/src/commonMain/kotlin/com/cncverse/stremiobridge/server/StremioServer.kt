@@ -221,7 +221,7 @@ object StremioServer {
         /** Extensions (plugin internal names) marked as short-drama by hand / taken out of the automatic detection. */
         val shortDramaOn: Set<String> = emptySet(),
         val shortDramaOff: Set<String> = emptySet(),
-        /** How many extensions are searched at the same time: gentle (4, light on a tablet) | balanced (8) | fast (12). */
+        /** How many extensions are searched at the same time: gentle (4, light on a tablet) | balanced (8) | fast (12) | superfast (16). */
         val searchLoad: String = "balanced",
         /** Links of the styled subtitles: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
         val styledSubtitleLinks: String = "both",
@@ -306,7 +306,7 @@ object StremioServer {
             providerOrder = p.providerOrder.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
             subtitleLangs = p.subtitleLangs.trim().take(200),
             subtitleOffsetMs = p.subtitleOffsetMs.coerceIn(-60_000, 60_000),
-            searchLoad = p.searchLoad.takeIf { it in setOf("gentle", "balanced", "fast") } ?: "balanced",
+            searchLoad = p.searchLoad.takeIf { it in setOf("gentle", "balanced", "fast", "superfast") } ?: "balanced",
             styledSubtitleLinks = p.styledSubtitleLinks.takeIf { it in setOf("both", "ass", "plain") } ?: "both",
         )
         streamPrefs = cleaned
@@ -2957,7 +2957,7 @@ object StremioServer {
     /** Hard limit for the whole search part of a stream request. */
     /** Extensions searched at the same time (more of them at once used a lot of memory on a tablet). */
     private const val SEARCH_PARALLEL = 8
-    private fun searchParallel(): Int = when (streamPrefs.searchLoad) { "gentle" -> 4; "fast" -> 12; else -> SEARCH_PARALLEL }
+    private fun searchParallel(): Int = when (streamPrefs.searchLoad) { "gentle" -> 4; "fast" -> 12; "superfast" -> 16; else -> SEARCH_PARALLEL }
     /** Extensions that hardly ever give links (grade D / F after at least 3 asks) get a short turn so they do not hold a slot for minutes. */
     private const val DEAD_PROVIDER_TIMEOUT_MS = 30_000L
     private fun providerLimitMs(api: MainApiWrapper): Long =

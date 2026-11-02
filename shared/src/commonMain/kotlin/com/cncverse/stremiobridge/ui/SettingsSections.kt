@@ -497,9 +497,9 @@ fun StreamsCard() {
         }
         Spacer(Modifier.height(6.dp))
         Text("Search load", color = TextSecondary, fontSize = 11.sp)
-        Text("How many extensions are searched at the same time. Gentle (4) is light on a tablet but takes longer to reach every extension; Fast (12) uses more memory and battery. Extensions graded D or F get 30 s instead of 150 s, so they do not hold a place for minutes.", color = TextMuted, fontSize = 10.sp)
+        Text("How many extensions are searched at the same time. Gentle (4) is light on a tablet but takes longer to reach every extension; Fast (12) and Super Fast (16) use more memory and battery. Extensions graded D or F get 30 s instead of 150 s, so they do not hold a place for minutes.", color = TextMuted, fontSize = 10.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("gentle" to "Gentle (4)", "balanced" to "Balanced (8)", "fast" to "Fast (12)").forEach { (value, label) ->
+            listOf("gentle" to "Gentle (4)", "balanced" to "Balanced (8)", "fast" to "Fast (12)", "superfast" to "Super Fast (16)").forEach { (value, label) ->
                 FilterChip(
                     selected = p.searchLoad == value,
                     onClick = { update(p.copy(searchLoad = value)) },

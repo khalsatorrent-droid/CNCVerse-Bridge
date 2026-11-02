@@ -4,7 +4,7 @@
 
 - **Search time limit is now 250 s** (it was 240 s): extensions still running when the first answer goes out keep searching for up to 250 seconds and add their links to the saved list for the next reload.
 
-- **Search load setting + no long waits for dead extensions.** Settings > Streams > "Search load": Gentle searches 4 extensions at a time (light on a tablet), Balanced 8 (as before), Fast 12. Extensions graded D or F in the report card now get 30 seconds per title instead of 150, so a dead extension no longer holds one of the places for minutes while the good ones wait behind it.
+- **Search load setting + no long waits for dead extensions.** Settings > Streams > "Search load": Gentle searches 4 extensions at a time (light on a tablet), Balanced 8 (as before), Fast 12, Super Fast 16 (most memory and battery). Extensions graded D or F in the report card now get 30 seconds per title instead of 150, so a dead extension no longer holds one of the places for minutes while the good ones wait behind it.
 
 ## 1.8.13
 
