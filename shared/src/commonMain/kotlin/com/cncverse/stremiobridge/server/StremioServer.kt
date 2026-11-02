@@ -221,7 +221,9 @@ object StremioServer {
         /** Extensions (plugin internal names) marked as short-drama by hand / taken out of the automatic detection. */
         val shortDramaOn: Set<String> = emptySet(),
         val shortDramaOff: Set<String> = emptySet(),
-        /** Links of the styled subtitles: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
+        /** How many extensions are searched at the same time: gentle (4, light on a tablet) | balanced (8) | fast (12). */
+        val searchLoad: String = "balanced",
+        /** How streams are grouped: default (by quality) | provider. */: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
         val styledSubtitleLinks: String = "both",
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
@@ -304,6 +306,7 @@ object StremioServer {
             providerOrder = p.providerOrder.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
             subtitleLangs = p.subtitleLangs.trim().take(200),
             subtitleOffsetMs = p.subtitleOffsetMs.coerceIn(-60_000, 60_000),
+            searchLoad = p.searchLoad.takeIf { it in setOf("gentle", "balanced", "fast") } ?: "balanced",
             styledSubtitleLinks = p.styledSubtitleLinks.takeIf { it in setOf("both", "ass", "plain") } ?: "both",
         )
         streamPrefs = cleaned
@@ -2954,6 +2957,11 @@ object StremioServer {
     /** Hard limit for the whole search part of a stream request. */
     /** Extensions searched at the same time (more of them at once used a lot of memory on a tablet). */
     private const val SEARCH_PARALLEL = 8
+    private fun searchParallel(): Int = when (streamPrefs.searchLoad) { "gentle" -> 4; "fast" -> 12; else -> SEARCH_PARALLEL }
+    /** Extensions that hardly ever give links (grade D / F after at least 3 asks) get a short turn so they do not hold a slot for minutes. */
+    private const val DEAD_PROVIDER_TIMEOUT_MS = 30_000L
+    private fun providerLimitMs(api: MainApiWrapper): Long =
+        if (StreamTracker.gradeOf(StreamTracker.statOf(api.pluginInternalName)) in setOf("D", "F")) DEAD_PROVIDER_TIMEOUT_MS else PROVIDER_TIMEOUT_MS
     private val RESPONSE_CAP_MS = 38_000L
     /** Time budget for the anime name / episode mapping lookups before the providers are started. */
     private val ANIME_RESOLVE_BUDGET_MS = 25_000L
@@ -3268,7 +3276,7 @@ object StremioServer {
                     }
                 }
 
-                val sem = Semaphore(SEARCH_PARALLEL)
+                val sem = Semaphore(searchParallel())
                 val started = System.currentTimeMillis()
                 val accumulated = java.util.concurrent.CopyOnWriteArrayList<StremioStream>()
                 // Set once the request has been answered early: from then on every provider that
@@ -3285,7 +3293,8 @@ object StremioServer {
                 val jobs = activePlugins.map { api ->
                     streamSearchScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                         sem.withPermit {
-                            val res = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+                            val limitMs = providerLimitMs(api)
+                            val res = withTimeoutOrNull(limitMs) {
                                 try {
                                     // The two ids of an anime one after the other, never at the same time (half the load on the
                                     // device and on each site): the Kitsu side first, then the TMDB / IMDb side
@@ -3341,8 +3350,8 @@ object StremioServer {
                                 }
                             }
                             if (res == null) {
-                                ServerState.debug("[STREAM_TIMEOUT] [${api.name}] Provider timed out after ${PROVIDER_TIMEOUT_MS}ms")
-                                StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Timed out after ${PROVIDER_TIMEOUT_MS}ms")
+                                ServerState.debug("[STREAM_TIMEOUT] [${api.name}] Provider timed out after ${limitMs}ms")
+                                StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Timed out after ${limitMs}ms")
                             }
                         }
                         if (answered.get() && accumulated.isNotEmpty()) publish()
