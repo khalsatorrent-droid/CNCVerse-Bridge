@@ -32,7 +32,7 @@ private data class CardRow(
     val noMatch: Int,
     val off: Boolean,
     /** average / latest time of each step in ms (-1 = not timed yet) */
-    val avgSearch: Long, val avgLoad: Long, val avgLinks: Long,
+    val msSearch: Long, val msLoad: Long, val msLinks: Long,
     val lastSearch: Long, val lastLoad: Long, val lastLinks: Long,
 )
 
@@ -70,7 +70,7 @@ private fun buildRows(plugins: List<LoadedPluginInfo>): List<CardRow> =
             grade = StreamTracker.gradeOf(st),
             noMatch = nm,
             off = com.cncverse.stremiobridge.server.StremioServer.disabledPlugins.contains(p.internalName),
-            avgSearch = st?.avgSearchMs() ?: -1L, avgLoad = st?.avgLoadMs() ?: -1L, avgLinks = st?.avgLinksMs() ?: -1L,
+            msSearch = st?.avgSearchMs() ?: -1L, msLoad = st?.avgLoadMs() ?: -1L, msLinks = st?.avgLinksMs() ?: -1L,
             lastSearch = st?.lastSearchMs ?: -1L, lastLoad = st?.lastLoadMs ?: -1L, lastLinks = st?.lastLinksMs ?: -1L,
         )
     }.sortedWith(compareBy({ it.off }, { it.grade == "?" }, { -it.okPct }, { if (it.avgMs < 0) Long.MAX_VALUE else it.avgMs }))
@@ -133,8 +133,8 @@ fun ReportCardDialog(onDismiss: () -> Unit) {
                                     else "${r.okPct}% gave links (${r.requests} asks) · about ${(r.avgLinks * 10).toInt() / 10.0} links · $speed",
                                     color = TextMuted, fontSize = 11.sp,
                                 )
-                                if (r.avgSearch >= 0 || r.avgLoad >= 0 || r.avgLinks >= 0) Text(
-                                    "Average: search ${secs(r.avgSearch)} · page ${secs(r.avgLoad)} · links ${secs(r.avgLinks)}",
+                                if (r.msSearch >= 0 || r.msLoad >= 0 || r.msLinks >= 0) Text(
+                                    "Average: search ${secs(r.msSearch)} · page ${secs(r.msLoad)} · links ${secs(r.msLinks)}",
                                     color = TextMuted, fontSize = 11.sp,
                                 )
                                 if (r.lastSearch >= 0 || r.lastLoad >= 0 || r.lastLinks >= 0) Text(
