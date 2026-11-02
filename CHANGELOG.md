@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.14
 
 - **Search time limit is now 250 s** (it was 240 s): extensions still running when the first answer goes out keep searching for up to 250 seconds and add their links to the saved list for the next reload.
 
