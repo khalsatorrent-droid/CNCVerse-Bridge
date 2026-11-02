@@ -2948,7 +2948,7 @@ object StremioServer {
      * cancelled and whatever has accumulated is returned — ensuring Stremio always
      * gets a response well within its 60-second addon timeout.
      */
-    private val STREAM_DEADLINE_MS = 240_000L
+    private val STREAM_DEADLINE_MS = 250_000L
     /** Answer with what has loaded after this long; the rest load into the cache until STREAM_DEADLINE_MS. */
     private val streamRequestStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val STREAM_SOFT_DEADLINE_MS = 8_000L
