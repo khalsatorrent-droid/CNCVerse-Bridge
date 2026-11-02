@@ -59,6 +59,8 @@ internal data class StatRecord(
     val totalMs: Long = 0L,
     val timedRequests: Int = 0,
     val noMatch: Int = 0,
+    val searchMs: Long = 0L, val searchN: Int = 0, val loadMs: Long = 0L, val loadN: Int = 0, val linksMs: Long = 0L, val linksN: Int = 0,
+    val lastSearchMs: Long = -1L, val lastLoadMs: Long = -1L, val lastLinksMs: Long = -1L,
 )
 
 object StreamTracker {
@@ -88,6 +90,13 @@ object StreamTracker {
         /** Requests where the title (or episode) was simply not in this extension's catalog: not counted against it in the report card. */
         var noMatch: Int = 0
         fun avgMs(): Long = if (timedRequests > 0) totalMs / timedRequests else -1L
+        /** Time of each step (search the site, open the title's page, get the links): sum, count and the latest one. */
+        var searchMs: Long = 0L; var searchN: Int = 0; var lastSearchMs: Long = -1L
+        var loadMs: Long = 0L; var loadN: Int = 0; var lastLoadMs: Long = -1L
+        var linksMs: Long = 0L; var linksN: Int = 0; var lastLinksMs: Long = -1L
+        fun avgSearchMs(): Long = if (searchN > 0) searchMs / searchN else -1L
+        fun avgLoadMs(): Long = if (loadN > 0) loadMs / loadN else -1L
+        fun avgLinksMs(): Long = if (linksN > 0) linksMs / linksN else -1L
 
         /**
          * - WORKING: links within the last [WORKING_WINDOW_MS], or the latest probe found links directly
@@ -137,6 +146,7 @@ object StreamTracker {
             lastSuccessTime, lastTestedTime, lastError, firstSeen, lastProbeTime, lastDirectProbeStreams,
             lastProxyProbeStreams, lastProxyCountry, lastProbeNote, lastProxySuccessTime,
             totalMs, timedRequests, noMatch,
+            searchMs, searchN, loadMs, loadN, linksMs, linksN, lastSearchMs, lastLoadMs, lastLinksMs,
         )
     }
 
@@ -192,6 +202,22 @@ object StreamTracker {
         for (key in setOf(pluginInternalName, internalName).filter { it.isNotBlank() }) {
             val s = stats.computeIfAbsent(key) { Stat(key, pluginName ?: key) }
             synchronized(s) { s.totalMs += ms.coerceIn(0L, 120_000L); s.timedRequests++ }
+        }
+        dirty = true
+    }
+
+    /** How long one step of an extension took: "search", "load" (the title's page) or "links". Only real calls (not cached answers). */
+    fun recordStep(pluginInternalName: String, internalName: String, pluginName: String, step: String, ms: Long) {
+        val v = ms.coerceIn(0L, 300_000L)
+        for (key in setOf(pluginInternalName, internalName).filter { it.isNotBlank() }) {
+            val s = stats.computeIfAbsent(key) { Stat(key, pluginName) }
+            synchronized(s) {
+                when (step) {
+                    "search" -> { s.searchMs += v; s.searchN++; s.lastSearchMs = v }
+                    "load" -> { s.loadMs += v; s.loadN++; s.lastLoadMs = v }
+                    else -> { s.linksMs += v; s.linksN++; s.lastLinksMs = v }
+                }
+            }
         }
         dirty = true
     }
@@ -277,6 +303,8 @@ object StreamTracker {
                 t.totalRequests += u.totalRequests; t.successRequests += u.successRequests
                 t.totalStreams += u.totalStreams; t.noMatch += u.noMatch
                 t.totalMs += u.totalMs; t.timedRequests += u.timedRequests
+                t.searchMs += u.searchMs; t.searchN += u.searchN; t.loadMs += u.loadMs; t.loadN += u.loadN; t.linksMs += u.linksMs; t.linksN += u.linksN
+                if (u.lastTestedTime >= t.lastTestedTime) { t.lastSearchMs = u.lastSearchMs; t.lastLoadMs = u.lastLoadMs; t.lastLinksMs = u.lastLinksMs }
                 if (u.lastSuccessTime > t.lastSuccessTime) t.lastSuccessTime = u.lastSuccessTime
                 if (u.lastTestedTime > t.lastTestedTime) { t.lastTestedTime = u.lastTestedTime; t.lastError = u.lastError }
             }
@@ -343,6 +371,8 @@ object StreamTracker {
         for (s in stats.values) synchronized(s) {
             s.totalRequests = 0; s.successRequests = 0; s.totalStreams = 0; s.noMatch = 0
             s.totalMs = 0; s.timedRequests = 0; s.lastStreamCount = 0
+            s.searchMs = 0; s.searchN = 0; s.loadMs = 0; s.loadN = 0; s.linksMs = 0; s.linksN = 0
+            s.lastSearchMs = -1; s.lastLoadMs = -1; s.lastLinksMs = -1
             s.lastSuccessTime = 0; s.lastProxySuccessTime = 0; s.lastError = null
         }
         dirty = true
@@ -371,6 +401,8 @@ object StreamTracker {
                     lastProxyProbeStreams = r.lastProxyProbeStreams; lastProxyCountry = r.lastProxyCountry
                     lastProbeNote = r.lastProbeNote; lastProxySuccessTime = r.lastProxySuccessTime
                     totalMs = r.totalMs; timedRequests = r.timedRequests; noMatch = r.noMatch
+                    searchMs = r.searchMs; searchN = r.searchN; loadMs = r.loadMs; loadN = r.loadN; linksMs = r.linksMs; linksN = r.linksN
+                    lastSearchMs = r.lastSearchMs; lastLoadMs = r.lastLoadMs; lastLinksMs = r.lastLinksMs
                 }
             }
         }.onFailure { ServerState.warn("Could not read stream_health.json: ${it.message}") }
