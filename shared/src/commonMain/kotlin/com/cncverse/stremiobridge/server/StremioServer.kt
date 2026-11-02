@@ -223,7 +223,7 @@ object StremioServer {
         val shortDramaOff: Set<String> = emptySet(),
         /** How many extensions are searched at the same time: gentle (4, light on a tablet) | balanced (8) | fast (12). */
         val searchLoad: String = "balanced",
-        /** How streams are grouped: default (by quality) | provider. */: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
+        /** Links of the styled subtitles: both | ass (".ass" link only) | plain (link without ".ass", for Nuvio mobile). */
         val styledSubtitleLinks: String = "both",
         /** How streams are grouped: default (by quality) | provider. */
         val groupBy: String = "default",
