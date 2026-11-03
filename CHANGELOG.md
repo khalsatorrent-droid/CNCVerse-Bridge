@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.15
 
 - **"All TV channels (A-Z)": channels with the same name are merged.** "Star Plus", "STAR PLUS HD" and "Star-Plus (1080p)" from different extensions now show as one channel in the catalog. Opening it asks all of its sources at the same time and lists every link of that channel together. Channels with different names (Star Sports 1 and 2) stay separate. The website's Live TV tab already grouped channels this way and is unchanged.
 
