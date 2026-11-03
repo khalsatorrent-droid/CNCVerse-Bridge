@@ -2586,18 +2586,18 @@ object StremioServer {
         return result
     }
     /** Every channel of the combined TV catalog (A-Z), for the website's Live TV tab. */
-    suspend fun liveChannels(): List<StremioMeta> = withContext(pluginDispatcher) { buildAllTv(null, 0) }
+    suspend fun liveChannels(): List<StremioMeta> = withContext(pluginDispatcher) { buildAllTv(null, 0, merge = false) }
 
     private const val ALL_TV_ID = "cnc_all_tv"
     /** The merged list and the cached pages it was made from (by identity), so a refreshed page rebuilds it and nothing else does. */
-    private class AllTv(val sources: List<Int>, val metas: List<StremioMeta>)
+    private class AllTv(val sources: List<Int>, val metas: List<StremioMeta>, val merged: List<StremioMeta>)
     @Volatile private var allTvCache: AllTv? = null
 
     /**
      * Every channel of every TV catalog in the manifest (the ones not switched off) as ONE list in alphabetical order
      * (leading symbols and emoji ignored). The whole list goes out at once, so later pages (skip > 0) are empty.
      */
-    private suspend fun buildAllTv(search: String?, skip: Int): List<StremioMeta> {
+    private suspend fun buildAllTv(search: String?, skip: Int, merge: Boolean = true): List<StremioMeta> {
         if (skip > 0) return emptyList()
         val defs = tvSources()
         // a source whose first page is not loaded yet is loaded now (each one is cached by buildCatalog), all at the same time
@@ -2608,12 +2608,87 @@ object StremioServer {
         }
         val pages = homePageCatalogCache.entries.filter { (k, _) -> defs.any { k.startsWith("tv:${it.id}:") } }.map { it.value }
         val sig = pages.map { System.identityHashCode(it) }.sorted()
-        val merged = allTvCache?.takeIf { it.sources == sig }?.metas ?: pages.asSequence().flatten().distinctBy { it.id }
-            .sortedWith(compareBy<StremioMeta, String>(String.CASE_INSENSITIVE_ORDER) { m -> m.name.replace(LEADING_SYMBOLS, "").trim().ifEmpty { m.name } })
-            .toList().also { allTvCache = AllTv(sig, it) }
+        val cache = allTvCache?.takeIf { it.sources == sig } ?: run {
+            val all = pages.asSequence().flatten().distinctBy { it.id }
+                .sortedWith(compareBy<StremioMeta, String>(String.CASE_INSENSITIVE_ORDER) { m -> m.name.replace(LEADING_SYMBOLS, "").trim().ifEmpty { m.name } })
+                .toList()
+            AllTv(sig, all, mergeSameTvChannels(all)).also { allTvCache = it }
+        }
+        val merged = if (merge) cache.merged else cache.metas
         if (search.isNullOrBlank()) return merged
         val words = normalizeTitle(search).split(' ').filter { it.isNotEmpty() }
         return merged.filter { m -> val n = m.name.lowercase(); words.all { n.contains(it) } }.take(200)
+    }
+
+
+    // ── Channels with the same name, merged into one entry of the "All TV channels" catalog ──
+    private const val TV_GROUP_KEY = "cnc_tvgroup"
+    /** Group id -> the ids of the channels it merges (filled when the catalog is built; rebuilt on demand after a restart). */
+    private val tvGroupMembers = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    private val TV_BRACKETS = Regex("[\\[(].*?[\\])]")
+    private val TV_QUALITY_WORDS = Regex("\\b(hd|fhd|uhd|sd|hq|4k|hevc|1080p|720p|480p|360p)\\b")
+    private val TV_NON_ALNUM = Regex("[^\\p{L}\\p{N}]+")
+
+    /** "Star Plus HD", "STAR PLUS (1080p)" and "star-plus" are the same channel: lower case, no bracket text, no quality words, no symbols. */
+    internal fun tvNameKey(name: String): String {
+        val low = name.lowercase()
+        val k = low.replace(TV_BRACKETS, " ").replace(TV_QUALITY_WORDS, " ").replace(TV_NON_ALNUM, " ").trim()
+        return k.ifEmpty { low.replace(TV_NON_ALNUM, " ").trim() }
+    }
+
+    /** One entry per channel name; the entry of several channels opens all their links (see [tvGroupStreams]). */
+    private fun mergeSameTvChannels(sorted: List<StremioMeta>): List<StremioMeta> {
+        val by = LinkedHashMap<String, MutableList<StremioMeta>>()
+        for (m in sorted) {
+            val k = tvNameKey(m.name)
+            by.getOrPut(if (k.isEmpty()) "id:" + m.id else k) { mutableListOf() }.add(m)
+        }
+        return by.map { (k, ms) ->
+            if (ms.size == 1) ms[0] else {
+                val gid = StremioIds.encode(TV_GROUP_KEY, k)
+                tvGroupMembers[k] = ms.map { it.id }.distinct().take(12)
+                val first = ms[0]
+                first.copy(
+                    id = gid,
+                    poster = ms.firstNotNullOfOrNull { it.poster?.takeIf { p -> p.startsWith("http") } } ?: first.poster,
+                    behaviorHints = MetaBehaviorHints(defaultVideoId = gid),
+                    description = "${ms.size} sources of this channel",
+                )
+            }
+        }
+    }
+
+    /** The detail page of a merged channel: the first source that answers, under the merged id. */
+    private suspend fun tvGroupMeta(type: String, id: String, key: String): StremioMeta? {
+        for (memberId in tvGroupMembersOf(type, key)) {
+            val m = buildMeta(type, memberId) ?: continue
+            val n = tvGroupMembers[key]?.size ?: 0
+            return m.copy(id = id, videos = null, behaviorHints = MetaBehaviorHints(defaultVideoId = id), description = (m.description?.let { "$it\n" } ?: "") + "$n sources of this channel")
+        }
+        return null
+    }
+
+    private suspend fun tvGroupMembersOf(type: String, key: String): List<String> {
+        tvGroupMembers[key]?.let { return it }
+        // after a restart the catalog has not been built yet: build it, which fills the groups
+        runCatching { buildAllTv(null, 0) }
+        return tvGroupMembers[key] ?: emptyList()
+    }
+
+    /** Every link of every source of a merged channel, all sources asked at the same time. */
+    private suspend fun tvGroupStreams(type: String, key: String): List<StremioStream> {
+        val members = tvGroupMembersOf(type, key)
+        if (members.isEmpty()) return emptyList()
+        val gate = Semaphore(4)
+        return coroutineScope {
+            members.map { mid ->
+                async {
+                    gate.withPermit {
+                        withTimeoutOrNull(40_000L) { runCatching { buildStreamsRaw(type, mid) }.getOrDefault(emptyList()) } ?: emptyList()
+                    }
+                }
+            }.awaitAll().flatten()
+        }
     }
 
     private suspend fun buildCatalog(
@@ -2706,6 +2781,7 @@ object StremioServer {
 
     private suspend fun buildMeta(type: String, id: String): StremioMeta? {
         val (pluginKey, dataUrl) = StremioIds.decode(id) ?: return null
+        if (pluginKey == TV_GROUP_KEY) return tvGroupMeta(type, id, dataUrl)
         // Item ids carry the source's display-name slug, which several extensions can share
         // (SKTech and LivXow both have "📺 SUN NXT"). Taking the first match could pick a
         // copy that is disabled for this user → 404 and a detail page that never loads.
@@ -3091,6 +3167,7 @@ object StremioServer {
 
     private suspend fun buildStreamsRaw(type: String, id: String): List<StremioStream> {
         val decoded = StremioIds.decode(id)
+        if (decoded != null && decoded.first == TV_GROUP_KEY) return tvGroupStreams(type, decoded.second)
         if (decoded != null) {
             val (pluginKey, dataUrl) = decoded
             val matchingApis = loadedApis.filter { api ->
