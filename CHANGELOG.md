@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.17
 
 Ported from the original CNCVerse Bridge (v1.2.0), adapted to this fork:
 
