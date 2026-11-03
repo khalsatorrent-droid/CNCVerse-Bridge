@@ -71,6 +71,7 @@ object MkvProbe {
     /** [streams] with audio languages, real size and running time filled in where the file's start was read. */
     suspend fun enrich(streams: List<StremioStream>): List<StremioStream> {
         if (results.size > 5_000) { val now = System.currentTimeMillis(); results.entries.removeIf { now - it.value.second > TTL_MS } }
+        if (results.size > 8_000) results.clear()
         val todo = streams.filter { candidate(it) && cached(it.url!!) == null }.distinctBy { it.url }
         if (todo.isNotEmpty()) {
             val jobs = todo.map { s ->
