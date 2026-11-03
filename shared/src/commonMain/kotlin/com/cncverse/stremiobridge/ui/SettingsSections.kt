@@ -443,6 +443,17 @@ fun StreamsCard() {
         }
         SwitchRow("Hide HLS links", "Removes every HLS (m3u8) link from movie / series results (live TV keeps its links)", p.hideHlsLinks) { update(p.copy(hideHlsLinks = it)) }
         SwitchRow("Hide direct files", "Removes every direct video file (mp4, mkv...) from movie / series results", p.hideDirectFiles) { update(p.copy(hideDirectFiles = it)) }
+        OutlinedTextField(
+            value = p.audioLangs, onValueChange = { update(p.copy(audioLangs = it)) },
+            label = { Text("Audio languages (best first)") }, placeholder = { Text("Hindi, English") },
+            supportingText = { Text("Links in the first language lead the list (any quality), then the next", fontSize = 10.sp) },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+        if (p.audioLangs.isNotBlank()) {
+            SwitchRow("Only these audio languages", "Links in other languages are dropped", p.audioOnly) { update(p.copy(audioOnly = it)) }
+            if (p.audioOnly) SwitchRow("…and links with an unknown language", "Also drops links whose audio language is not known", p.hideUnknownAudio) { update(p.copy(hideUnknownAudio = it)) }
+        }
+        SwitchRow("Read audio tracks of MKV files", "Reads the first 256 KB of each direct MKV file for its audio languages (and size); HLS links' audio tracks come from their playlist", p.readAudioTracks) { update(p.copy(readAudioTracks = it)) }
         SwitchRow("Hide subtitles", "Streams go out without subtitle tracks", p.hideSubtitles) { update(p.copy(hideSubtitles = it)) }
         OutlinedTextField(
             value = p.subtitleLangs, onValueChange = { update(p.copy(subtitleLangs = it)) },

@@ -281,6 +281,8 @@ data class StreamRequestContext(
     val runtimeApprox: Boolean = false,
     /** File sizes the servers reported for direct links (link -> bytes), for links whose text gives none. */
     val sizes: Map<String, Long> = emptyMap(),
+    /** The preferred audio languages (Settings → Streams): listed first, so "+N more" never hides them. */
+    val preferredLanguages: List<String> = emptyList(),
 )
 
 object StreamVariables {
@@ -340,6 +342,14 @@ object StreamVariables {
         "OPUS" to rxAudio("opus"),
     )
     private val CHANNEL_RX = Regex("(?<![0-9.])(7\\.1|5\\.1|2\\.0)(?![0-9])")
+    private const val MAX_LANGUAGES = 5
+
+    /** The audio languages of a stream: its own tracks (read from the stream), then the ones its names mention. */
+    fun languagesOf(stream: StremioStream): List<String> {
+        val text = listOfNotNull(stream.info?.linkName ?: stream.title, stream.name?.substringBeforeLast('\n', "")?.takeIf { it.isNotBlank() }, stream.name).joinToString(" ")
+        return (stream.info?.audioLanguages.orEmpty() + LANGUAGES.filter { (_, r) -> r.containsMatchIn(text) }.map { it.first }).distinct()
+    }
+
     private val LANGUAGES = listOf(
         "Hindi", "English", "Tamil", "Telugu", "Malayalam", "Kannada", "Bengali", "Marathi", "Punjabi",
         "Gujarati", "Urdu", "Japanese", "Korean", "Chinese", "Mandarin", "Cantonese", "Spanish", "French",
@@ -546,7 +556,13 @@ object StreamVariables {
         val encode = tags(linkOnly, ENCODE_TAGS, firstOnly = true)
         val audio = tags(linkOnly, AUDIO_TAGS)
         val channels = CHANNEL_RX.find(linkOnly)?.value
-        val languages = LANGUAGES.filter { (_, r) -> r.containsMatchIn(allText) }.map { it.first }
+        // the stream's own audio tracks first (HLS master, MKV track list), then the languages its names spell out;
+        // the preferred ones lead, and a long list ends in "+N more" (upstream)
+        val languages = languagesOf(stream).let { all ->
+            val pref = ctx.preferredLanguages.mapNotNull { p -> all.firstOrNull { it.equals(p, ignoreCase = true) } }
+            val ordered = (pref + all).distinct()
+            if (ordered.size <= MAX_LANGUAGES) ordered else ordered.take(MAX_LANGUAGES - 1) + "+${ordered.size - (MAX_LANGUAGES - 1)} more"
+        }
 
         val sxe = SXE_RX.find(allText)
         val season = ctx.season ?: sxe?.groupValues?.get(1)?.toIntOrNull()

@@ -32,6 +32,13 @@ object SizeProbe {
 
     fun known(url: String?): Long? = url?.let { sizes[it] }
 
+    /** A size another check already read (the MKV probe's Content-Range). */
+    fun remember(url: String, bytes: Long) {
+        if (bytes < 2_000_000L) return
+        if (sizes.size > 5_000) sizes.clear()
+        sizes[url] = bytes
+    }
+
     /** Sizes (link -> bytes) of the direct files in [streams] whose text gives none, as far as they are known within [budgetMs]. */
     suspend fun fill(streams: List<StremioStream>, budgetMs: Long): Map<String, Long> {
         val wanted = streams.filter { s ->

@@ -171,6 +171,8 @@ data class StreamInfo(
     val matchedEpisode: String? = null,
     /** HLS rendition bandwidth from the master playlist (bits per second), when this link is one rendition. */
     val bandwidth: Long? = null,
+    /** Audio track languages read from the stream itself (an HLS master's audio tracks, an MKV's track list); null when not read. */
+    val audioLanguages: List<String>? = null,
 )
 
 @Serializable

@@ -27,7 +27,7 @@ object QualityProbe {
     class Variant(val url: String, val height: Int, val bandwidth: Long)
 
     /** What a master playlist lists; [externalAudio] = the sound lives in separate playlists (the master must stay). */
-    class Probe(val variants: List<Variant>, val externalAudio: Boolean)
+    class Probe(val variants: List<Variant>, val externalAudio: Boolean, val languages: List<String> = emptyList())
 
     private class Cached(val at: Long, val probe: Probe)
 
@@ -127,6 +127,15 @@ object QualityProbe {
         }
     }
 
+    private val MEDIA_ATTR = Regex("(?<![A-Z-])(TYPE|NAME|LANGUAGE)=(\"([^\"]*)\"|[^,]*)", RegexOption.IGNORE_CASE)
+
+    /** The languages of a master's audio tracks (#EXT-X-MEDIA TYPE=AUDIO NAME / LANGUAGE), in playlist order (upstream). */
+    internal fun audioLanguagesOf(text: String): List<String> =
+        text.lineSequence().map { it.trim() }.filter { it.startsWith("#EXT-X-MEDIA", ignoreCase = true) }.mapNotNull { line ->
+            val a = MEDIA_ATTR.findAll(line).associate { m -> m.groupValues[1].uppercase() to m.groupValues[3].ifEmpty { m.groupValues[2] }.trim() }
+            if (!a["TYPE"].equals("AUDIO", ignoreCase = true)) null else AudioLangs.languageOf(a["NAME"], a["LANGUAGE"])
+        }.distinct().toList()
+
     private val AUDIO_GROUP = Regex("#EXT-X-MEDIA:[^\\n]*TYPE=AUDIO[^\\n]*URI=\"", RegexOption.IGNORE_CASE)
 
     /** The highest rendition: tallest picture, then highest bitrate. */
@@ -142,7 +151,7 @@ object QualityProbe {
             client.newCall(b.build()).execute().use { r ->
                 if (!r.isSuccessful) Probe(emptyList(), false) else {
                     val text = readLimited(r.body?.byteStream(), 512 * 1024)
-                    Probe(parseMaster(text, r.request.url.toString()), AUDIO_GROUP.containsMatchIn(text))
+                    Probe(parseMaster(text, r.request.url.toString()), AUDIO_GROUP.containsMatchIn(text), audioLanguagesOf(text))
                 }
             }
         } catch (e: Exception) {
@@ -178,7 +187,8 @@ object QualityProbe {
             val variants = probe.variants
             val best = variants.maxOf { it.height }
             if (best <= 0) { out += s; continue }
-            val info = s.info ?: com.cncverse.stremiobridge.model.StreamInfo()
+            val info = (s.info ?: com.cncverse.stremiobridge.model.StreamInfo())
+                .let { i -> if (probe.languages.isNotEmpty() && i.audioLanguages == null) i.copy(audioLanguages = probe.languages) else i }
             if (!split || variants.size < 2) {
                 // Play the highest rendition every time (when the sound is inside it), and label it with that resolution
                 val top = if (bestOnly && !probe.externalAudio) topVariant(variants) else null

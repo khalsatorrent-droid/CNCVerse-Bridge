@@ -255,6 +255,14 @@ object StremioServer {
         val hideHlsLinks: Boolean = false,
         /** Drop every direct video file (mp4 / mkv / ... ) from movie / series results. */
         val hideDirectFiles: Boolean = false,
+        /** Audio languages in order of preference ("Hindi, English"): links in the first lead the list (any quality), then the next... "" = none. */
+        val audioLangs: String = "",
+        /** Only links in those audio languages (a link whose language is not known is kept unless [hideUnknownAudio]). */
+        val audioOnly: Boolean = false,
+        /** With [audioOnly]: links whose audio language is not known are dropped too. */
+        val hideUnknownAudio: Boolean = false,
+        /** Read the audio track list of direct MKV files (their first 256 KB) and the audio tracks of HLS masters. */
+        val readAudioTracks: Boolean = true,
         /**
          * Resolution cap, e.g. "1080p": streams above it are listed after everything within the cap
          * (a TV or phone that cannot decode 4K gets playable links first). "" = no cap.
@@ -307,6 +315,7 @@ object StremioServer {
             animeAudio = p.animeAudio.takeIf { it in setOf("all", "sub", "dub") } ?: "all",
             providerOrder = p.providerOrder.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
             subtitleLangs = p.subtitleLangs.trim().take(200),
+            audioLangs = p.audioLangs.trim().take(200),
             subtitleOffsetMs = p.subtitleOffsetMs.coerceIn(-60_000, 60_000),
             searchLoad = p.searchLoad.takeIf { it in setOf("gentle", "balanced", "fast", "superfast") } ?: "balanced",
             styledSubtitleLinks = p.styledSubtitleLinks.takeIf { it in setOf("both", "ass", "plain") } ?: "both",
@@ -948,6 +957,27 @@ object StremioServer {
         }
     }
 
+    /**
+     * Audio languages (Settings → Streams): "Only these" drops links in other languages (unknown ones too when asked), and the
+     * preferred languages lead the list - every link in the first language (any quality, best first), then the next - so
+     * with Hindi preferred a Hindi 1080p comes before an English 4K (upstream).
+     */
+    private fun applyAudioLanguages(list: List<StremioStream>, p: StreamPrefs, type: String): List<StremioStream> {
+        if (type == "tv") return list
+        val wanted = p.audioLangs.split(',', '/', '|').mapNotNull { AudioLangs.canonical(it) }.distinct()
+        if (wanted.isEmpty()) return list
+        fun langs(s: StremioStream) = com.cncverse.stremiobridge.format.StreamVariables.languagesOf(s)
+        val kept = if (!p.audioOnly) list else list.filter { s ->
+            val l = langs(s)
+            if (l.isEmpty()) !p.hideUnknownAudio else l.any { x -> wanted.any { it.equals(x, ignoreCase = true) } }
+        }
+        val rank = { s: StremioStream ->
+            val l = langs(s)
+            wanted.indexOfFirst { w -> l.any { it.equals(w, ignoreCase = true) } }.let { if (it < 0) wanted.size else it }
+        }
+        return kept.withIndex().sortedWith(compareBy({ rank(it.value) }, { it.index })).map { it.value }
+    }
+
     private suspend fun ApplicationCall.respondStreams() {
         val type = parameters["type"] ?: return respond(HttpStatusCode.BadRequest)
         val id   = parameters["id"]   ?: return respond(HttpStatusCode.BadRequest)
@@ -1099,7 +1129,11 @@ object StremioServer {
         var byKind = streams
         if (type != "tv" && p.hideHlsLinks) { val n = byKind.filter { !isHlsLink(it) }; trace.step("Setting \"Hide HLS links\"", byKind, n); byKind = n }
         if (type != "tv" && p.hideDirectFiles) { val n = byKind.filter { !isDirectFileLink(it) }; trace.step("Setting \"Hide direct files\"", byKind, n); byKind = n }
-        val probed = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(byKind, p.splitHls, 4_000L, p.bestHls) else byKind
+        // MKV files: their track list gives the audio languages (started now, next to the playlist reads)
+        val readTracks = !fast && type != "tv" && p.readAudioTracks
+        val mkvStart = if (readTracks) streamSearchScope.async { runCatching { MkvProbe.enrich(byKind) } } else null
+        val probedHls = if (!fast && (p.probeHls || p.splitHls)) QualityProbe.enrich(byKind, p.splitHls, 4_000L, p.bestHls) else byKind
+        val probed = if (mkvStart != null) { mkvStart.await(); runCatching { MkvProbe.enrich(probedHls) }.getOrDefault(probedHls) } else probedHls
         val tProbed = System.currentTimeMillis()
         val sorted = sortStreamsByQuality(probed)
 
@@ -1117,7 +1151,8 @@ object StremioServer {
             val arranged = arrangeStreams(seekable, p)
             val audioed = applyAnimeAudio(arranged, p).also { trace.step("Anime audio: only ${p.animeAudio} links wanted", arranged, it) }
             val ordered = hardsubFirst(audioed)
-            enforceResolutionOrder(ordered).also { trace.step("Below the minimum resolution (${p.minResolution.ifBlank { "none" }})", ordered, it) }
+            val inRange = enforceResolutionOrder(ordered).also { trace.step("Below the minimum resolution (${p.minResolution.ifBlank { "none" }})", ordered, it) }
+            applyAudioLanguages(inRange, p, type).also { trace.step("Setting \"Only these audio languages\"", inRange, it) }
         }
         ServerState.info("[Request] $type/$id timing: search ${(tBuilt - requestStart) / 1000.0}s, quality probe ${(tProbed - tBuilt) / 1000.0}s, seek check ${(tSeek - tProbed) / 1000.0}s")
 
@@ -1147,7 +1182,8 @@ object StremioServer {
             val ownFormatted = com.cncverse.stremiobridge.format.StreamFormatter.applyFor(
                 own,
                 com.cncverse.stremiobridge.format.StreamFormatter.contextFromId(type, id)
-                    .copy(runtimeSec = runtime ?: usualSec, runtimeApprox = runtime == null && usualSec != null, sizes = fileSizes),
+                    .copy(runtimeSec = runtime ?: usualSec, runtimeApprox = runtime == null && usualSec != null, sizes = fileSizes,
+                        preferredLanguages = p.audioLangs.split(',', '/', '|').mapNotNull { AudioLangs.canonical(it) }),
                 null,
             ).associateBy { it.url ?: it.infoHash ?: it.hashCode().toString() }
             val upstreamTagged = fromUpstream.associateBy({ it.url ?: it.infoHash ?: it.hashCode().toString() }) { u ->
