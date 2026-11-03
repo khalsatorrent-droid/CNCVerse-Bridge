@@ -48,8 +48,8 @@ object StreamHistory {
     private const val MAX = 150
     private const val KEEP_LINKS = 12
     /** Most results (and links) kept per entry, and the longest link kept: a request with hundreds of long links must stay light */
-    private const val MAX_LINES = 120
-    private const val MAX_URL = 700
+    private const val MAX_LINES = 200
+    private const val MAX_URL = 2_500
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _entries = MutableStateFlow<List<HistoryEntry>>(emptyList())
     val entries: StateFlow<List<HistoryEntry>> = _entries

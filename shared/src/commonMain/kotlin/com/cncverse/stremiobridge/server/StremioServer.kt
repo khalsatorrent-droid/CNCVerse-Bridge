@@ -971,11 +971,12 @@ object StremioServer {
             val l = langs(s)
             if (l.isEmpty()) !p.hideUnknownAudio else l.any { x -> wanted.any { it.equals(x, ignoreCase = true) } }
         }
-        val rank = { s: StremioStream ->
+        // each link's rank worked out once (not on every comparison of the sort)
+        val ranks = kept.map { s ->
             val l = langs(s)
             wanted.indexOfFirst { w -> l.any { it.equals(w, ignoreCase = true) } }.let { if (it < 0) wanted.size else it }
         }
-        return kept.withIndex().sortedWith(compareBy({ rank(it.value) }, { it.index })).map { it.value }
+        return kept.indices.sortedWith(compareBy({ ranks[it] }, { it })).map { kept[it] }
     }
 
     private suspend fun ApplicationCall.respondStreams() {
@@ -3630,11 +3631,18 @@ object StremioServer {
         if (apis.isEmpty()) return list
         val ext = ExternalIds.parse(id) ?: return list
         val (title, year) = runCatching { resolveExternal(type, ext) }.getOrNull() ?: return list
+        // an anime opened from a TMDB / IMDb catalog: its Kitsu episode, matched the strict way (both are anime sites)
+        val kitsuId = if (ext.scheme in setOf("imdb", "tmdb", "tvdb") && ext.season != null && ext.episode != null)
+            runCatching { imdbIdOf(ext)?.let { tt -> KitsuMap.fromImdb(tt, ext.season, ext.episode) } }.getOrNull()?.let { "kitsu:${it.first}:${it.second}" }
+        else null
         val fresh = withTimeoutOrNull(12_000L) {
             coroutineScope {
                 apis.map { api ->
                     async {
-                        try { doBuildGenericStreamsForApi(api, type, id, title, year) }
+                        try {
+                            if (kitsuId != null) kitsuExactStreams(api, kitsuId, title, year).orEmpty()
+                            else doBuildGenericStreamsForApi(api, type, id, title, year)
+                        }
                         catch (e: kotlinx.coroutines.CancellationException) { throw e }
                         catch (e: Throwable) { emptyList() }
                     }

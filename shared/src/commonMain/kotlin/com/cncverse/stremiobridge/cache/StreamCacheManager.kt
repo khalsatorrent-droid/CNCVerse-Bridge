@@ -384,8 +384,12 @@ object StreamCacheManager {
     }
     private val inFlight = ConcurrentHashMap<String, Flight>()
 
-    /** Hard cap for one shared fetch; it is also cancelled once no request is waiting for it. */
-    private const val MAX_FETCH_MS = 120_000L
+    /**
+     * Hard cap for one shared fetch; it is also cancelled once no request is waiting for it. Above the search's own limits
+     * (each extension 150 s, the whole search 250 s): at 120 s it used to kill slow extensions that were still within their
+     * time ("Timed out waiting for 120000 ms", counted against them on the report card) and the full list was never cached.
+     */
+    private const val MAX_FETCH_MS = 270_000L
 
     private val isDirty = AtomicBoolean(false)
     @Volatile private var cacheDirFile: File? = null
