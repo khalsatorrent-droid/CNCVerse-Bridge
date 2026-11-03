@@ -47,7 +47,7 @@ internal object TmdbGateway : Interceptor {
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .protocols(listOf(Protocol.HTTP_1_1))
-            .dns(com.cncverse.stremiobridge.network.AdaptiveHostDns)
+            .dns(AppDns)
             .connectionPool(okhttp3.ConnectionPool(32, 60, TimeUnit.SECONDS))
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
