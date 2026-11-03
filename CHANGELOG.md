@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **"All TV channels (A-Z)": channels with the same name are merged.** "Star Plus", "STAR PLUS HD" and "Star-Plus (1080p)" from different extensions now show as one channel in the catalog. Opening it asks all of its sources at the same time and lists every link of that channel together. Channels with different names (Star Sports 1 and 2) stay separate. The website's Live TV tab already grouped channels this way and is unchanged.
+
 ## 1.8.14
 
 - **Search time limit is now 250 s** (it was 240 s): extensions still running when the first answer goes out keep searching for up to 250 seconds and add their links to the saved list for the next reload.
