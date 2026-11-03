@@ -24,22 +24,37 @@ object TitleMatch {
     )
     private val SEASON_RX = listOf(
         Regex("\\bseason\\s*0*([0-9]{1,2})\\b", RegexOption.IGNORE_CASE),
+        // German sites: "Staffel 3" (upstream)
+        Regex("\\bstaffel\\s*0*([0-9]{1,2})\\b", RegexOption.IGNORE_CASE),
         Regex("\\b([0-9]{1,2})(?:st|nd|rd|th)\\s+season\\b", RegexOption.IGNORE_CASE),
         Regex("\\bs0*([0-9]{1,2})(?:\\s*e[0-9]{1,4})?\\b", RegexOption.IGNORE_CASE),
         Regex("\\bseries\\s*0*([0-9]{1,2})\\b", RegexOption.IGNORE_CASE),
     )
     private val PART_RX = Regex("\\b(?:part|cour|vol(?:ume)?)\\.?\\s*0*([0-9]{1,2})\\b", RegexOption.IGNORE_CASE)
     private val SEASON_WORDS_RX = Regex(
-        "\\bseason\\s*[0-9]{1,2}\\b|\\b[0-9]{1,2}(?:st|nd|rd|th)\\s+season\\b|\\bs[0-9]{1,2}(?:\\s*e[0-9]{1,4})?\\b|\\bseries\\s*[0-9]{1,2}\\b",
+        "\\bseason\\s*[0-9]{1,2}\\b|\\bstaffel\\s*[0-9]{1,2}\\b|\\b[0-9]{1,2}(?:st|nd|rd|th)\\s+season\\b|\\bs[0-9]{1,2}(?:\\s*e[0-9]{1,4})?\\b|\\bseries\\s*[0-9]{1,2}\\b",
         RegexOption.IGNORE_CASE,
     )
-    private val EPISODE_RX = Regex("(?:\\bs[0-9]{1,2}\\s*e|\\bepisode|\\bepi|\\bep|\\be|#)\\s*\\.?\\s*0*([0-9]{1,4})(?![0-9])", RegexOption.IGNORE_CASE)
+    private val EPISODE_RX = Regex("(?:\\bs[0-9]{1,2}\\s*e|\\b[0-9]{1,2}x(?=[0-9]{2,3}\\b)|\\bepisode|\\bfolge|\\bepi|\\bep|\\be|#)\\s*\\.?\\s*0*([0-9]{1,4})(?![0-9])", RegexOption.IGNORE_CASE)
     /** Characters that break a site's search when the extension pastes the words straight into its address. */
     private val QUERY_BREAKERS = Regex("[&#?%:'\"’`!]")
 
+    private val COMBINING_MARKS = Regex("\\p{Mn}+")
+
+    /**
+     * Lower case with German umlauts spelled out (ä -> ae, ß -> ss) and other accents dropped, so TMDB's "Mädchen für
+     * alles" is a site's "Maedchen fuer alles" and "Pokémon" is "Pokemon" (upstream).
+     */
+    fun fold(s: String): String =
+        java.text.Normalizer.normalize(
+            java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFC).lowercase()
+                .replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"),
+            java.text.Normalizer.Form.NFD,
+        ).replace(COMBINING_MARKS, "")
+
     /** The name without year, brackets, season words, language / quality tags and punctuation: "The Boys (2019) Season 4 Hindi 1080p" -> "the boys". */
     fun baseName(name: String): String {
-        var t = name.lowercase().replace("&", " and ")
+        var t = fold(name).replace("&", " and ")
         t = BRACKETS.replace(t, " ")
         t = YEAR.replace(t, " ")
         t = SEASON_WORDS_RX.replace(t, " ")
@@ -65,7 +80,11 @@ object TitleMatch {
 
     /** "S02E05" in an episode's name -> 2 (sites that leave the episode's season empty but write it in the name). */
     private val EP_SEASON_RX = Regex("\\bs0*([0-9]{1,2})\\s*e\\s*0*[0-9]{1,4}\\b", RegexOption.IGNORE_CASE)
-    fun seasonOfEpisodeName(name: String?): Int? = name?.let { EP_SEASON_RX.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+    /** "2x03" (not "1920x1080") */
+    private val EP_SEASON_X_RX = Regex("(?<![0-9a-z])0*([0-9]{1,2})x[0-9]{2,3}(?![0-9])", RegexOption.IGNORE_CASE)
+    fun seasonOfEpisodeName(name: String?): Int? = name?.let {
+        EP_SEASON_RX.find(it)?.groupValues?.get(1)?.toIntOrNull() ?: EP_SEASON_X_RX.find(it)?.groupValues?.get(1)?.toIntOrNull()
+    }
 
     /** A year written in the name ("Movie (2019)"), when the site gave none. */
     fun yearOf(name: String): Int? = YEAR.find(name)?.groupValues?.get(1)?.toIntOrNull()

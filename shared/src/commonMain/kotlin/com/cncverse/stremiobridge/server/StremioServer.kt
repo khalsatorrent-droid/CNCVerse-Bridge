@@ -2439,7 +2439,7 @@ object StremioServer {
                 else -> null
             } ?: return emptyList()
             val results = fetchTmdbJson("tv/$tvId/alternative_titles")?.get("results") as? kotlinx.serialization.json.JsonArray ?: return emptyList()
-            val names = results.mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull?.trim() }
+            val names = byRegion(results).mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull?.trim() }
                 .filter { n -> n.length >= 3 && n.count { c -> c.code < 0x250 } * 10 >= n.length * 8 }
                 .distinctBy { AnimeMatcher.normalize(it) }
                 .take(10)
@@ -3692,6 +3692,58 @@ object StremioServer {
     }
 
     /** TMDB's alternative titles of a movie (Latin script), like [tmdbAlternativeTitles] for series. */
+    /** TMDB alternative titles with India's and the UK's first, then the other English-speaking markets, then the rest. */
+    private val ALT_TITLE_REGIONS = listOf("IN", "GB", "US", "AU", "CA", "IE", "NZ")
+    private fun byRegion(list: List<kotlinx.serialization.json.JsonElement>): List<kotlinx.serialization.json.JsonElement> =
+        list.sortedBy { e ->
+            val r = (e as? kotlinx.serialization.json.JsonObject)?.get("iso_3166_1")?.jsonPrimitive?.contentOrNull
+            ALT_TITLE_REGIONS.indexOf(r).let { if (it < 0) ALT_TITLE_REGIONS.size else it }
+        }
+
+    private val localTitleCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * TMDB's title of a movie / series in [lang] ("de": "Haus des Geldes" for "Money Heist"): sites in another language list
+     * the item under it. Null when TMDB has none other than the main title. (upstream)
+     */
+    private suspend fun localizedTitle(type: String, ext: ExternalId, lang: String): String? {
+        if (ext.scheme != "imdb" && ext.scheme != "tmdb") return null
+        val mediaType = if (type == "movie") "movie" else "tv"
+        val key = "$mediaType:${ext.key}:$lang"
+        localTitleCache[key]?.let { return it.ifEmpty { null } }
+        return try {
+            val tmdbId = if (ext.scheme == "tmdb") ext.key else
+                ((fetchTmdbJson("find/${ext.key}?external_source=imdb_id")?.get(if (mediaType == "tv") "tv_results" else "movie_results")
+                    as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject)
+                    ?.get("id")?.jsonPrimitive?.contentOrNull ?: return null
+            val j = fetchTmdbJson("$mediaType/$tmdbId?language=$lang") ?: return null
+            val t = (j["name"] ?: j["title"])?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            if (localTitleCache.size > 5_000) localTitleCache.clear()
+            localTitleCache[key] = t
+            t.ifEmpty { null }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) { null }
+    }
+
+    /** The extension's language when it is not English ("de" for a German site), else null. */
+    private fun nonEnglishLanguage(api: MainApiWrapper): String? =
+        (api.apiLang ?: api.pluginLanguage)?.trim()?.lowercase()?.substringBefore('-')
+            ?.takeIf { it.length == 2 && it != "en" }
+
+    /**
+     * Whether [name] is the single entry of episode [season]x[episode] of one of [titles]: sites like FilmPalast list every
+     * episode as its own entry ("VisionQuest S01E02", "… 1x02", "… Staffel 1 Folge 2"). (upstream)
+     */
+    private fun isEpisodeEntry(name: String, titles: List<String>, season: Int, episode: Int): Boolean {
+        val n = normalizeTitle(name)
+        return titles.any { t ->
+            val w = normalizeTitle(t)
+            w.isNotEmpty() && Regex("^" + Regex.escape(w) +
+                " (?:s0*$season ?e0*$episode|0*${season}x0*$episode|(?:season|staffel) 0*$season (?:episode|folge|e) 0*$episode)( |$)").containsMatchIn(n)
+        }
+    }
+
     private suspend fun tmdbMovieAltTitles(ext: ExternalId): List<String> {
         val movieId = when (ext.scheme) {
             "tmdb" -> ext.key
@@ -3703,7 +3755,8 @@ object StremioServer {
         val details = fetchTmdbJson("movie/$movieId")
         val original = details?.get("original_title")?.jsonPrimitive?.contentOrNull
         val results = fetchTmdbJson("movie/$movieId/alternative_titles")?.get("titles") as? kotlinx.serialization.json.JsonArray
-        val names = (listOfNotNull(original) + results.orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull })
+        // India / UK titles first: the Indian and UK sites list "Philosopher's Stone" where TMDB says "Sorcerer's Stone" (upstream)
+        val names = (byRegion(results.orEmpty()).mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull } + listOfNotNull(original))
             .map { it.trim() }
             .filter { n -> n.length >= 3 && n.count { c -> c.code < 0x250 } * 10 >= n.length * 8 }
             .distinctBy { AnimeMatcher.normalize(it) }
@@ -3746,6 +3799,9 @@ object StremioServer {
             return null
         }
 
+        // titles an episode's own entry can carry (the site's language's title joins later)
+        val entryTitles = mutableListOf(title)
+
         fun accept(c: SearchResult, mi: MediaInfo): GenericMatch? {
             val verdict = idVerdict(mi)
             if (verdict == false) {
@@ -3766,6 +3822,13 @@ object StremioServer {
                     }
                 }
                 return GenericMatch(c, mi, mi.dataUrl, null)
+            }
+            // a site that lists every episode as its own entry: the entry is the episode
+            if (isEpisodeEntry(c.name, entryTitles, season!!, episode!!)) {
+                val eps = mi.episodes.orEmpty()
+                val own = eps.find { (it.season ?: season) == season && TitleMatch.numberOf(it) == episode } ?: eps.singleOrNull()
+                ServerState.debug("[${api.name}] '${c.name}' is the episode itself")
+                return GenericMatch(c, mi, own?.dataUrl ?: mi.dataUrl, own?.let { episodeLabelOf(it) } ?: "S${season}E$episode")
             }
             // a post of several seasons ("S01-S03") is not one season's entry
             val entrySeason = if (TitleMatch.seasonRange(c.name) != null) null
@@ -3807,7 +3870,8 @@ object StremioServer {
         val seenResults = LinkedHashMap<String, SearchResult>()
         fun candidatesOf(results: List<SearchResult>): List<SearchResult> {
             results.forEach { seenResults.putIfAbsent(it.url, it) }
-            val ranked = TitleMatch.rank(results, title, year, season)
+            val episodeEntries = if (isEpisode) results.filter { isEpisodeEntry(it.name, listOf(title), season!!, episode!!) } else emptyList()
+            val ranked = episodeEntries + TitleMatch.rank(results, title, year, season)
             val legacy = buildList {
                 if (season != null) {
                     val wanted = normalizeTitle(title)
@@ -3849,7 +3913,11 @@ object StremioServer {
 
         // 3. other spellings: no punctuation, no subtitle, other titles, title + year (at most two more searches)
         // TMDB's original and other titles too (CineStream searches the original title when the English one misses)
-        val variants = TitleMatch.queryVariants(title, year, altTitlesFor(type, id), max = 3)
+        // a site in another language: TMDB's title in that language first ("Haus des Geldes" on a German site)
+        val local = nonEnglishLanguage(api)?.let { l -> parsed?.let { localizedTitle(type, it, l) } }
+            ?.takeIf { normalizeTitle(it) != normalizeTitle(title) }
+        local?.let { entryTitles += it }
+        val variants = TitleMatch.queryVariants(title, year, listOfNotNull(local) + altTitlesFor(type, id), max = if (local != null) 4 else 3)
         for (q in variants) {
             if (budget <= 0 && tried.isNotEmpty()) break
             val more = try {
@@ -3859,7 +3927,12 @@ object StremioServer {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 emptyList()
             }
-            val cands = candidatesOf(more).filter { it.url !in tried }
+            // the results of another title (the site's language, India / UK) are also scored against that title itself
+            val byQuery = if (q == local || !normalizeTitle(q).startsWith(normalizeTitle(title.substringBefore(":")))) {
+                (if (isEpisode) more.filter { isEpisodeEntry(it.name, listOf(q), season!!, episode!!) } else emptyList()) +
+                    TitleMatch.rank(more, q, year, season, minScore = 0.75)
+            } else emptyList()
+            val cands = (byQuery + candidatesOf(more)).distinctBy { it.url }.filter { it.url !in tried }
             if (cands.isEmpty()) continue
             tryCandidates(cands, "search '$q'", budget.coerceAtLeast(2))?.let { return it }
             budget -= minOf(budget, cands.size)
@@ -3887,7 +3960,7 @@ object StremioServer {
     }
 
     /** Lower-cases and strips punctuation/extra spaces so "Spider-Man: No Way Home" == "spider man no way home". */
-    private fun normalizeTitle(s: String): String = s.lowercase()
+    private fun normalizeTitle(s: String): String = TitleMatch.fold(s)
         .replace("&", " and ")
         .replace(TITLE_PUNCT, " ")
         .replace(MULTI_SPACE, " ")

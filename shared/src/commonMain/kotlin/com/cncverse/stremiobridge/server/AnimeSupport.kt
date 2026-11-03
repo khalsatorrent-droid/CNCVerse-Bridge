@@ -408,7 +408,7 @@ object AnimeMatcher {
 
     /** Lower case, no dub/sub tags, punctuation as single spaces. */
     fun normalize(s: String): String {
-        var t = s.lowercase()
+        var t = TitleMatch.fold(s)
         t = TAGS.replace(t, " ")
         t = t.replace("&", " and ")
         t = AUDIO_WORDS.replace(t, " ")
