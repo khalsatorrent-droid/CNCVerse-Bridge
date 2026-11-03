@@ -838,6 +838,7 @@ private class DirectMainApiWrapper(
 ) : MainApiWrapper {
     override val name: String get() = api.name
     override val internalName: String get() = plugin.internalName + "_" + StremioServer.publicNameSlug(api.name)
+    override val mainUrl: String? get() = runCatching { api.mainUrl }.getOrNull()?.takeIf { it.isNotBlank() }
     override val pluginInternalName: String get() = plugin.internalName
 
     /** Tags all network traffic of these calls with the plugin (slow-request log). */

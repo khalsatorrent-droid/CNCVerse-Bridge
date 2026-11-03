@@ -2330,6 +2330,24 @@ object StremioServer {
         } catch (e: Throwable) { null }
     }
 
+    private val imdbOfMovie = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The IMDb id of a movie or series id (tt as is; tmdb / tvdb through TMDB's external ids), or null. */
+    private suspend fun imdbOfAny(type: String, ext: ExternalId): String? {
+        if (ext.scheme == "imdb") return ext.key
+        if (type != "movie") return imdbIdOf(ext)
+        if (ext.scheme != "tmdb") return null
+        imdbOfMovie[ext.key]?.let { return it.ifEmpty { null } }
+        return try {
+            val tt = fetchTmdbJson("movie/${ext.key}/external_ids")?.get("imdb_id")?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("tt") }
+            if (imdbOfMovie.size > 5_000) imdbOfMovie.clear()
+            imdbOfMovie[ext.key] = tt.orEmpty()
+            tt
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) { null }
+    }
+
     /** Request id -> running (absolute) episode number, for extensions that number a long show 1, 2, ... 1000+ (One Piece). */
     private val absoluteEpisodes = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
@@ -3760,6 +3778,29 @@ object StremioServer {
         tryCandidates(first, "search '$title'", budget)?.let { return it }
         budget -= minOf(budget, first.size)
 
+        // 2b. the IMDb id itself (StreamPlay's way for MoviesDrive / VegaMovies / Bollyflix ...): many WordPress-style sites
+        //     index it, so typing "tt1234567" into their search finds exactly that post. Its results still have to fit the
+        //     title loosely, or be confirmed by the page's own IMDb id.
+        val imdbForSearch = wantImdb ?: parsed?.let { runCatching { imdbOfAny(type, it) }.getOrNull() }
+        if (imdbForSearch != null) {
+            val byId = try {
+                SearchLoadCache.getSearch(cacheKey, imdbForSearch)
+                    ?: api.search(imdbForSearch).also { SearchLoadCache.putSearch(cacheKey, imdbForSearch, it) }
+            } catch (e: Throwable) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                emptyList()
+            }
+            if (byId.isNotEmpty()) {
+                byId.forEach { seenResults.putIfAbsent(it.url, it) }
+                // a search by id answers with that title: a loose fit is enough here (the page check still applies)
+                val cands = TitleMatch.rank(byId, title, year, season, minScore = 0.45, loose = true).filter { it.url !in tried }
+                if (cands.isNotEmpty()) {
+                    ServerState.debug("[${api.name}] IMDb id search '$imdbForSearch': ${byId.size} result(s)")
+                    tryCandidates(cands, "search by IMDb id", 2)?.let { return it }
+                }
+            }
+        }
+
         // 3. other spellings: no punctuation, no subtitle, other titles, title + year (at most two more searches)
         // TMDB's original and other titles too (CineStream searches the original title when the English one misses)
         val variants = TitleMatch.queryVariants(title, year, altTitlesFor(type, id), max = 3)
@@ -4196,6 +4237,18 @@ object StremioServer {
             .distinctBy { exactName(it) }.take(4)
         val cacheKey = api.internalName
         val matches = LinkedHashMap<String, SearchResult>()
+        // MALSync first (StreamPlay's way): when it lists the anime's page on this extension's own site, that page is
+        // opened directly - no search. A page the extension cannot open (its own address format) falls back to the names.
+        val directPages = siteLabel(api.mainUrl)?.let { mine ->
+            val mal = runCatching { KitsuMap.malOf(kid) }.getOrNull()
+            mal?.let { runCatching { KitsuMap.sitePages(it) }.getOrDefault(emptyList()) }.orEmpty()
+                .filter { siteLabel(it.url) == mine }
+                .map { SearchResult(it.title ?: names.titles.first(), it.url, null, "anime", null) }
+        }.orEmpty()
+        if (directPages.isNotEmpty()) {
+            ServerState.debug("[${api.name}] MALSync page for kitsu:$kid: ${directPages.first().url}")
+            pickEpisodes(api, kid, ep, names, directPages, title, year)?.let { return it }
+        }
         for (q in queries) {
             val results = try {
                 SearchLoadCache.getSearch(cacheKey, q) ?: api.searchTimed(q).also { SearchLoadCache.putSearch(cacheKey, q, it) }
@@ -4210,6 +4263,22 @@ object StremioServer {
             ServerState.debug("[${api.name}] No entry named exactly like kitsu:$kid (${queries.joinToString(" / ")})")
             return null
         }
+        return pickEpisodes(api, kid, ep, names, matches.values.toList(), title, year)
+    }
+
+    /** "hianime" for https://hianime.to/..., "animepahe" for https://www.animepahe.ru: the site's name without www / the ending. */
+    private fun siteLabel(url: String?): String? {
+        val host = url?.let { runCatching { java.net.URI(it.trim()).host }.getOrNull() }?.lowercase()?.removePrefix("www.") ?: return null
+        val parts = host.split('.').filter { it.isNotEmpty() }
+        return (if (parts.size >= 2) parts[parts.size - 2] else parts.firstOrNull())?.takeIf { it.length >= 3 }
+    }
+
+    /** Kitsu's episode [ep] in each of [pages] (the entry and its dubbed twin, at most two); null when none has it. */
+    private suspend fun pickEpisodes(
+        api: MainApiWrapper, kid: String, ep: Int, names: KitsuMap.Names, pages: List<SearchResult>, title: String, year: Int?,
+    ): List<StremioStream>? {
+        val cacheKey = api.internalName
+        val matches = pages.associateBy { it.url }
         val out = ArrayList<StremioStream>()
         var found = false
         // the entry and, when the site lists it separately, its dubbed twin
@@ -4329,6 +4398,8 @@ interface MainApiWrapper {
     val pluginLanguage: String? get() = null
     /** False for search-only providers (no home page by design). */
     val hasHomePage: Boolean get() = true
+    /** The site the extension reads (MainAPI.mainUrl), when known. */
+    val mainUrl: String? get() = null
     suspend fun getMainPageSections(): List<String>
     fun clearCache() {}
 

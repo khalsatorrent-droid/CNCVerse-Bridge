@@ -178,6 +178,47 @@ object KitsuMap {
         k.ifEmpty { null }
     }
 
+    /** kitsu id -> (when, MyAnimeList id or 0 when none). */
+    private val toMal = ConcurrentHashMap<String, Pair<Long, Int>>()
+
+    /** The MyAnimeList id of Kitsu entry [kitsuId] (arm.haglund.dev). */
+    suspend fun malOf(kitsuId: String): Int? = withContext(Dispatchers.IO) {
+        toMal[kitsuId]?.takeIf { fresh(it.first) }?.let { return@withContext it.second.takeIf { v -> v > 0 } }
+        val el = fetch("$ARM/ids?source=kitsu&id=$kitsuId") ?: return@withContext null
+        val m = entries(el).firstNotNullOfOrNull { it.int("myanimelist") } ?: 0
+        entries(el).firstNotNullOfOrNull { it.int("anilist") }?.let { a -> toAniList.putIfAbsent(kitsuId, System.currentTimeMillis() to a) }
+        if (toMal.size > 5_000) toMal.clear()
+        toMal[kitsuId] = System.currentTimeMillis() to m
+        m.takeIf { it > 0 }
+    }
+
+    /** One page of an anime on a streaming site, as MALSync lists it. */
+    class SitePage(val site: String, val url: String, val title: String?)
+
+    /** MAL id -> (when, the pages MALSync knows for it). */
+    private val malSync = ConcurrentHashMap<Int, Pair<Long, List<SitePage>>>()
+
+    /**
+     * The anime's pages on streaming sites (HiAnime / Zoro, AnimePahe, KickAssAnime, AnimeKai, Gogoanime ...), from MALSync
+     * (`api.malsync.moe/mal/anime/<id>` -> `Sites.<site>.<id>.url`) - the way StreamPlay finds an anime on a site without
+     * searching. Empty when MALSync knows none or cannot be reached.
+     */
+    suspend fun sitePages(malId: Int): List<SitePage> = withContext(Dispatchers.IO) {
+        malSync[malId]?.takeIf { fresh(it.first) }?.let { return@withContext it.second }
+        val root = fetch("https://api.malsync.moe/mal/anime/$malId").obj() ?: return@withContext emptyList()
+        val sites = (root["Sites"] ?: root["sites"]).obj()
+        val out = ArrayList<SitePage>()
+        sites?.forEach { (site, v) ->
+            v.obj()?.values?.forEach { e ->
+                val o = e.obj() ?: return@forEach
+                o.str("url")?.takeIf { it.startsWith("http") }?.let { out += SitePage(site, it, o.str("title")) }
+            }
+        }
+        if (malSync.size > 2_000) malSync.clear()
+        malSync[malId] = System.currentTimeMillis() to out
+        out
+    }
+
     /** The AniList id of Kitsu entry [kitsuId]. */
     suspend fun aniListOf(kitsuId: String): Int? = withContext(Dispatchers.IO) {
         toAniList[kitsuId]?.takeIf { fresh(it.first) }?.let { return@withContext it.second.takeIf { v -> v > 0 } }

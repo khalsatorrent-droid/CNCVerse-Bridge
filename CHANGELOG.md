@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Two ideas from StreamPlay's matching:
+
+- **Movies and series: search by IMDb id.** When the TMDB title finds no fitting page in an extension, the extension's search is also asked for the IMDb id (`tt1234567`). Many WordPress-style sites (MoviesDrive, VegaMovies, Bollyflix...) index it, and StreamPlay finds them that way. Results still have to fit the title loosely, and the page is checked as usual (its own IMDb / TMDB id, the year, the episode). At most 2 pages are opened for it. TMDB movie ids get their IMDb id from TMDB.
+- **Anime: MALSync pages.** In the strict Kitsu mode, the anime's MyAnimeList id is looked up and MALSync is asked where the anime is on streaming sites (HiAnime / Zoro, AnimePahe, KickAssAnime, AnimeKai...). When one of those pages is on an extension's own site, it is opened directly, with no search, and Kitsu's episode number is taken from it. When the extension cannot open that address, Kitsu's exact names are searched as before.
+
 ## 1.8.15
 
 - **"All TV channels (A-Z)": channels with the same name are merged.** "Star Plus", "STAR PLUS HD" and "Star-Plus (1080p)" from different extensions now show as one channel in the catalog. Opening it asks all of its sources at the same time and lists every link of that channel together. Channels with different names (Star Sports 1 and 2) stay separate. The website's Live TV tab already grouped channels this way and is unchanged.

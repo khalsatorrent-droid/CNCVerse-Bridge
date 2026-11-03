@@ -390,6 +390,8 @@ private class ReflectionMainApiWrapper(
         get() = reflectString("getName") ?: reflectString("name") ?: plugin.name
     override val internalName: String
         get() = plugin.internalName
+    override val mainUrl: String?
+        get() = reflectString("getMainUrl")?.takeIf { it.isNotBlank() }
     override val supportedTypes: List<String>
         get() = plugin.tvTypes ?: listOf("movie", "series")
     override suspend fun getMainPageSections(): List<String> = emptyList()
@@ -907,6 +909,7 @@ private class DirectMainApiWrapper(
 ) : MainApiWrapper {
     override val name: String get() = api.name
     override val internalName: String get() = plugin.internalName + "_" + StremioServer.publicNameSlug(api.name)
+    override val mainUrl: String? get() = runCatching { api.mainUrl }.getOrNull()?.takeIf { it.isNotBlank() }
     override val supportedTypes: List<String> get() {
         val hasLive = api.supportedTypes.any { it.name.equals("Live", ignoreCase = true) }
         val isOnlyLive = api.supportedTypes.size == 1 && hasLive
