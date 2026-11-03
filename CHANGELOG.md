@@ -10,7 +10,7 @@ Bug fixes from a review of the bridge:
 - **Memory on a device that runs for days:** request start times, TMDB season counts, header checks, Pixeldrain links, AniList season chains, host timings and MKV checks now have upper limits; some grew without end.
 - The audio-language ordering works out each link's language once instead of on every comparison.
 
-## Unreleased
+## 1.8.18
 
 Ported from the original CNCVerse Bridge (v1.2.0), adapted to this fork:
 
