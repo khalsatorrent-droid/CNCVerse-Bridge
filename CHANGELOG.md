@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **NSFW extensions (Settings → NSFW).** An extension counts as NSFW when its repo entry lists the "NSFW" type (like the CXXX repo's), decided per extension, so a repo can mix both. NSFW extensions are never part of the main add-on, the website or the profiles.
+  - **Show NSFW extensions** (off by default): lists them in the Extensions and Server tabs and the report card, to install them and switch them on or off.
+  - **NSFW add-on** (off by default): a separate add-on link, `/u/nsfw/manifest.json`, with only the NSFW extensions that are switched on. It is shown in the card once one is installed. While it's off, the link answers "not found".
+
 ## 1.8.17
 
 Bug fixes from a review of the bridge:
