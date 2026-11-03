@@ -203,6 +203,7 @@ object AnimeResolver {
         // If the prequel walk is somehow still running after 60 s, do not read the list it is still filling
         val backDone = runCatching { backJob.get(60, TimeUnit.SECONDS) }.isSuccess
         val chain = (if (backDone) back.reversed() else emptyList()) + start.hit + fwd
+        if (chainCache.size > 3_000) chainCache.clear()
         chainCache[anilistId] = chain
         for (h in chain) h.anilistId?.let { chainCache[it] = chain }
         return chain

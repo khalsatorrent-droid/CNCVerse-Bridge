@@ -361,6 +361,7 @@ object MediaServer {
     private const val TTFB_FORGET_MS = 5 * 60_000L
 
     private fun noteTtfb(url: String, ms: Long) {
+        if (hostTtfb.size > 2_000) hostTtfb.clear()
         val t = hostTtfb.getOrPut(hostOf(url)) { Ttfb() }
         synchronized(t) {
             val now = System.currentTimeMillis()

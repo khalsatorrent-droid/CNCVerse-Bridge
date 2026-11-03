@@ -69,7 +69,11 @@ object HeaderNeed {
         return if (System.currentTimeMillis() - v.at <= ttl) v.needed else null
     }
 
-    internal fun record(key: String, needed: Boolean) { verdicts[key] = Verdict(needed, System.currentTimeMillis()) }
+    internal fun record(key: String, needed: Boolean) {
+        // one entry per host (and header set): bounded, the oldest go first
+        if (verdicts.size > 10_000) verdicts.entries.sortedBy { it.value.at }.take(2_000).forEach { verdicts.remove(it.key) }
+        verdicts[key] = Verdict(needed, System.currentTimeMillis())
+    }
 
     /**
      * Finds out, for the hosts of [streams] that are not known yet, whether their links need the extension's headers, and waits up
