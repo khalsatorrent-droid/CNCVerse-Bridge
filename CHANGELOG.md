@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.19
 
 - **NSFW extensions (Settings → NSFW).** An extension counts as NSFW when its repo entry lists the "NSFW" type (like the CXXX repo's), decided per extension, so a repo can mix both. NSFW extensions are never part of the main add-on, the website or the profiles.
   - **Show NSFW extensions** (off by default): lists them in the Extensions and Server tabs and the report card, to install them and switch them on or off.
