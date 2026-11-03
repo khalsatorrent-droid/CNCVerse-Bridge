@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Ported from the original CNCVerse Bridge (v1.2.0), adapted to this fork:
+
+- **Matching:**
+  - Accents and German umlauts no longer matter ("Pokémon" = "Pokemon", "Türkisch für Anfänger" = "Tuerkisch fuer Anfaenger").
+  - Episode names like "2x03", "Folge 3" and season names like "Staffel 3" are understood.
+  - Sites that list each episode as its own entry ("VisionQuest S01E02") get that entry used as the episode.
+  - Non-English extensions are also searched with TMDB's title in their language ("Haus des Geldes" for "Money Heist").
+  - TMDB's other titles are tried India and UK first ("Philosopher's Stone").
+  - Results of another title are scored against that title itself, not only against the TMDB title.
+- **Audio languages:**
+  - HLS links' audio tracks are read from their playlist, and direct MKV files' from their track list (the first 256 KB, 8 at a time, kept for 6 hours; switch: *Read audio tracks of MKV files*). The audio line shows them first, at most 5 ("+N more").
+  - New setting *Audio languages (best first)*: links in the first language lead the list at any quality, then the next. *Only these audio languages* drops the rest, optionally also links whose language is unknown.
+- **Hide non-seekable:**
+  - "Instant Download" links are hidden.
+  - A host whose links turn out to be download pages is remembered for 6 hours.
+  - A check still running when the list goes out finishes in the background and counts next time.
+- **ReAnime / GoTaku:** links into an extension's own local server are cached for 3 minutes at most, and a list served from the cache gets fresh ones from those extensions. GoTaku's streams play through the relay (the path is forwarded exactly as sent).
+- **Extensions:** two extensions whose names differ only in case or symbols ("Reanime" / "ReAnime") get their own files instead of sharing one.
+- **Fewer requests, less waiting:**
+  - TMDB calls from all extensions go through one HTTP/1.1 client with a shared answer cache (1 hour, 16 MB).
+  - Cinemeta, TVmaze, IMDb, Kitsu and ani.zip answers are shared between extensions for 30 minutes (16 MB).
+  - Both caches are emptied when the phone is short of memory.
+  - Extension connections send HTTP/2 pings, so a silently dead connection is dropped.
+  - A broken catalog refresh no longer replaces a good catalog.
+  - A catalog of an extension that isn't loaded yet is no longer filled from another extension.
+- **Desktop:** extensions' console output can no longer freeze the app.
+- The repos dialog scrolls, so the "add repo" field stays on screen.
+
 ## 1.8.16
 
 Two ideas from StreamPlay's matching:
