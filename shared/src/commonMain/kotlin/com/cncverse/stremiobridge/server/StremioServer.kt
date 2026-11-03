@@ -982,6 +982,7 @@ object StremioServer {
         val type = parameters["type"] ?: return respond(HttpStatusCode.BadRequest)
         val id   = parameters["id"]   ?: return respond(HttpStatusCode.BadRequest)
         val requestStart = System.currentTimeMillis()
+        if (streamRequestStart.size > 2_000) streamRequestStart.clear()
         streamRequestStart["$type:$id"] = requestStart
         ServerState.info("[Request] streams for $type/$id from ${request.local.remoteHost.let { request.headers["X-Forwarded-For"] ?: it }}")
 
@@ -2309,6 +2310,7 @@ object StremioServer {
                 else -> null
             } ?: return null
             val n = (fetchTmdbJson("tv/$tvId/season/$season")?.get("episodes") as? kotlinx.serialization.json.JsonArray)?.size
+            if (tmdbSeasonCounts.size > 5_000) tmdbSeasonCounts.clear()
             if (n != null && n > 0) tmdbSeasonCounts[key] = n
             n?.takeIf { it > 0 }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2338,6 +2340,7 @@ object StremioServer {
                 val c = o["episode_count"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: continue
                 if (n > 0 && c > 0) m[n] = c
             }
+            if (tmdbAllCounts.size > 3_000) tmdbAllCounts.clear()
             if (m.isNotEmpty()) tmdbAllCounts[key] = m
             m.takeIf { it.isNotEmpty() }
         } catch (e: kotlinx.coroutines.CancellationException) {

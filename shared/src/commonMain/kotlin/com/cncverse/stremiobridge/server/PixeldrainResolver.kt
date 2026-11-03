@@ -40,6 +40,7 @@ object PixeldrainResolver {
                     val target = r.request.url.resolve(loc)?.toString()
                     val host = r.request.url.resolve(loc)?.host.orEmpty()
                     if (target != null && target.startsWith("https://") && FINAL_HOST.matches(host)) {
+                        if (cache.size > 5_000) cache.clear()
                         cache[id] = Entry(target, System.currentTimeMillis())
                         target
                     } else null
