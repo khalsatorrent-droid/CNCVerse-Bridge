@@ -2,6 +2,16 @@
 
 ## 1.8.17
 
+Bug fixes from a review of the bridge:
+
+- **Slow extensions are no longer cut off at 120 s.** The search cache stopped any search after 120 seconds, while each extension may take 150 s and the whole search 250 s. Slow extensions were killed while still within their time ("Timed out waiting for 120000 ms"), counted as failures on the report card, and the complete list was never cached. The cap is now 270 s.
+- **Fresh ReAnime / GoTaku links for anime opened from TMDB** use the Kitsu episode (strict matching), not the TMDB numbering.
+- **History:** keeps up to 200 results per request (was 120), and links up to 2,500 characters (was 700). The media server's longer addresses were saved without their link.
+- **Memory on a device that runs for days:** request start times, TMDB season counts, header checks, Pixeldrain links, AniList season chains, host timings and MKV checks now have upper limits; some grew without end.
+- The audio-language ordering works out each link's language once instead of on every comparison.
+
+## Unreleased
+
 Ported from the original CNCVerse Bridge (v1.2.0), adapted to this fork:
 
 - **Matching:**
