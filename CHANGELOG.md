@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.16
 
 Two ideas from StreamPlay's matching:
 
