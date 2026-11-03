@@ -76,7 +76,8 @@ private fun ProfileEditor(p: BridgeProfile, onChange: () -> Unit, linkRows: @Com
     var open by remember(p.id) { mutableStateOf(false) }
     var confirmDelete by remember(p.id) { mutableStateOf(false) }
     val choices = remember(open) {
-        StremioServer.loadedApis.distinctBy { it.pluginInternalName }
+        // NSFW extensions belong to the NSFW add-on only
+        StremioServer.loadedApis.filter { !it.isNsfw }.distinctBy { it.pluginInternalName }
             .map { it.pluginInternalName to it.name }.sortedBy { it.second.lowercase() }
     }
     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(vertical = 8.dp))
@@ -116,5 +117,62 @@ private fun ProfileEditor(p: BridgeProfile, onChange: () -> Unit, linkRows: @Com
     }
     ActionButton(if (confirmDelete) "Tap again to delete" else "Delete profile", danger = true) {
         if (confirmDelete) { Profiles.remove(p.id); onChange() } else confirmDelete = true
+    }
+}
+
+/**
+ * Settings > NSFW: extensions marked NSFW (per extension, by their repo entry) are hidden from the app unless shown, and are
+ * never part of the main add-on or the profiles. With "NSFW add-on" on they get a link of their own; off by default.
+ */
+@Composable
+fun NsfwCard() {
+    val prefs by Profiles.nsfwPrefs.collectAsState()
+    val status by ServerState.status.collectAsState()
+    val tunnel by ServerState.activeTunnelUrl.collectAsState()
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf<String?>(null) }
+    val running = status as? ServerStatus.Running
+    val publicBase = tunnel?.takeIf { it.isNotBlank() } ?: TunnelSettings.publicUrl
+    val localBase = running?.let { "http://${it.ipAddress}:${it.port}" }
+    val path = "/u/${Profiles.NSFW_ID}/manifest.json"
+    val installed = remember(running) { StremioServer.loadedApis.count { it.isNsfw } }
+
+    AmoledCard(Modifier.fillMaxWidth()) {
+        SectionTitle("NSFW", "Extensions marked NSFW by their repo. They are never in the main add-on or the profiles.")
+        SwitchRow(
+            title = "Show NSFW extensions",
+            description = "List them in the Extensions and Server tabs (to install, switch on / off and see them)",
+            checked = prefs.first,
+            onCheckedChange = { Profiles.setShowNsfw(it) },
+        )
+        SwitchRow(
+            title = "NSFW add-on",
+            description = "A separate add-on link with only the NSFW extensions. Off: that link does not answer",
+            checked = prefs.second,
+            onCheckedChange = { Profiles.setNsfwAddon(it) },
+        )
+        if (prefs.second) {
+            if (installed == 0) {
+                Text("No NSFW extension is installed: the link appears once one is", color = TextMuted, fontSize = 11.sp)
+            } else {
+                Text("$installed NSFW extension(s) in this add-on", color = TextMuted, fontSize = 11.sp)
+                val links = buildList {
+                    publicBase?.let { add("Internet" to "$it$path") }
+                    localBase?.let { add("This network" to "$it$path") }
+                }
+                links.forEach { (label, url) ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(label, color = TextMuted, fontSize = 10.sp)
+                            Text(url, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(url)); copied = url }) {
+                            Text(if (copied == url) "Copied" else "Copy", color = Violet400, fontSize = 12.sp)
+                        }
+                    }
+                }
+                if (links.isEmpty()) Text("Start the server to get the link", color = TextMuted, fontSize = 11.sp)
+            }
+        }
     }
 }

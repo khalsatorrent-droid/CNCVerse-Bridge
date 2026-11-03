@@ -595,12 +595,12 @@ object StremioServer {
     fun togglePluginDisabled(internalName: String): Boolean {
         if (isSourceId(internalName)) {
             val api = loadedApis.first { it.internalName == internalName }
-            val nowDisabled = !isGloballyDisabled(api)
+            val nowDisabled = !isSwitchedOff(api)
             setSourceDisabled(internalName, nowDisabled)
             return !nowDisabled
         }
         val isCurrentlyDisabled = disabledPlugins.contains(internalName) ||
-            loadedApis.any { api -> canonicalIds(api).contains(internalName) && isGloballyDisabled(api) }
+            loadedApis.any { api -> canonicalIds(api).contains(internalName) && isSwitchedOff(api) }
         return if (isCurrentlyDisabled) {
             allAliasesInDisabled(internalName).forEach { disabledPlugins.remove(it) }
             saveDisabledPlugins()
@@ -677,8 +677,18 @@ object StremioServer {
      * loaded plugin shares the same display name), preventing cross-repo collisions.
      */
     fun isGloballyDisabled(api: MainApiWrapper): Boolean {
+        val prof = Profiles.current.get()
+        // The NSFW add-on: only NSFW extensions, those switched on in the Extensions screen
+        if (prof?.id == Profiles.NSFW_ID) return !api.isNsfw || isSwitchedOff(api)
+        // NSFW extensions are never part of the main add-on, the website or the other profiles
+        if (api.isNsfw) return true
         // Serving an extra profile: it uses exactly the extensions it was given
-        Profiles.current.get()?.let { return !Profiles.allows(it, api) }
+        prof?.let { return !Profiles.allows(it, api) }
+        return isSwitchedOff(api)
+    }
+
+    /** The extension's own on/off switch in the Extensions screen (no profile, no NSFW rule). */
+    fun isSwitchedOff(api: MainApiWrapper): Boolean {
         // A source's own choice wins over its plugin's (multi-source plugins: PlayFy = Live
         // Events + Highlights + one source per playlist enabled in its settings)
         if (api.internalName != api.pluginInternalName) {
@@ -696,7 +706,7 @@ object StremioServer {
     fun isIdGloballyDisabled(id: String): Boolean {
         if (disabledPlugins.contains(id)) return true
         val api = loadedApis.find { profileMatchIds(it).contains(id) } ?: return false
-        return isGloballyDisabled(api)
+        return isSwitchedOff(api)
     }
 
 
@@ -831,6 +841,8 @@ object StremioServer {
 
     /** Runs [block] as the profile named in the link (/u/{profileId}/…), or as the main profile. */
     private suspend fun ApplicationCall.asProfile(block: suspend () -> Unit) {
+        // the NSFW link answers only while it is switched on (never as the main add-on)
+        if (parameters["profileId"] == Profiles.NSFW_ID && !Profiles.nsfwAddon) return respond(HttpStatusCode.NotFound)
         Profiles.run(Profiles.find(parameters["profileId"])) { block() }
     }
 
@@ -4567,6 +4579,8 @@ interface MainApiWrapper {
     val hasHomePage: Boolean get() = true
     /** The site the extension reads (MainAPI.mainUrl), when known. */
     val mainUrl: String? get() = null
+    /** Marked NSFW (its repo entry or its own types list "NSFW"): only served by the NSFW add-on link. */
+    val isNsfw: Boolean get() = false
     suspend fun getMainPageSections(): List<String>
     fun clearCache() {}
 

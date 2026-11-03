@@ -54,10 +54,14 @@ fun ExtensionsScreen(
     // Bumped when an extension is switched on/off (the disabled set is not observable)
     var enabledTick by remember { mutableStateOf(0) }
 
+    // NSFW extensions are listed only when "Show NSFW extensions" is on (Settings → NSFW)
+    val nsfw by com.cncverse.stremiobridge.server.Profiles.nsfwPrefs.collectAsState()
+    val showNsfw = nsfw.first
     // Filter available plugins
-    val filteredPlugins = remember(availablePlugins, searchQuery, selectedRepoFilter, showOnlyInstalled, installedPlugins) {
+    val filteredPlugins = remember(availablePlugins, searchQuery, selectedRepoFilter, showOnlyInstalled, installedPlugins, showNsfw) {
         availablePlugins
             .filter { ap ->
+                (showNsfw || !com.cncverse.stremiobridge.server.Profiles.isNsfwTypes(ap.plugin.tvTypes)) &&
                 (selectedRepoFilter == null || ap.repoEntry.url == selectedRepoFilter) &&
                 (searchQuery.isBlank() || ap.plugin.name.contains(searchQuery, ignoreCase = true) ||
                     ap.plugin.description?.contains(searchQuery, ignoreCase = true) == true) &&

@@ -50,6 +50,7 @@ fun SettingsScreen() {
             StreamsCard()
             CatalogsCard()
             ProfilesCard()
+            NsfwCard()
             FormatterCard()
             StreamCacheCard()
             MediaServerCard()

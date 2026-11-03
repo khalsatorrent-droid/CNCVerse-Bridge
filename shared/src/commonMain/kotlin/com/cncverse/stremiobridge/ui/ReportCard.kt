@@ -50,7 +50,7 @@ private fun ago(ms: Long): String {
 }
 
 private fun buildRows(plugins: List<LoadedPluginInfo>): List<CardRow> =
-    plugins.filter { it.apiRegistered }.map { p ->
+    plugins.filter { it.apiRegistered && (com.cncverse.stremiobridge.server.Profiles.showNsfw || !com.cncverse.stremiobridge.server.Profiles.isNsfwTypes(it.tvTypes)) }.map { p ->
         val st = StreamTracker.totalsOf(p.internalName)
         val nm = st?.noMatch ?: 0
         // Only answers where the extension had the title count: a title that is not in its catalog is not its fault

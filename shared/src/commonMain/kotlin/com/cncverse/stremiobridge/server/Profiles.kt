@@ -19,7 +19,14 @@ data class BridgeProfile(
 )
 
 @Serializable
-private data class ProfilesFile(val enabled: Boolean = false, val profiles: List<BridgeProfile> = emptyList())
+private data class ProfilesFile(
+    val enabled: Boolean = false,
+    val profiles: List<BridgeProfile> = emptyList(),
+    /** Extensions marked NSFW are listed in the app (Extensions / Server tabs). */
+    val showNsfw: Boolean = false,
+    /** The separate NSFW add-on link (/u/nsfw/manifest.json) answers. */
+    val nsfwAddon: Boolean = false,
+)
 
 /**
  * Several add-on links from one bridge. Off by default: the bridge is then one main profile (the extensions switched
@@ -32,11 +39,33 @@ object Profiles {
         private set
     private val list = CopyOnWriteArrayList<BridgeProfile>()
 
+    // ── NSFW ─────────────────────────────────────────────────────────────────
+    // An extension is NSFW when its repo entry (or the extension itself) lists the "NSFW" type - per extension, so a repo
+    // can mix both. NSFW extensions are never part of the main add-on or of the profiles: they have an add-on link of their
+    // own (/u/nsfw/manifest.json), off by default.
+
+    const val NSFW_ID = "nsfw"
+    val NSFW_PROFILE = BridgeProfile(NSFW_ID, "NSFW")
+
+    /** (show NSFW extensions in the app, NSFW add-on on) - observable by the screens. */
+    val nsfwPrefs = kotlinx.coroutines.flow.MutableStateFlow(false to false)
+    val showNsfw: Boolean get() = nsfwPrefs.value.first
+    val nsfwAddon: Boolean get() = nsfwPrefs.value.second
+
+    fun isNsfwTypes(types: List<String>?): Boolean = types?.any { it.trim().equals("NSFW", ignoreCase = true) } == true
+
+    fun setShowNsfw(on: Boolean) { nsfwPrefs.value = on to nsfwAddon; save() }
+    fun setNsfwAddon(on: Boolean) { nsfwPrefs.value = showNsfw to on; save() }
+
     /** The profile of the request being served (null = the main profile). Carried into the work started for the request. */
     val current = ThreadLocal<BridgeProfile?>()
 
     fun all(): List<BridgeProfile> = list.toList()
-    fun find(id: String?): BridgeProfile? = if (!enabled || id == null) null else list.firstOrNull { it.id == id }
+    fun find(id: String?): BridgeProfile? = when {
+        id == NSFW_ID -> if (nsfwAddon) NSFW_PROFILE else null
+        !enabled || id == null -> null
+        else -> list.firstOrNull { it.id == id }
+    }
 
     fun load(cacheDir: String) {
         val f = File(cacheDir, "profiles.json").also { file = it }
@@ -44,13 +73,14 @@ object Profiles {
         runCatching {
             val d = json.decodeFromString<ProfilesFile>(f.readText())
             enabled = d.enabled
-            list.clear(); list.addAll(d.profiles)
+            list.clear(); list.addAll(d.profiles.filter { it.id != NSFW_ID })
+            nsfwPrefs.value = d.showNsfw to d.nsfwAddon
         }.onFailure { ServerState.warn("Could not read profiles.json: ${it.message}") }
     }
 
     private fun save() {
         val f = file ?: return
-        runCatching { f.writeText(json.encodeToString(ProfilesFile(enabled, list.toList()))) }
+        runCatching { f.writeText(json.encodeToString(ProfilesFile(enabled, list.toList(), showNsfw, nsfwAddon))) }
             .onFailure { ServerState.warn("Could not save profiles.json: ${it.message}") }
     }
 

@@ -508,8 +508,9 @@ fun ServerScreen(
                 }
                 Spacer(Modifier.height(12.dp))
                 // A to Z by name (leading emoji / symbols ignored, capitals and small letters alike)
-                val sortedPlugins = remember(status.loadedPlugins) {
-                    status.loadedPlugins.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { p ->
+                val nsfw by com.cncverse.stremiobridge.server.Profiles.nsfwPrefs.collectAsState()
+                val sortedPlugins = remember(status.loadedPlugins, nsfw.first) {
+                    status.loadedPlugins.filter { nsfw.first || !com.cncverse.stremiobridge.server.Profiles.isNsfwTypes(it.tvTypes) }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { p ->
                         p.displayName.dropWhile { !it.isLetterOrDigit() }.ifEmpty { p.displayName }
                     })
                 }
