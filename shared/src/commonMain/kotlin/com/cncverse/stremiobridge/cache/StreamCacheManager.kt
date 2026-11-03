@@ -711,7 +711,8 @@ object StreamCacheManager {
             // A link into an extension's own local server (127.0.0.1:port) lives only as long as this app run: it is kept in
             // memory for a while (the rest of the list is cached as usual, so a reload does not search again), is never saved
             // to disk, and is dropped when it no longer answers (see LocalRelay.isDeadLink)
-            if (StreamLinkClassifier.isLoopbackUrl(url)) { kept += stream; expiry += now + minOf(listTtlMs, 45 * 60_000L); continue }
+            // (3 minutes at most: ReAnime / GoTaku keep only their last 10-20 streams; a list served from the cache gets fresh ones)
+            if (StreamLinkClassifier.isLoopbackUrl(url)) { kept += stream; expiry += now + minOf(listTtlMs, 3 * 60_000L); continue }
             if (url.isNullOrBlank()) { // infoHash / YouTube id: no link to expire
                 kept += stream; expiry += now + listTtlMs; continue
             }

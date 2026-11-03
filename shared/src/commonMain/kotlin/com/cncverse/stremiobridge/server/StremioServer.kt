@@ -3284,7 +3284,9 @@ object StremioServer {
         // "k2": answers saved before the strict Kitsu matching are not served again
         val aggCacheKey = "stream:generic:k2:$type:$id:$activeSig"
 
-        return profiledFetch(aggCacheKey, null) {
+        var fetchedHere = false
+        val aggList = profiledFetch(aggCacheKey, null) {
+            fetchedHere = true
             try {
                 // Anime ids: every title the show is known by (English, romaji, synonyms) for the matching
                 val animeInfo = if (ext.scheme in ExternalIds.ANIME_SCHEMES) AnimeResolver.resolve(ext) else null
@@ -3574,6 +3576,36 @@ object StremioServer {
                 com.cncverse.stremiobridge.cache.StreamCacheManager.FetchResult(emptyList())
             }
         }
+        // A list from the cache: extensions whose links live on their own local server (ReAnime, GoTaku keep only their
+        // last 10-20 streams) hand out fresh links now - their search and episode are cached, only the link step runs (upstream)
+        return if (fetchedHere) aggList else withFreshLocalLinks(aggList, type, id)
+    }
+
+    /** Extensions whose links point at their own local server (ReAnime, GoTaku...), as last seen. */
+    private val localLinkProviders: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private suspend fun withFreshLocalLinks(list: List<StremioStream>, type: String, id: String): List<StremioStream> {
+        val apis = loadedApis.filter { api ->
+            api.internalName in localLinkProviders && !isGloballyDisabled(api) && api.supportedTypes.any { it != "tv" }
+        }
+        if (apis.isEmpty()) return list
+        val ext = ExternalIds.parse(id) ?: return list
+        val (title, year) = runCatching { resolveExternal(type, ext) }.getOrNull() ?: return list
+        val fresh = withTimeoutOrNull(12_000L) {
+            coroutineScope {
+                apis.map { api ->
+                    async {
+                        try { doBuildGenericStreamsForApi(api, type, id, title, year) }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (e: Throwable) { emptyList() }
+                    }
+                }.awaitAll().flatten()
+            }
+        }.orEmpty().filter { com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(it.url) }
+        if (fresh.isEmpty()) return list
+        // the cached local links of those extensions are replaced by the fresh ones
+        val old = list.filterNot { com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(it.url) && apis.any { a -> a.name == it.info?.addonName } }
+        return sortStreamsByQuality(old + fresh)
     }
 
     private class GoodList(val at: Long, val streams: List<StremioStream>)
@@ -3623,7 +3655,9 @@ object StremioServer {
         anime: AnimeInfo? = null,
         target: AnimeTarget? = null,
     ): List<StremioStream> {
-        if (id.startsWith("probe_")) {
+        // Probes, and extensions whose links live on their own local server (a stored link is soon dead), always fetch;
+        // their search and episode lookups are still cached inside
+        if (id.startsWith("probe_") || api.internalName in localLinkProviders) {
             return doBuildGenericStreamsForApi(api, type, id, title, year, anime, target)
         }
         val providerCacheKey = "stream:provider:${api.internalName}:$type:$id"
@@ -4332,6 +4366,7 @@ object StremioServer {
         try {
             val links = api.loadLinksAll(dataUrlToLoad)
             StreamTracker.record(api.pluginInternalName, api.internalName, api.name, links.size, null)
+            if (links.any { com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(it.url) }) localLinkProviders.add(api.internalName)
             if (links.isNotEmpty()) {
                 ServerState.debug("[STREAM_SUCCESS] [${api.name}] Resolved ${links.size} streamable link(s) for '$title'")
             } else {
