@@ -836,8 +836,9 @@ fun MediaServerCard() {
             "Relay (no download)",
             "Links that need a Referer / cookies pass through this device with those headers, straight to your player - nothing is " +
                 "downloaded ahead or saved. HLS: only the playlists (and segments that really need the headers) go through here, the rest " +
-                "plays straight from the host. Starts faster and uses less memory and data than the media server; it takes those links " +
-                "before the media server does. Turn it off to let the media server cache them (better for slow or unstable hosts). " +
+                "plays straight from the host. Starts faster and uses less memory and data than the media server. With the media server on " +
+                "too, a smart switch picks for each link when it starts (within 4 s): hosts faster than the video's bitrate go through " +
+                "the relay, slower ones through the media server (the log says which). " +
                 "Saved at once." + if (p.relay) " Requests relayed: $relayed, playing now: $relayActive." else "",
             p.relay,
         ) {
