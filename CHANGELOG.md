@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.23
 
 - **The relay follows "Which links"** (Only links that need headers / Those + all HLS / Every link), like the media server. With both on, every link the mode picks starts on the relay and the smart switch hands it to the media server only when the host is slower than the video's bitrate. A fast FSL / Pixeldrain / workers link in "Every link" mode now plays through the relay instead of being downloaded to the device. With the relay alone, the mode decides which links pass through it.
 ## 1.8.22
