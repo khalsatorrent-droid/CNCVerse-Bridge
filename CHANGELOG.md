@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Smart switch between the relay and the media server** (when both are on). When a header link starts playing, the bridge compares the host's speed with the video's bitrate, in 4 seconds or less:
+  - Files: the first answer is read for up to 4 s, and those bytes still go to the player, so nothing is downloaded twice. The bitrate is the file size over its running time, read from the MKV header or else the usual length of a movie (120 min), an episode (45) or an anime episode (24).
+  - HLS: the first segment of the playlist is fetched (4 s at most). Its size over its length gives the bitrate. A master playlist's BANDWIDTH is used when it is known.
+  - If the host is faster than the bitrate × 1.25, the relay passes the link through. If it is slower, stalls or doesn't answer in time, the media server takes it over and downloads ahead. A host's speed is remembered for 15 minutes, so its next link is decided at once.
+  - The log says how each link plays: `[Play] host / file: playing via relay` or `via media server`, with the speeds and how long the decision took.
+
 ## 1.8.20
 
 - **Relay (Settings → Media server → Relay, off by default).** Links that need a Referer, cookies or a solved Cloudflare check pass through the bridge with those headers, straight to the player. Nothing is downloaded ahead or written to disk, and range requests (seeking) are passed on.

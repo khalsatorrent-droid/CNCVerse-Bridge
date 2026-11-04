@@ -398,10 +398,10 @@ object MediaServer {
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
 
     /** The stream pointed at this bridge's media server when it qualifies; otherwise unchanged. */
-    fun rewrite(s: StremioStream, base: String, forWeb: Boolean = false): StremioStream {
+    fun rewrite(s: StremioStream, base: String, forWeb: Boolean = false, runtimeMin: Int = 0): StremioStream {
         val p = prefs
-        // Relay on: links that need headers pass through it (no download, no disk) instead of being cached
-        if (p.relay) Relay.rewrite(s, base, forWeb)?.let { return it }
+        // Relay on: links that need headers go to it (with the media server on too, it picks one of the two when playback starts)
+        if (p.relay) Relay.rewrite(s, base, forWeb, runtimeMin)?.let { return it }
         if (!p.enabled || root == null) return s
         val url = s.url ?: return s
         // "Every link": this bridge's own DASH -> HLS converter (clear-key channels) is served by the media server too: it reads the
@@ -1133,6 +1133,7 @@ object MediaServer {
 
     suspend fun serveFile(call: ApplicationCall, id: String, name: String) {
         val e = fileEntry(id) ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
+        Relay.logPlay(id, e.src.url, "media server")
         e.lastAccess = System.currentTimeMillis()
         served.incrementAndGet()
         ensureWorker(e)
@@ -1350,6 +1351,7 @@ object MediaServer {
         val src = sourceFor(id) ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
         val url = urlOfToken(id, tok) ?: return call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
         served.incrementAndGet()
+        Relay.logPlay(id, url, "media server")
         touchDir(id)
         val key = "$id|$url"
         val cached = playlistCache[key]

@@ -61,6 +61,9 @@ object MkvProbe {
         s.info?.audioLanguages == null && SeekProbe.isDirectFile(s) && !SeekProbe.isDownloadOnlyUrl(s.url) &&
             listOfNotNull(s.url?.substringBefore('?'), s.info?.linkName, s.behaviorHints?.filename, s.title).any { MKV_HINT.containsMatchIn(it) }
 
+    /** The running time read from this file's start earlier (seconds), if it was read. */
+    internal fun knownDuration(url: String): Double? = cached(url)?.first?.durationSec
+
     private fun cached(url: String): Pair<Facts?, Long>? {
         val e = results[url] ?: return null
         val ttl = if (e.first == null) FAIL_TTL_MS else TTL_MS

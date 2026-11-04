@@ -820,10 +820,12 @@ object StremioServer {
             get("/media/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
 
             // ── Relay: links that need headers, passed through with them (nothing kept on this device) ──
-            get("/relay/{id}/f/{tok}/{name}") { Relay.serveStream(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
-            head("/relay/{id}/f/{tok}/{name}") { Relay.serveStream(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+            get("/relay/{id}/f/{tok}/{name}") { Relay.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty(), call.parameters["name"].orEmpty()) }
+            head("/relay/{id}/f/{tok}/{name}") { Relay.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty(), call.parameters["name"].orEmpty()) }
             get("/relay/{id}/pl/{tok}") { Relay.servePlaylist(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
             get("/relay/{id}/s/{tok}") { Relay.serveStream(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+            // a relayed HLS link handed to the media server: its playlists point at "../seg/…" next to the relay's
+            get("/relay/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
 
             // ── Addon ────────────────────────────────────────────────────────
             // /u/{id}/… are the links of the extra profiles (Settings > Profiles); an id that is not a profile
@@ -1216,15 +1218,17 @@ object StremioServer {
             }
             // "Only links that need headers": ask the hosts whether the headers are really needed (the website's growing lists only start the check)
             if (!fast) runCatching { HeaderNeed.precheck(formatted, if (forWeb) 0L else 3_500L) }
+            val runtimeGuess = if (isAnime(type, id)) 24 else if (type == "movie") 120 else 45
             // "Hide subtitles": no subtitle tracks go out (after formatting, so the description stays truthful)
             val out = (if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted)
                 // Links into an extension's own server that no longer answers (and have no copy here) are left out
                 .let { l -> l.filter { st -> !LocalRelay.isDeadLink(st) }.also { kept2 -> trace.step("The extension's own server no longer answers", l, kept2) } }
                 // One odd link must never cost the whole answer: a link whose rewrite fails goes out as it is
+                // (runtimeGuess: the usual running time, for the relay's bitrate estimate of files that do not say theirs)
                 .map { st ->
                     try {
                         // Media server: links that need a Referer / Cookie are fetched by this bridge and cached here
-                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), mediaBase(), forWeb))
+                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), mediaBase(), forWeb, runtimeGuess))
                     } catch (e: Throwable) {
                         ServerState.warn("[Request] could not prepare a link (${st.info?.addonName}): ${e.javaClass.simpleName}: ${e.message}")
                         st
