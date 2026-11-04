@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.20
 
 - **Relay (Settings → Media server → Relay, off by default).** Links that need a Referer, cookies or a solved Cloudflare check pass through the bridge with those headers, straight to the player. Nothing is downloaded ahead or written to disk, and range requests (seeking) are passed on.
   - HLS: only the playlists are fetched and rewritten. Segments are checked once per host: if they play without the headers they keep their real address and go from the host to the player directly. Otherwise they, and encryption keys, pass through the relay. The website's player gets every segment through the relay, because it needs CORS.
