@@ -82,7 +82,8 @@ object HeaderNeed {
      */
     suspend fun precheck(streams: List<StremioStream>, waitMs: Long = 3_500L) {
         val p = MediaServer.prefs
-        if (!p.enabled || (p.mode != "headers" && p.mode != "hls")) return
+        // the relay asks too: a link that plays without the headers goes to the player directly instead of through it
+        if (!p.relay && (!p.enabled || (p.mode != "headers" && p.mode != "hls"))) return
         val groups = LinkedHashMap<String, MutableList<String>>()
         for (s in streams) {
             val url = s.url ?: continue
@@ -92,7 +93,7 @@ object HeaderNeed {
             val path = url.substringBefore('?')
             if (path.endsWith(".mpd", true)) continue
             // in "hls" mode every playlist goes through the media server anyway: only files are judged
-            if (p.mode == "hls" && (path.endsWith(".m3u8", true) || url.contains(".m3u8", true) || s.info?.linkType.equals("M3U8", true))) continue
+            if (!p.relay && p.mode == "hls" && (path.endsWith(".m3u8", true) || url.contains(".m3u8", true) || s.info?.linkType.equals("M3U8", true))) continue
             val host = LinkUrl.host(url) ?: continue
             if (host == "127.0.0.1" || host == "localhost" || host == "::1" || ServerState.isOwnUrl(url)) continue
             val key = keyOf(host, headers)
@@ -126,6 +127,18 @@ object HeaderNeed {
     internal fun plays(url: String): Boolean {
         val hls = url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
         return if (hls) playlistPlays(url) else filePlays(url)
+    }
+
+    /**
+     * Asks the host of [url] right now (one byte of it, without the extension's headers) and keeps the answer like [precheck] does:
+     * true = it plays without the headers. Used by the relay for the segment hosts of a playlist.
+     */
+    internal fun checkFileNow(url: String, headers: Map<String, String>): Boolean {
+        val key = keyOfUrl(url, headers) ?: return false
+        val ok = runCatching { filePlays(url) }.getOrDefault(false)
+        record(key, !ok)
+        ServerState.info("[Relay] segments of ${key.substringBefore('|')}: " + if (ok) "play without headers (sent directly)" else "need the headers (relayed)")
+        return ok
     }
 
     private fun get(url: String, range: String?) = client.newCall(

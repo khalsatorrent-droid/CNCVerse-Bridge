@@ -819,6 +819,12 @@ object StremioServer {
             get("/media/{id}/pl/{tok}") { MediaServer.servePlaylist(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
             get("/media/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
 
+            // ── Relay: links that need headers, passed through with them (nothing kept on this device) ──
+            get("/relay/{id}/f/{tok}/{name}") { Relay.serveStream(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+            head("/relay/{id}/f/{tok}/{name}") { Relay.serveStream(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+            get("/relay/{id}/pl/{tok}") { Relay.servePlaylist(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+            get("/relay/{id}/s/{tok}") { Relay.serveStream(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+
             // ── Addon ────────────────────────────────────────────────────────
             // /u/{id}/… are the links of the extra profiles (Settings > Profiles); an id that is not a profile
             // serves the main add-on (older installs made with such links keep working).
@@ -3027,7 +3033,7 @@ object StremioServer {
             host.endsWith("r2.dev") || host.endsWith("r2.cloudflarestorage.com") -> 2 to host
             host.contains("pixeldrain") -> 1 to "pixeldrain"
             host.endsWith("workers.dev") -> 2 to host
-            lower.contains("/proxy/") || lower.contains("/media/") || host.contains("telegram") || s.info?.addonName?.contains("telegram", true) == true -> 4 to site
+            lower.contains("/proxy/") || lower.contains("/media/") || lower.contains("/relay/") || host.contains("telegram") || s.info?.addonName?.contains("telegram", true) == true -> 4 to site
             s.info?.linkType.equals("M3U8", true) || lower.substringBefore('?').endsWith(".m3u8") || lower.contains(".m3u8") -> 5 to site
             else -> 3 to site
         }

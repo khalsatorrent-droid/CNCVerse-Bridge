@@ -70,12 +70,18 @@ data class MediaServerPrefs(
     val maxCacheMb: Int = 2048,
     /** Entries not used for this many hours are deleted. */
     val keepHours: Int = 24,
+    /**
+     * Relay: links that need headers the player cannot send go through this bridge as a pass-through (the headers are added on the
+     * way, nothing is downloaded ahead or kept on disk). HLS: only the playlists pass through, segments that play without the
+     * headers go straight from the host to the player. Works with the media server on or off; it takes those links before it.
+     */
+    val relay: Boolean = false,
     /** Settings generation (older files get the newer defaults once). */
     val ver: Int = 5,
 )
 
 @Serializable
-private class MediaSource(val url: String, val headers: Map<String, String> = emptyMap())
+internal class MediaSource(val url: String, val headers: Map<String, String> = emptyMap())
 
 @Serializable
 private class FileMeta(
@@ -292,7 +298,7 @@ object MediaServer {
 
     // ── Rewriting streams ─────────────────────────────────────────────────────
 
-    private val OWN_PATH = Regex("^https?://[^/]+/(proxy/|decrypt|init_decrypt|media/)", RegexOption.IGNORE_CASE)
+    internal val OWN_PATH = Regex("^https?://[^/]+/(proxy/|decrypt|init_decrypt|media/|relay/)", RegexOption.IGNORE_CASE)
 
     /**
      * Other addresses of the same file, tried when the given one answers a range request with the whole file:
@@ -388,12 +394,14 @@ object MediaServer {
     private fun connectionsFor(e: FileEntry): Int =
         if (isHeavy(e)) minOf(prefs.connections, HEAVY_CONNECTIONS) else prefs.connections
 
-    private fun looksLikeHls(url: String, linkType: String?): Boolean =
+    internal fun looksLikeHls(url: String, linkType: String?): Boolean =
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
 
     /** The stream pointed at this bridge's media server when it qualifies; otherwise unchanged. */
     fun rewrite(s: StremioStream, base: String, forWeb: Boolean = false): StremioStream {
         val p = prefs
+        // Relay on: links that need headers pass through it (no download, no disk) instead of being cached
+        if (p.relay) Relay.rewrite(s, base, forWeb)?.let { return it }
         if (!p.enabled || root == null) return s
         val url = s.url ?: return s
         // "Every link": this bridge's own DASH -> HLS converter (clear-key channels) is served by the media server too: it reads the
@@ -459,7 +467,7 @@ object MediaServer {
         return o[0] == 10 || (o[0] == 172 && o[1] in 16..31) || (o[0] == 192 && o[1] == 168) || (o[0] == 169 && o[1] == 254)
     }
 
-    private fun isLoopbackUrl(url: String): Boolean =
+    internal fun isLoopbackUrl(url: String): Boolean =
         LinkUrl.host(url).let { it == "127.0.0.1" || it == "localhost" || it == "::1" }
 
     /**
@@ -493,7 +501,7 @@ object MediaServer {
         }
     }
 
-    private fun fileName(url: String): String {
+    internal fun fileName(url: String): String {
         val last = LinkUrl.lastSegment(url)
         val clean = last.filter { it.isLetterOrDigit() || it in "._-" }.takeLast(60)
         return if (clean.contains('.')) clean else "video.mp4"
@@ -502,7 +510,7 @@ object MediaServer {
     private fun sha256(text: String): String =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    private fun register(url: String, headers: Map<String, String>): String {
+    internal fun register(url: String, headers: Map<String, String>): String {
         val sorted = headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + ":" + it.value }
         val id = sha256(url + "\n" + sorted).take(20)
         if (sources.putIfAbsent(id, MediaSource(url, headers)) == null) {
@@ -512,7 +520,7 @@ object MediaServer {
         return id
     }
 
-    private fun sourceFor(id: String): MediaSource? {
+    internal fun sourceFor(id: String): MediaSource? {
         if (!id.matches(Regex("[0-9a-f]{20}"))) return null
         sources[id]?.let { return it }
         val f = File(root ?: return null, "$id/source.json")
@@ -533,10 +541,10 @@ object MediaServer {
     }
 
     /** "<base64 url>.<signature>" */
-    private fun token(id: String, url: String): String = b64(url) + "." + sign(id, url)
+    internal fun token(id: String, url: String): String = b64(url) + "." + sign(id, url)
 
     /** The remote URL inside [tok] ("b64.sig" with an optional extension), or null when it is forged. */
-    private fun urlOfToken(id: String, tok: String): String? {
+    internal fun urlOfToken(id: String, tok: String): String? {
         val parts = tok.split('.')
         if (parts.size < 2) return null
         val url = unb64(parts[0]) ?: return null
@@ -574,14 +582,14 @@ object MediaServer {
 
     private val clients = ConcurrentHashMap<String, okhttp3.OkHttpClient>()
 
-    private fun clientFor(id: String, src: MediaSource): okhttp3.OkHttpClient {
+    internal fun clientFor(id: String, src: MediaSource): okhttp3.OkHttpClient {
         val hasCookie = src.headers.keys.any { it.equals("cookie", true) }
         if (hasCookie) return baseClient // the extension's own Cookie header must not be replaced
         if (clients.size > 200) clients.clear()
         return clients.getOrPut(id) { baseClient.newBuilder().cookieJar(SessionCookies()).build() }
     }
 
-    private fun requestFor(src: MediaSource, url: String, range: String? = null): okhttp3.Request {
+    internal fun requestFor(src: MediaSource, url: String, range: String? = null): okhttp3.Request {
         val b = okhttp3.Request.Builder().url(url)
         var hasUa = false
         src.headers.forEach { (k, v) ->
@@ -1267,8 +1275,9 @@ object MediaServer {
     private val URI_ATTR = Regex("URI=\"([^\"]*)\"")
 
     private fun isPlaylistUrl(u: String) = u.substringBefore('?').endsWith(".m3u8", true)
+    internal fun isPlaylistName(u: String) = isPlaylistUrl(u)
 
-    private fun resolve(base: String, ref: String): String =
+    internal fun resolve(base: String, ref: String): String =
         runCatching { java.net.URI(base).resolve(ref.trim()).toString() }.getOrDefault(ref)
 
     private fun relTarget(id: String, url: String, playlist: Boolean): String =
@@ -1277,7 +1286,7 @@ object MediaServer {
     private val ATTRS = Regex("([A-Z0-9-]+)=(\"[^\"]*\"|[^,]*)")
 
     /** A master playlist cut down to its highest rendition (tallest, then highest bitrate); audio / subtitle groups stay. */
-    private fun keepBestVariant(text: String): String {
+    internal fun keepBestVariant(text: String): String {
         if (!text.contains("#EXT-X-STREAM-INF")) return text
         val lines = text.lines()
         class V(val infoIdx: Int, val urlIdx: Int, val height: Int, val bw: Long)

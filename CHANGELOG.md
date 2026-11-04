@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Relay (Settings → Media server → Relay, off by default).** Links that need a Referer, cookies or a solved Cloudflare check pass through the bridge with those headers, straight to the player. Nothing is downloaded ahead or written to disk, and range requests (seeking) are passed on.
+  - HLS: only the playlists are fetched and rewritten. Segments are checked once per host: if they play without the headers they keep their real address and go from the host to the player directly. Otherwise they, and encryption keys, pass through the relay. The website's player gets every segment through the relay, because it needs CORS.
+  - Links whose host plays them without the headers (checked like "Only links that need headers") are not relayed at all.
+  - With the relay on, it takes header links before the media server. The media server still handles the other links its mode picks. The switch saves at once and shows how many requests were relayed.
+
 ## 1.8.19
 
 - **NSFW extensions (Settings → NSFW).** An extension counts as NSFW when its repo entry lists the "NSFW" type (like the CXXX repo's), decided per extension, so a repo can mix both. NSFW extensions are never part of the main add-on, the website or the profiles.

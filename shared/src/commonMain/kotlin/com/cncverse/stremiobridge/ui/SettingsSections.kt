@@ -26,6 +26,7 @@ import com.cncverse.stremiobridge.network.DohSettings
 import com.cncverse.stremiobridge.format.StreamFormatterConfig
 import com.cncverse.stremiobridge.format.TemplateException
 import com.cncverse.stremiobridge.server.MediaServer
+import com.cncverse.stremiobridge.server.Relay
 import com.cncverse.stremiobridge.server.MediaServerPrefs
 import com.cncverse.stremiobridge.server.StremioServer
 import com.cncverse.stremiobridge.server.WebSite
@@ -830,7 +831,20 @@ fun MediaServerCard() {
             StatTile("${stats.activeDownloads}", "Downloading", Green400, Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
-        SwitchRow("Use the media server", "Off: links go to your player exactly as the extension gave them", p.enabled) {
+        val (relayed, relayActive) = remember(tick) { Relay.stats() }
+        SwitchRow(
+            "Relay (no download)",
+            "Links that need a Referer / cookies pass through this device with those headers, straight to your player - nothing is " +
+                "downloaded ahead or saved. HLS: only the playlists (and segments that really need the headers) go through here, the rest " +
+                "plays straight from the host. Starts faster and uses less memory and data than the media server; it takes those links " +
+                "before the media server does. Turn it off to let the media server cache them (better for slow or unstable hosts). " +
+                "Saved at once." + if (p.relay) " Requests relayed: $relayed, playing now: $relayActive." else "",
+            p.relay,
+        ) {
+            MediaServer.updatePrefs(MediaServer.prefs.copy(relay = it))
+            p = p.copy(relay = it); message = null; tick++
+        }
+        SwitchRow("Use the media server", "Off: links go to your player as the extension gave them (or through the relay, when it is on)", p.enabled) {
             p = p.copy(enabled = it); message = null
         }
         Text("Which links", color = TextSecondary, fontSize = 11.sp)

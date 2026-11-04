@@ -113,6 +113,13 @@ Many links only play with special "headers" or cookies, and many websites are sl
 - 🔐 Links are signed, so it is not an open proxy for strangers.
 - 🔓 In **"Every link"** mode it also serves the bridge's clear-key DASH channels and the links of other Stremio add-ons.
 
+### 🔁 The relay: headers without downloading
+A lighter option for links that need headers (Settings → Media server → **Relay**, off by default):
+- ➡️ The Bridge passes the video through with the right headers as your player asks for it. Nothing is downloaded ahead or saved, and seeking works.
+- 📺 For HLS, only the playlists go through the Bridge. Segments that play without headers come straight from the website; only the ones that need them are relayed.
+- ⚡ It starts faster and uses less memory and data than the media server. It handles header links before the media server does. Turn it off when a host is slow or unstable, so the media server can download ahead.
+- 🔐 Relay links are signed too.
+
 ### 🌐 The website version (`/home`)
 Don't want an app on the laptop? The Bridge can host its **own website** 💻:
 - 🔑 Switch it on in **Settings → Website version** and set a password.

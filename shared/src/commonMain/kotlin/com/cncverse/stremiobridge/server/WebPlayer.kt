@@ -138,7 +138,7 @@ var MPEGTS='https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js',DASH='h
 
 var P={x:null,url:'',kind:'file',live:false,gen:0,key:'',ctx:null,poster:'',sub2:'',title:'',sub:null,subDelay:0,subWant:lsGet('cncSub')||'',startAt:0,fit:'contain',stats:false,localSubs:[]};
 var mp=null,eng=null,dash=null,stallT=null,bufT=null,silT=null,idleT=null,menuKind='',seeking=false,dragFrac=0,lastSave=0,toastT=null;
-function isHls(u){return /\.m3u8(\?|#|${'$'})/i.test(u)||(u.indexOf('/media/')>=0&&u.indexOf('/pl/')>0)}
+function isHls(u){return /\.m3u8(\?|#|${'$'})/i.test(u)||((u.indexOf('/media/')>=0||u.indexOf('/relay/')>=0)&&u.indexOf('/pl/')>0)}
 function kindOf(u,x){if(isHls(u))return 'hls';if(/\.mpd(\?|#|${'$'})/i.test(u))return 'dash';if(tvMode&&/\.(ts|flv)(\?|#|${'$'})/i.test(u.split('?')[0]+'#'))return 'ts';return 'file'}
 function fmt(t){if(!isFinite(t)||t<0)t=0;t=Math.floor(t);var h=Math.floor(t/3600),m=Math.floor(t/60)%60,s=t%60;return (h?h+':'+('0'+m).slice(-2):m)+':'+('0'+s).slice(-2)}
 function toast(msg,label,fn,ms){var t=g('ptoast');t.textContent='';t.appendChild(el('span',null,msg));if(label){var b=el('button',null,label);b.type='button';b.onclick=function(){t.classList.add('hide');fn()};t.appendChild(b)}t.classList.remove('hide');clearTimeout(toastT);toastT=setTimeout(function(){t.classList.add('hide')},ms||6500)}
