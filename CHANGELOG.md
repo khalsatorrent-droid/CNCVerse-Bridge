@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: links out of resolution order with "Preferred audio languages" set.** The language preference was sorted before resolution, so the list came in blocks (links with the first language, then the second, then unknown audio), each going 4K → 720p again. Resolution is the first key again; the preferred languages now come first among links of the same resolution.
 ## 1.8.21
 
 - **Smart switch between the relay and the media server** (when both are on). When a header link starts playing, the bridge compares the host's speed with the video's bitrate, in 4 seconds or less:

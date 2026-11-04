@@ -996,7 +996,10 @@ object StremioServer {
             val l = langs(s)
             wanted.indexOfFirst { w -> l.any { it.equals(w, ignoreCase = true) } }.let { if (it < 0) wanted.size else it }
         }
-        return kept.indices.sortedWith(compareBy({ ranks[it] }, { it })).map { kept[it] }
+        // resolution stays the first key: the preferred languages only come first among links of the same resolution
+        // (sorting by language first split the list into blocks - English, then Hindi-only, then unknown - each 4K..720p again)
+        val heights = kept.map { resolutionHeight(it) ?: 0 }
+        return kept.indices.sortedWith(compareBy({ -heights[it] }, { ranks[it] }, { it })).map { kept[it] }
     }
 
     private suspend fun ApplicationCall.respondStreams() {
