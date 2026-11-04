@@ -45,6 +45,11 @@ class StremioApp : Application() {
             runCatching {
                 crashFile.writeText("${System.currentTimeMillis()} thread=${t.name}\n" + e.stackTraceToString().take(6000))
             }
+            // the log file gets the error and every line still queued, before the process ends
+            runCatching {
+                com.cncverse.stremiobridge.state.ServerState.error("[Crash] uncaught error on thread ${t.name}:\n" + e.stackTraceToString().take(6000))
+                com.cncverse.stremiobridge.state.LogFile.flushNow()
+            }
             previous?.uncaughtException(t, e)
         }
         runCatching {

@@ -124,6 +124,8 @@ object ServerState {
         _logs.value = current + entry
         // Also emit to platform logger (adb logcat on Android)
         platformLog(level, message)
+        // ...and to the log file (queued; written by a background thread), which survives a crash
+        LogFile.append(entry.timestamp, level, message)
     }
 
     /**

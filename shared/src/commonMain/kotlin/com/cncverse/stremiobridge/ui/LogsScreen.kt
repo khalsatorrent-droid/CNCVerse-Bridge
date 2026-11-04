@@ -63,7 +63,7 @@ fun LogsScreen(
                     fontWeight = FontWeight.ExtraBold,
                 )
                 Text(
-                    "${filteredLogs.size} entries",
+                    "${filteredLogs.size} entries · full log saved to a file (share button)",
                     color = TextMuted,
                     fontSize = 11.sp,
                 )
@@ -86,6 +86,19 @@ fun LogsScreen(
                         tint = if (autoScroll) Color.White else TextMuted,
                         modifier = Modifier.size(16.dp),
                     )
+                }
+
+                // Share the log file (kept across crashes, more lines than the list here)
+                IconButton(
+                    onClick = {
+                        LogFile.flushNow()
+                        LogFile.file()?.takeIf { it.exists() }?.let { shareLogFile(it.absolutePath) }
+                    },
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(AmoledCard, CircleShape),
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = "Share the log file", tint = Violet400, modifier = Modifier.size(16.dp))
                 }
 
                 // Copy button

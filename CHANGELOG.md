@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **The log is saved to a file** (`logs/bridge.log` in the app's data folder), so it survives a crash or the app being killed. Each start is marked with an "app started" line, and a crash writes its error and every queued line before the app closes. The **share** button on the Logs tab sends the file to any app (on desktop it opens the folder). The file is cut at 2 MB, with the previous part kept as `bridge.1.log`. Lines are queued and written in batches by one low-priority thread, so logging never waits for the disk.
 ## 1.8.23
 
 - **The relay follows "Which links"** (Only links that need headers / Those + all HLS / Every link), like the media server. With both on, every link the mode picks starts on the relay and the smart switch hands it to the media server only when the host is slower than the video's bitrate. A fast FSL / Pixeldrain / workers link in "Every link" mode now plays through the relay instead of being downloaded to the device. With the relay alone, the mode decides which links pass through it.
