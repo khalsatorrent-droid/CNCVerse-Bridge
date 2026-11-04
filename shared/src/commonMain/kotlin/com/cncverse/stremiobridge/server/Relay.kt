@@ -127,11 +127,18 @@ object Relay {
 
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
 
-    /** The stream pointed at the relay when its host needs headers; null = the relay leaves it alone. */
+    /**
+     * The stream pointed at the relay when the "Which links" setting (shared with the media server) picks it; null = the relay
+     * leaves it alone. "Only links that need headers": links whose host refuses them without the extension's headers;
+     * "Those + all HLS": every HLS link as well; "Every link": every http(s) link (other add-ons' links too).
+     */
     fun rewrite(s: StremioStream, base: String, forWeb: Boolean, runtimeMinutes: Int = 0): StremioStream? {
         val url = s.url ?: return null
+        val mode = MediaServer.prefs.mode
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return null
-        if (s.info?.linkType == "UPSTREAM") return null
+        // another add-on's link: only in "Every link" mode, or when it points at a home-network address the player may not reach
+        val upstream = s.info?.linkType == "UPSTREAM"
+        if (upstream && mode != "all" && !MediaServer.isPrivateHostOf(url)) return null
         if (!url.startsWith("http", true) || MediaServer.OWN_PATH.containsMatchIn(url)) return null
         // an extension's own local server is handled by LocalRelay / the media server
         if (MediaServer.isLoopbackUrl(url) || ServerState.isOwnUrl(url)) return null
@@ -141,10 +148,16 @@ object Relay {
         val host = LinkUrl.host(url) ?: return null
         val headers = s.behaviorHints?.proxyHeaders?.request.orEmpty()
         val needsCf = runCatching { CfCookieStore.get(host) }.getOrNull() != null
-        if (headers.isEmpty() && !needsCf) return null
-        // the host answered a plain request: the player can open the link itself
-        if (!needsCf && HeaderNeed.verdict(url, headers) == false) return null
         val hls = MediaServer.looksLikeHls(url, s.info?.linkType)
+        // the host answered a plain request: the player could open the link itself
+        val needsHeaders = needsCf || (headers.isNotEmpty() && HeaderNeed.verdict(url, headers) != false)
+        val picked = when {
+            needsHeaders -> true
+            mode == "all" -> true
+            mode == "hls" -> hls
+            else -> forWeb && hls // the website's player needs CORS on playlists, whatever the mode
+        }
+        if (!picked) return null
         val id = MediaServer.register(url, if (forWeb && hls) headers + (WEB to "1") else headers)
         val tok = MediaServer.token(id, url)
         if (runtimeMinutes > 0) { if (runtimeMin.size > 5_000) runtimeMin.clear(); runtimeMin[id] = runtimeMinutes }

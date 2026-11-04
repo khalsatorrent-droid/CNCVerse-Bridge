@@ -834,11 +834,11 @@ fun MediaServerCard() {
         val (relayed, relayActive) = remember(tick) { Relay.stats() }
         SwitchRow(
             "Relay (no download)",
-            "Links that need a Referer / cookies pass through this device with those headers, straight to your player - nothing is " +
-                "downloaded ahead or saved. HLS: only the playlists (and segments that really need the headers) go through here, the rest " +
-                "plays straight from the host. Starts faster and uses less memory and data than the media server. With the media server on " +
-                "too, a smart switch picks for each link when it starts (within 4 s): hosts faster than the video's bitrate go through " +
-                "the relay, slower ones through the media server (the log says which). " +
+            "Links pass through this device straight to your player, with the headers they need - nothing is downloaded ahead or " +
+                "saved. Which links: the \"Which links\" choice below (it applies to the relay and the media server). HLS: only the " +
+                "playlists (and segments that really need headers) go through here, the rest plays straight from the host. With the media " +
+                "server on too, a smart switch picks for each link when it starts (within 4 s): hosts faster than the video's bitrate stay " +
+                "on the relay, slower ones go to the media server (the log says which). " +
                 "Saved at once." + if (p.relay) " Requests relayed: $relayed, playing now: $relayActive." else "",
             p.relay,
         ) {
@@ -848,7 +848,7 @@ fun MediaServerCard() {
         SwitchRow("Use the media server", "Off: links go to your player as the extension gave them (or through the relay, when it is on)", p.enabled) {
             p = p.copy(enabled = it); message = null
         }
-        Text("Which links", color = TextSecondary, fontSize = 11.sp)
+        Text("Which links (relay and media server)", color = TextSecondary, fontSize = 11.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("headers" to "Only links that need headers", "hls" to "Those + all HLS", "all" to "Every link").forEach { (value, label) ->
                 FilterChip(

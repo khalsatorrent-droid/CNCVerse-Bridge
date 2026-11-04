@@ -458,6 +458,8 @@ object MediaServer {
         return playlistCache.containsKey("$id|$url") || File(root ?: return false, "$id/playlist.m3u8").exists()
     }
 
+    internal fun isPrivateHostOf(url: String): Boolean = isPrivateHost(LinkUrl.host(url))
+
     /** 10.x, 172.16-31.x, 192.168.x, link-local and *.local names: reachable only from the home network. */
     private fun isPrivateHost(host: String?): Boolean {
         val h = host?.lowercase() ?: return false
