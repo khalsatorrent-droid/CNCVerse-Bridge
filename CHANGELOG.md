@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.21
 
 - **Smart switch between the relay and the media server** (when both are on). When a header link starts playing, the bridge compares the host's speed with the video's bitrate, in 4 seconds or less:
   - Files: the first answer is read for up to 4 s, and those bytes still go to the player, so nothing is downloaded twice. The bitrate is the file size over its running time, read from the MKV header or else the usual length of a movie (120 min), an episode (45) or an anime episode (24).
