@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.29
 
 - **Website player: brightness on a 0–100% scale**, like a phone's slider. 50% is the normal picture, 100% the brightest (twice as bright) and 0% half as bright. A level set before is carried over.
 
