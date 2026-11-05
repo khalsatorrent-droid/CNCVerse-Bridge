@@ -341,7 +341,7 @@ var stT=null;function statsTick(){clearTimeout(stT);if(!P.stats){return}var v=g(
 function posAll(){try{return JSON.parse(lsGet('cncPos')||'{}')}catch(e){return{}}}
 function posPut(o){var k=Object.keys(o);if(k.length>80){k.sort(function(a,b){return (o[a].at||0)-(o[b].at||0)});k.slice(0,k.length-80).forEach(function(x){delete o[x]})}lsSet('cncPos',JSON.stringify(o))}
 function posSave(){var v=g('v');if(!P.key||P.live||!(v.duration>120)||v.currentTime<20)return;var o=posAll();
- if(v.currentTime>v.duration-90){delete o[P.key];var d=cfgAll();var dn=(d.done||{});dn[P.key]=1;Sset('done',dn)}
+ if(v.currentTime>v.duration-90||v.currentTime>=v.duration*0.85){delete o[P.key];var d=cfgAll();var dn=(d.done||{});dn[P.key]=1;Sset('done',dn);if(window.simklMark)simklMark(P.key,P.ctx)}
  else{var c=P.ctx||{};o[P.key]={t:Math.floor(v.currentTime),d:Math.floor(v.duration),at:Date.now(),type:c.type,id:c.id,s:c.s,e:c.e,title:c.title,year:c.year,poster:P.poster,data:c.data,sub2:c.sub2}}posPut(o)}
 
 /* ----- next episode ----- */

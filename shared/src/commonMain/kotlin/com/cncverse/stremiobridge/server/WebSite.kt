@@ -38,6 +38,7 @@ object WebSite {
         val f = File(cacheDir, "web_prefs.json")
         file = f
         prefs = runCatching { json.decodeFromString<Prefs>(f.readText()) }.getOrDefault(Prefs())
+        runCatching { WebSimkl.load(cacheDir) }
     }
 
     /** Saves the switch and the password; turning it on needs a password of at least 4 characters. */
@@ -213,6 +214,7 @@ object WebSite {
             call.respondText(WebPage.HTML, ContentType.Text.Html)
         }
         get("/home/") { call.respondRedirect("/home") }
+        with(WebSimkl) { simklRoutes { guard() } }
 
         post("/web/login") {
             if (!prefs.enabled) return@post call.respond(HttpStatusCode.NotFound)

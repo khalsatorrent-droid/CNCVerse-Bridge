@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Simkl on the website.** Settings has a new Simkl section: paste the Client ID of a free Simkl app (made at simkl.com/settings/developer), press *Link my Simkl account* and enter the shown code at simkl.com/pin. Then a **Simkl** tab appears with your library (Watching, Plan to watch, Completed, On hold, Dropped; titles open like any other), and a movie or episode is **marked watched on Simkl when 85% of it has played** (also marked watched on the site, and sent once per title). The Client ID and the account's token stay on the bridge (`simkl.json`), not in the browser. Titles Simkl has no TMDB id for are not shown in the library.
+
 ## 1.8.24
 
 - **The log is saved to a file** (`logs/bridge.log` in the app's data folder), so it survives a crash or the app being killed. Each start is marked with an "app started" line, and a crash writes its error and every queued line before the app closes. The **share** button on the Logs tab sends the file to any app (on desktop it opens the folder). The file is cut at 2 MB, with the previous part kept as `bridge.1.log`. Lines are queued and written in batches by one low-priority thread, so logging never waits for the disk.
