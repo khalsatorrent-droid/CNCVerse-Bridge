@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Website player: brightness.** Player → ⋯ → *Brightness* (75% to 250% presets, or ±10% steps up to 300%), or the keys `b` (brighter) and `Shift+B` (darker). Handy for dark scenes. It's remembered in that browser and applies to every video.
+- **Website player: brightness.** Player → ⋯ → *Brightness* (75% to 250% presets, or ±10% steps up to 300%), the keys `b` (brighter) and `Shift+B` (darker), or on a phone or tablet a swipe up / down on the left half of the picture. Handy for dark scenes. It's remembered in that browser and applies to every video.
 ## 1.8.27
 
 - **Website: what you already watched on Simkl is marked watched.** With Simkl linked, the site marks the movies and episodes you watched on Simkl (completed shows: every episode). It checks again every 10 minutes while the site is open. The bridge follows Simkl's sync rule: it asks `/sync/activities` first, reads the library only when something changed, and after the first read fetches only the changes (`date_from`), at most once every 5 minutes. An episode you unmark on the site by hand stays unmarked. Anime series use Simkl's season numbers.

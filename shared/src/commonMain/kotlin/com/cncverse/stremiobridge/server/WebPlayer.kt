@@ -8,7 +8,7 @@ internal object WebPlayer {
 #v{--cs:1.3em;--cc:#fff;--cb:transparent;--csh:-1px -1px 2px #000,1px -1px 2px #000,-1px 1px 2px #000,1px 1px 2px #000,0 0 7px #000}
 #psubcv{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
 video::cue{color:var(--cc,#fff);background:var(--cb,transparent);font-size:var(--cs,1.3em);font-weight:700;font-family:Roboto,'Segoe UI',Arial,sans-serif;text-shadow:var(--csh,0 0 6px #000)}
-#pclick{position:absolute;inset:0;z-index:1}
+#pclick{position:absolute;inset:0;z-index:1;touch-action:none}
 #player.idle #pclick{cursor:none}
 #ptop,#pbar{position:absolute;left:0;right:0;z-index:3;transition:opacity .25s}
 #ptop{top:0;display:flex;align-items:center;gap:12px;padding:14px 18px;background:linear-gradient(180deg,rgba(0,0,0,.8),transparent)}
@@ -239,7 +239,7 @@ var SPEEDS=[0.5,0.75,1,1.25,1.5,1.75,2];
 /* Brightness of the picture (CSS filter on the video; remembered in this browser). Above 100% brightens dark scenes. */
 var BRIGHTS=[0.75,1,1.25,1.5,1.75,2,2.5];
 function briGet(){var b=parseFloat(lsGet('cncBright'));return b>=0.5&&b<=3?b:1}
-function briSet(b){b=Math.round(Math.min(3,Math.max(0.5,b))*100)/100;lsSet('cncBright',String(b));briApply();toast('Brightness '+Math.round(b*100)+'%')}
+function briSet(b,quiet){b=Math.round(Math.min(3,Math.max(0.5,b))*100)/100;lsSet('cncBright',String(b));briApply();if(!quiet)toast('Brightness '+Math.round(b*100)+'%')}
 function briApply(){var b=briGet(),v=g('v');if(v)v.style.filter=b===1?'':'brightness('+b+')'}
 var MENUS={
  q:{title:'Quality',items:function(){return qList()}},
@@ -331,7 +331,14 @@ g('player').addEventListener('mousemove',wake);g('player').addEventListener('tou
 
 /* taps: one click plays / pauses (touch: shows the controls), a double tap on a side skips 10 s, in the middle it goes full screen */
 (function(){var last=0,lx=0,tm=null,c=g('pclick');
- c.addEventListener('click',function(e){var now=Date.now(),w=c.clientWidth,x=e.clientX,touch=e.pointerType==='touch'||(e.pointerType==null&&window.matchMedia&&matchMedia('(pointer:coarse)').matches);
+ /* Phones / tablets: swipe up or down on the left half of the picture to change the brightness (like MX Player) */
+ var tY=0,tX=0,tB=1,swiping=false,swipedAt=0,leftHalf=false;
+ c.addEventListener('touchstart',function(e){if(e.touches.length!==1){swiping=false;return}var t=e.touches[0],r=c.getBoundingClientRect();tX=t.clientX;tY=t.clientY;tB=briGet();swiping=false;leftHalf=(t.clientX-r.left)<r.width/2},{passive:true});
+ c.addEventListener('touchmove',function(e){if(e.touches.length!==1||!leftHalf)return;var t=e.touches[0],dy=t.clientY-tY,dx=t.clientX-tX;
+  if(!swiping){if(Math.abs(dy)<14||Math.abs(dy)<Math.abs(dx)*1.5)return;swiping=true;tY=t.clientY;dy=0}
+  e.preventDefault();var h=c.clientHeight||400;var b=tB-dy/(h*0.6)*1.5;briSet(b,true);flash('\u2600 '+Math.round(briGet()*100)+'%',-1);wake()},{passive:false});
+ c.addEventListener('touchend',function(){if(swiping){swiping=false;swipedAt=Date.now()}},{passive:true});
+ c.addEventListener('click',function(e){if(Date.now()-swipedAt<400)return;var now=Date.now(),w=c.clientWidth,x=e.clientX,touch=e.pointerType==='touch'||(e.pointerType==null&&window.matchMedia&&matchMedia('(pointer:coarse)').matches);
   if(now-last<320){clearTimeout(tm);last=0;var f=x/w;if(f<.34)skip(-10);else if(f>.66)skip(10);else toggleFs();return}
   last=now;lx=x;clearTimeout(tm);tm=setTimeout(function(){last=0;if(touch){var p=g('player');if(p.classList.contains('idle')){wake()}else{clearTimeout(idleT);g('amenu').classList.add('hide');p.classList.add('idle')}}else togglePlay()},300)})})();
 
