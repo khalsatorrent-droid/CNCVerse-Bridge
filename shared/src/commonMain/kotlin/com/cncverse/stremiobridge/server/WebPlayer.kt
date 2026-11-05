@@ -236,6 +236,11 @@ function qLabel(){var l=qList(),o=l.filter(function(x){return x.on})[0];return o
 
 /* ----- menus ----- */
 var SPEEDS=[0.5,0.75,1,1.25,1.5,1.75,2];
+/* Brightness of the picture (CSS filter on the video; remembered in this browser). Above 100% brightens dark scenes. */
+var BRIGHTS=[0.75,1,1.25,1.5,1.75,2,2.5];
+function briGet(){var b=parseFloat(lsGet('cncBright'));return b>=0.5&&b<=3?b:1}
+function briSet(b){b=Math.round(Math.min(3,Math.max(0.5,b))*100)/100;lsSet('cncBright',String(b));briApply();toast('Brightness '+Math.round(b*100)+'%')}
+function briApply(){var b=briGet(),v=g('v');if(v)v.style.filter=b===1?'':'brightness('+b+')'}
 var MENUS={
  q:{title:'Quality',items:function(){return qList()}},
  spd:{title:'Speed',items:function(){var v=g('v');return SPEEDS.map(function(s){return {label:s===1?'Normal':s+'x',on:Math.abs(v.playbackRate-s)<.01,set:function(){v.playbackRate=s;lsSet('cncSpeed',String(s))}}})}},
@@ -251,10 +256,14 @@ var MENUS={
   if(!ks.length)o.push({head:'No subtitle found for this title yet'});return o}},
  sty:{title:'Subtitle look',items:function(){function pk(key,def,opts){return opts.map(function(a){return {label:a[1],on:S(key,def)===a[0],keep:true,set:function(){Sset(key,a[0]);subStyle()}}})}
   return [{label:'Back',keep:true,set:function(){menuKind='cc'}},{label:'Hardcode subtitles into the picture',sub:'White bold text with a black outline, painted on the video',on:burnOn(),keep:true,set:burnToggle},{head:'Size'}].concat(pk('subsz','m',[['s','Small'],['m','Medium'],['l','Large'],['xl','Huge']]),[{head:'Colour'}],pk('subcol','white',[['white','White'],['yellow','Yellow'],['cyan','Cyan']]),[{head:'Background'}],pk('subbg','shadow',[['shadow','Outline'],['box','Dim box'],['solid','Black box']]))}},
+ bri:{title:'Brightness',items:function(){var cur=briGet();return [{label:'Back',keep:true,set:function(){menuKind='more'}},
+  {row:{label:Math.round(cur*100)+'%',btns:[['-10%',function(){briSet(briGet()-0.1)}],['+10%',function(){briSet(briGet()+0.1)}],['100%',function(){briSet(1)}]]}}].concat(
+  BRIGHTS.map(function(b){return {label:b===1?'Normal (100%)':Math.round(b*100)+'%',on:Math.abs(cur-b)<.01,keep:true,set:function(){briSet(b)}}}))}},
  sleep:{title:'Sleep timer',items:function(){function o(label,min){return {label:label,on:(min===0&&!P.sleep)||(P.sleep&&P.sleep.min===min),set:function(){setSleep(min);menuKind='more'},keep:true}}
   return [{label:'Back',keep:true,set:function(){menuKind='more'}},o('Off',0),o('15 minutes',15),o('30 minutes',30),o('45 minutes',45),o('1 hour',60),o('End of this episode',-1)]}},
  more:{title:'More',items:function(){var v=g('v');return [
   {label:'Sleep timer'+(P.sleep?(P.sleep.min<0?': end of episode':': '+Math.max(1,Math.ceil((P.sleep.at-Date.now())/60000))+' min left'):''),keep:true,set:function(){menuKind='sleep'}},
+  {label:'Brightness: '+Math.round(briGet()*100)+'%',keep:true,set:function(){menuKind='bri'}},
   {label:'Skip ahead 85 s',set:function(){skip(85)}},
   {label:'Picture: '+({contain:'fit',cover:'fill the screen',fill:'stretch'}[P.fit]),keep:true,set:function(){P.fit=P.fit==='contain'?'cover':(P.fit==='cover'?'fill':'contain');v.style.objectFit=P.fit}},
   {label:'Hardcode subtitles into the picture',on:burnOn(),keep:true,set:burnToggle},
@@ -395,7 +404,7 @@ function liveWatch(gen){clearInterval(liveT);var last=-1,still=0;liveT=setInterv
  var v=g('v');if(v.paused||seeking||v.readyState===0){still=0;return}if(Math.abs(v.currentTime-last)<.05){still++}else{still=0;last=v.currentTime}
  if(still>=4){still=0;clearInterval(liveT);if(hls&&P.recon===0)try{hls.startLoad();hls.recoverMediaError()}catch(e){}reconnect()}},4000)}
 function play(x,title){var v=g('v');stopVideo();var gen=++P.gen;P.err='';P.x=x;P.title=title;P.live=!!tvMode;P.sub=null;P.subDone=false;P.subDelay=0;P.nextEp=null;
- g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('psub').textContent=P.live?'Live':(P.sub2||'');g('player').classList.remove('hide');g('pspin').classList.remove('hide');wake();subStyle();burnApply();
+ g('pmsg').textContent='';g('pnote').textContent='';g('ptitle').textContent=title;g('psub').textContent=P.live?'Live':(P.sub2||'');g('player').classList.remove('hide');g('pspin').classList.remove('hide');wake();subStyle();burnApply();briApply();
  var url=fix(x.url);P.url=url;P.kind=kindOf(url,x);var order=P.kind==='dash'?['dash']:(P.kind==='ts'?['ts','hls','file']:(P.kind==='hls'?(tvMode?['hls','ts','file']:['hls','file']):(tvMode?['file','hls','ts']:['file','hls']))),oi=0,startAt=P.startAt;P.startAt=0;audApplied=false;if(v.audioTracks){v.audioTracks.onaddtrack=audRefresh;v.audioTracks.onchange=audRefresh}
  addSubs(x.subtitles);if(!P.live)findNext();
  v.playbackRate=P.live?1:(parseFloat(lsGet('cncSpeed'))||1);
@@ -464,6 +473,7 @@ document.addEventListener('keydown',function(e){var open=!g('player').classList.
  else if(k==='ArrowUp'){e.preventDefault();v.muted=false;v.volume=Math.min(1,v.volume+.05)}else if(k==='ArrowDown'){e.preventDefault();v.volume=Math.max(0,v.volume-.05)}
  else if(k==='f'){toggleFs()}else if(k==='m'){v.muted=!v.muted}else if(k==='a'){if(!g('paud').classList.contains('hide'))openMenu('aud')}else if(k==='c'){if(P.sub||(hls&&hls.subtitleTrack>=0)){P.subDone=true;subOff()}else{P.subDone=false;var ks=langOrder();if(ks.length)showSub(ks[0],0)}}
  else if(k==='q'){if(!g('pq').classList.contains('hide'))openMenu('q')}else if(k==='n'){if(tvMode)zap(1);else if(P.nextEp)playEpisode(P.nextEp)}else if(k==='p'){if(tvMode)zap(-1)}
+ else if(k==='b'){briSet(briGet()+0.1)}else if(k==='B'){briSet(briGet()-0.1)}
  else if(k==='s'&&!P.live){skip(85)}else if(k==='i'){P.stats=!P.stats;g('pstats').classList.toggle('hide',!P.stats);statsTick()}
  else if(k==='>'||k==='.'){if(!P.live){var i=SPEEDS.indexOf(v.playbackRate);v.playbackRate=SPEEDS[Math.min(SPEEDS.length-1,(i<0?2:i)+1)];toast(v.playbackRate+'x',null,null,1200)}}else if(k==='<'||k===','){if(!P.live){var j=SPEEDS.indexOf(v.playbackRate);v.playbackRate=SPEEDS[Math.max(0,(j<0?2:j)-1)];toast(v.playbackRate+'x',null,null,1200)}}
  else if(k==='PageUp'&&tvMode)zap(-1);else if(k==='PageDown'&&tvMode)zap(1);
