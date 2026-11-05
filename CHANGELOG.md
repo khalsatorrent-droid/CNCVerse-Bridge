@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **Simkl works without making your own app.** A Client ID is built in, so linking is just *Link my Simkl account* and the code. Every Simkl call now names the app (`app-name` / `app-version`), as Simkl asks. Your own Client ID can still be saved in Settings; leaving it empty uses the built-in one.
 ## 1.8.25
 
 - **Simkl on the website.** Settings has a new Simkl section: paste the Client ID of a free Simkl app (made at simkl.com/settings/developer), press *Link my Simkl account* and enter the shown code at simkl.com/pin. Then a **Simkl** tab appears with your library (Watching, Plan to watch, Completed, On hold, Dropped; titles open like any other), and a movie or episode is **marked watched on Simkl when 85% of it has played** (also marked watched on the site, and sent once per title). The Client ID and the account's token stay on the bridge (`simkl.json`), not in the browser. Titles Simkl has no TMDB id for are not shown in the library.

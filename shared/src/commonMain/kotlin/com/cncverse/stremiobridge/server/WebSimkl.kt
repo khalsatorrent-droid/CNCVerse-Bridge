@@ -34,6 +34,12 @@ object WebSimkl {
     private val STATUSES = setOf("watching", "plantowatch", "completed", "hold", "dropped")
     private val CLIENT_ID = Regex("[A-Za-z0-9]{16,100}")
     private val PIN = Regex("[A-Za-z0-9]{3,24}")
+    /** Built-in app (works without making one): used while no own Client ID is saved. Simkl wants the app named on every call. */
+    private const val DEFAULT_CLIENT_ID = "dc20e0db975583b15096267cee79cd23b1f56d4bd301ce3c51e4a96a49c834a6"
+    private const val APP_PARAMS = "app-name=nuvio&app-version="
+
+    /** The Client ID in use: the one saved in Settings, else the built-in one. */
+    private fun clientId(): String = saved.clientId.ifEmpty { DEFAULT_CLIENT_ID }
 
     fun load(cacheDir: String) {
         val f = File(cacheDir, "simkl.json")
@@ -48,13 +54,17 @@ object WebSimkl {
     }
 
     private fun headers(withToken: Boolean): Map<String, String> {
-        val h = linkedMapOf("simkl-api-key" to saved.clientId, "User-Agent" to "CNCVerse-Bridge")
+        val h = linkedMapOf("simkl-api-key" to clientId(), "User-Agent" to "CNCVerse-Bridge")
         if (withToken && saved.token.isNotEmpty()) h["Authorization"] = "Bearer " + saved.token
         return h
     }
 
     private suspend fun sk(method: String, path: String, body: String? = null, withToken: Boolean = true): Pair<Int, String> =
-        withContext(Dispatchers.IO) { DohHttp.request(method, API + path, body, headers(withToken)) }
+        withContext(Dispatchers.IO) {
+            // every call names the app: client_id (when the path has none) + app-name / app-version
+            val q = (if (path.contains("client_id=")) "" else "client_id=${clientId()}&") + APP_PARAMS
+            DohHttp.request(method, API + path + (if (path.contains('?')) "&" else "?") + q, body, headers(withToken))
+        }
 
     private fun parse(t: String): JsonObject? = runCatching { json.parseToJsonElement(t) as? JsonObject }.getOrNull()
     private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.contentOrNull
@@ -149,7 +159,7 @@ object WebSimkl {
     fun Route.simklRoutes(guard: suspend ApplicationCall.() -> Boolean) {
         get("/web/api/simkl/status") {
             if (!call.guard()) return@get
-            call.respondText("""{"keyed":${saved.clientId.isNotEmpty()},"linked":${saved.token.isNotEmpty()}}""", ContentType.Application.Json)
+            call.respondText("""{"keyed":true,"own":${saved.clientId.isNotEmpty()},"linked":${saved.token.isNotEmpty()}}""", ContentType.Application.Json)
         }
         post("/web/api/simkl/config") {
             if (!call.guard()) return@post
@@ -157,12 +167,11 @@ object WebSimkl {
             if (id.isNotEmpty() && !CLIENT_ID.matches(id)) return@post call.respond(HttpStatusCode.BadRequest)
             // another app's id: the old token does not belong to it
             if (id != saved.clientId) save(Saved(id, ""))
-            call.respondText("""{"keyed":${saved.clientId.isNotEmpty()}}""", ContentType.Application.Json)
+            call.respondText("""{"keyed":true,"own":${saved.clientId.isNotEmpty()}}""", ContentType.Application.Json)
         }
         post("/web/api/simkl/pin") {
             if (!call.guard()) return@post
-            if (saved.clientId.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest)
-            val (code, text) = runCatching { sk("GET", "/oauth/pin?client_id=${saved.clientId}", withToken = false) }.getOrNull() ?: (0 to "")
+            val (code, text) = runCatching { sk("GET", "/oauth/pin?client_id=${clientId()}", withToken = false) }.getOrNull() ?: (0 to "")
             val o = parse(text)
             val user = o?.str("user_code")
             if (code != 200 || user == null) return@post call.respond(HttpStatusCode.BadGateway)
@@ -176,8 +185,8 @@ object WebSimkl {
         get("/web/api/simkl/poll") {
             if (!call.guard()) return@get
             val pin = call.request.queryParameters["code"].orEmpty()
-            if (!PIN.matches(pin) || saved.clientId.isEmpty()) return@get call.respond(HttpStatusCode.BadRequest)
-            val (_, text) = runCatching { sk("GET", "/oauth/pin/$pin?client_id=${saved.clientId}", withToken = false) }.getOrNull() ?: (0 to "")
+            if (!PIN.matches(pin)) return@get call.respond(HttpStatusCode.BadRequest)
+            val (_, text) = runCatching { sk("GET", "/oauth/pin/$pin?client_id=${clientId()}", withToken = false) }.getOrNull() ?: (0 to "")
             val token = parse(text)?.str("access_token")?.takeIf { it.isNotBlank() }
             if (token != null) { save(saved.copy(token = token)); ServerState.info("[Simkl] account linked") }
             call.respondText("""{"linked":${saved.token.isNotEmpty()}}""", ContentType.Application.Json)
@@ -211,7 +220,7 @@ object WebSimkl {
 
     val JS = """
 /* ----- Simkl: link the account in Settings, library page, mark watched at 85% ----- */
-var simkl={keyed:false,linked:false},skSent={},skBusy={};
+var simkl={keyed:true,own:false,linked:false},skSent={},skBusy={};
 try{skSent=JSON.parse(localStorage.getItem('cncSimklSent')||'{}')}catch(e){skSent={}}
 function simklInit(){api('/web/api/simkl/status').then(function(s){simkl=s;g('navsk').classList.toggle('hide',!s.linked)}).catch(function(){})}
 function simklMark(key,c){if(!simkl.linked||!c||(c.type!=='movie'&&c.type!=='tv')||!c.id||skSent[key]||skBusy[key])return;
@@ -226,13 +235,13 @@ function simklSettings(d){var box=el('div','setr');var t=el('div');t.style.width
  function draw(){area.textContent='';
   if(simkl.linked){sm.textContent='Linked. Your library is in the Simkl tab, and a movie or episode is marked watched there once 85% of it has played.';
    var u=el('button','quiet','Unlink Simkl');u.type='button';u.onclick=function(){fetch('/web/api/simkl/unlink',{method:'POST',credentials:'same-origin'}).then(function(){simkl.linked=false;g('navsk').classList.add('hide');draw()})};area.appendChild(u);return}
-  sm.textContent='Needs a free Simkl app: make one at simkl.com/settings/developer and paste its Client ID here. Then link your account with the code Simkl shows.';
+  sm.textContent='Press Link and enter the code Simkl shows. A Client ID is built in; to use your own Simkl app instead (simkl.com/settings/developer), paste its Client ID below (empty = built-in).';
   var row=el('div','btns');var inp=document.createElement('input');inp.type='text';inp.placeholder='Simkl Client ID';inp.autocomplete='off';inp.spellcheck=false;inp.style.flex='1 1 220px';row.appendChild(inp);
-  var sv=el('button','quiet','Save ID');sv.type='button';row.appendChild(sv);area.appendChild(row);
+  var sv=el('button','quiet','Save own ID');sv.type='button';row.appendChild(sv);area.appendChild(row);
   var msg=el('div','kbd','');area.appendChild(msg);var lk=el('button',null,'Link my Simkl account');lk.type='button';lk.style.marginTop='8px';lk.disabled=!simkl.keyed;area.appendChild(lk);
-  if(simkl.keyed){inp.placeholder='Client ID saved (paste another to replace it)'}
+  if(simkl.own){inp.placeholder='Own Client ID saved (paste another, or save empty for the built-in one)'}else{inp.placeholder='Own Simkl Client ID (optional)'}
   sv.onclick=function(){fetch('/web/api/simkl/config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'client_id='+encodeURIComponent(inp.value.trim())}).then(function(r){
-   if(!r.ok){msg.textContent='That does not look like a Client ID.';return}return r.json().then(function(s){simkl.keyed=!!s.keyed;lk.disabled=!simkl.keyed;msg.textContent=s.keyed?'Saved.':'Removed.'})})};
+   if(!r.ok){msg.textContent='That does not look like a Client ID.';return}return r.json().then(function(s){simkl.keyed=!!s.keyed;simkl.own=!!s.own;lk.disabled=!simkl.keyed;msg.textContent=s.own?'Saved: your own app is used.':'Using the built-in app.'})})};
   lk.onclick=function(){lk.disabled=true;msg.textContent='Asking Simkl for a code';
    fetch('/web/api/simkl/pin',{method:'POST',credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('pin');return r.json()}).then(function(p){
     msg.textContent='';var a=document.createElement('a');a.href=p.verification_url;a.target='_blank';a.rel='noopener';a.textContent=p.verification_url;a.style.color='var(--lamp)';
