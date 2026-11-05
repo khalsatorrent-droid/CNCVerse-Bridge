@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.26
 
 - **Simkl works without making your own app.** A Client ID is built in, so linking is just *Link my Simkl account* and the code. Every Simkl call now names the app (`app-name` / `app-version`), as Simkl asks. Your own Client ID can still be saved in Settings; leaving it empty uses the built-in one.
 ## 1.8.25
