@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **Website: what you already watched on Simkl is marked watched.** With Simkl linked, the site marks the movies and episodes you watched on Simkl (completed shows: every episode). It checks again every 10 minutes while the site is open. The bridge follows Simkl's sync rule: it asks `/sync/activities` first, reads the library only when something changed, and after the first read fetches only the changes (`date_from`), at most once every 5 minutes. An episode you unmark on the site by hand stays unmarked. Anime series use Simkl's season numbers.
 ## 1.8.26
 
 - **Simkl works without making your own app.** A Client ID is built in, so linking is just *Link my Simkl account* and the code. Every Simkl call now names the app (`app-name` / `app-version`), as Simkl asks. Your own Client ID can still be saved in Settings; leaving it empty uses the built-in one.

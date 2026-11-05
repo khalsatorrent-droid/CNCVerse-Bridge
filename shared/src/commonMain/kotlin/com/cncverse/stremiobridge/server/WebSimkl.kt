@@ -9,6 +9,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
@@ -45,9 +46,14 @@ object WebSimkl {
         val f = File(cacheDir, "simkl.json")
         file = f
         saved = runCatching { json.decodeFromString<Saved>(f.readText()) }.getOrDefault(Saved())
+        val sf = File(cacheDir, "simkl_seen.json")
+        seenFile = sf
+        seen = runCatching { json.decodeFromString<Seen>(sf.readText()) }.getOrDefault(Seen())
     }
 
     private fun save(s: Saved) {
+        // another account / app: what was watched belongs to the old one
+        if (s.token != saved.token || s.clientId != saved.clientId) { seen = Seen(); runCatching { seenFile?.delete() } }
         saved = s
         libCache.clear()
         runCatching { file?.writeText(json.encodeToString(s)) }.onFailure { ServerState.warn("Failed to save simkl.json: ${it.message}") }
@@ -156,7 +162,96 @@ object WebSimkl {
         return """{"ok":true,"linked":true,"found":${!missing}}"""
     }
 
+    // ── What was already watched on Simkl (marks the site's episodes / movies as watched) ──
+    //
+    // Simkl's rule for apps that sync: never download the whole library on a timer. So /sync/activities is asked first (one
+    // small answer) and the library is only read when its "all" time changed - after the first time, only the items changed
+    // since the last read (date_from). Asked at most once every 5 minutes, whatever the pages do.
+
+    /** item ("movie:<tmdb>" / "tv:<tmdb>") -> its watched episodes ("s:e"; empty for a movie) */
+    @Serializable
+    private data class Seen(val all: String = "", val syncedAt: String = "", val items: Map<String, List<String>> = emptyMap())
+
+    @Volatile private var seen = Seen()
+    private var seenFile: File? = null
+    @Volatile private var seenCheckedAt = 0L
+    private val seenLock = kotlinx.coroutines.sync.Mutex()
+    private const val SEEN_EVERY_MS = 5 * 60_000L
+
+    private fun watchedOf(o: JsonObject, inner: String, type: String, out: MutableMap<String, List<String>>) {
+        val m = o.obj(inner) ?: return
+        val tmdb = m.obj("ids")?.str("tmdb")?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) && it.length <= 10 } ?: return
+        val completed = o.str("status") == "completed"
+        if (type == "movie") {
+            if (completed || o.str("last_watched_at") != null) out["movie:$tmdb"] = emptyList() else out.remove("movie:$tmdb")
+            return
+        }
+        val eps = ArrayList<String>()
+        (o["seasons"] as? JsonArray)?.forEach { se ->
+            val so = se as? JsonObject ?: return@forEach
+            val sn = so.str("number")?.toIntOrNull() ?: return@forEach
+            (so["episodes"] as? JsonArray)?.forEach { ep ->
+                val eo = ep as? JsonObject ?: return@forEach
+                val en = eo.str("number")?.toIntOrNull() ?: return@forEach
+                // a completed show lists all its episodes; otherwise only the ones with a watch time were watched
+                if (completed || eo.str("watched_at") != null) eps += "$sn:$en"
+            }
+        }
+        if (eps.isEmpty()) out.remove("tv:$tmdb") else out["tv:$tmdb"] = eps
+    }
+
+    private suspend fun syncSeen() = seenLock.withLock {
+        if (saved.token.isEmpty()) return@withLock
+        val now = System.currentTimeMillis()
+        if (now - seenCheckedAt < SEEN_EVERY_MS) return@withLock
+        seenCheckedAt = now
+        val (ac, at) = runCatching { sk("GET", "/sync/activities") }.getOrNull() ?: return@withLock
+        if (ac == 401) { save(saved.copy(token = "")); return@withLock }
+        val all = parse(at)?.str("all") ?: return@withLock
+        if (ac != 200 || (all == seen.all && seen.syncedAt.isNotEmpty())) return@withLock
+        val since = seen.syncedAt.takeIf { it.isNotEmpty() }
+        val startedAt = java.time.Instant.now().toString()
+        val path = "/sync/all-items?extended=full&episode_watched_at=yes&include_all_episodes=yes" +
+            (since?.let { "&date_from=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+        val (code, body) = runCatching { sk("GET", path) }.getOrNull() ?: return@withLock
+        if (code != 200) return@withLock
+        val root = parse(body)
+        val items = if (since == null) HashMap() else HashMap(seen.items)
+        (root?.get("movies") as? JsonArray)?.forEach { (it as? JsonObject)?.let { o -> watchedOf(o, "movie", "movie", items) } }
+        (root?.get("shows") as? JsonArray)?.forEach { (it as? JsonObject)?.let { o -> watchedOf(o, "show", "tv", items) } }
+        (root?.get("anime") as? JsonArray)?.forEach { (it as? JsonObject)?.let { o ->
+            // anime movies are movies; anime series use Simkl's season numbers (most match TMDB's)
+            if (o.obj("show")?.str("anime_type") == "movie" || o.obj("movie") != null) watchedOf(o, if (o.obj("movie") != null) "movie" else "show", "movie", items)
+            else watchedOf(o, "show", "tv", items)
+        } }
+        seen = Seen(all, startedAt, items)
+        runCatching { seenFile?.writeText(json.encodeToString(seen)) }
+        ServerState.info("[Simkl] watched history ${if (since == null) "read" else "updated"}: ${items.count { it.key.startsWith("movie:") }} movie(s), " +
+            "${items.values.sumOf { it.size }} episode(s)")
+    }
+
+    /** The site's watched keys ("tmdb:<id>" for a movie, "tmdb:<id>:<s>:<e>" for an episode). */
+    private fun seenKeys(): List<String> {
+        val out = ArrayList<String>()
+        for ((k, eps) in seen.items) {
+            val id = k.substringAfter(':')
+            if (k.startsWith("movie:")) out += "tmdb:$id" else eps.forEach { out += "tmdb:$id:$it" }
+        }
+        return out
+    }
+
     fun Route.simklRoutes(guard: suspend ApplicationCall.() -> Boolean) {
+        get("/web/api/simkl/seen") {
+            if (!call.guard()) return@get
+            if (saved.token.isEmpty()) return@get call.respondText("""{"linked":false,"keys":[]}""", ContentType.Application.Json)
+            // a slow Simkl answer must not hold the page: what is known so far goes out, the rest comes next time
+            kotlinx.coroutines.withTimeoutOrNull(8_000) { runCatching { syncSeen() } }
+            call.respondText(buildJsonObject {
+                put("linked", saved.token.isNotEmpty())
+                put("at", seen.syncedAt)
+                put("keys", buildJsonArray { seenKeys().forEach { add(it) } })
+            }.toString(), ContentType.Application.Json)
+        }
         get("/web/api/simkl/status") {
             if (!call.guard()) return@get
             call.respondText("""{"keyed":true,"own":${saved.clientId.isNotEmpty()},"linked":${saved.token.isNotEmpty()}}""", ContentType.Application.Json)
@@ -222,7 +317,16 @@ object WebSimkl {
 /* ----- Simkl: link the account in Settings, library page, mark watched at 85% ----- */
 var simkl={keyed:true,own:false,linked:false},skSent={},skBusy={};
 try{skSent=JSON.parse(localStorage.getItem('cncSimklSent')||'{}')}catch(e){skSent={}}
-function simklInit(){api('/web/api/simkl/status').then(function(s){simkl=s;g('navsk').classList.toggle('hide',!s.linked)}).catch(function(){})}
+function simklInit(){api('/web/api/simkl/status').then(function(s){simkl=s;g('navsk').classList.toggle('hide',!s.linked);if(s.linked)simklSeen()}).catch(function(){})}
+/* Episodes / movies already watched on Simkl are marked watched here too. Only keys not merged before are added, so one
+   unmarked by hand on the site stays unmarked. The bridge asks Simkl at most every 5 minutes. */
+var skSeenT=null;
+function simklSeen(){if(!simkl.linked)return;api('/web/api/simkl/seen').then(function(r){if(!r||!r.linked)return;
+ var had={};try{had=JSON.parse(localStorage.getItem('cncSimklSeen')||'{}')}catch(e){had={}}
+ var d=S('done',{})||{},n=0,next={};(r.keys||[]).forEach(function(k){next[k]=1;if(!had[k]&&!d[k]){d[k]=1;n++}});
+ if(n){Sset('done',d);if(window.refreshMarks)refreshMarks();if(window.contUpd)contUpd()}
+ try{localStorage.setItem('cncSimklSeen',JSON.stringify(next))}catch(e){}
+}).catch(function(){});clearTimeout(skSeenT);skSeenT=setTimeout(simklSeen,10*60*1000)}
 function simklMark(key,c){if(!simkl.linked||!c||(c.type!=='movie'&&c.type!=='tv')||!c.id||skSent[key]||skBusy[key])return;
  if(c.type==='tv'&&(c.s==null||c.e==null))return;skBusy[key]=1;
  var b='type='+c.type+'&id='+encodeURIComponent(c.id)+(c.type==='tv'?'&s='+c.s+'&e='+c.e:'');
