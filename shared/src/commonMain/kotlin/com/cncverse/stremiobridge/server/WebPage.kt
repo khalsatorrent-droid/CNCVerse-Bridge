@@ -6,7 +6,7 @@ package com.cncverse.stremiobridge.server
  * No dollar signs in the raw strings: they are written as the character literal.
  */
 internal object WebPage {
-    val HTML: String by lazy { listOf(TOP, WebPlayer.CSS, STYLE_END, WebPlayer.MARKUP, SCRIPT_START, WebPlayer.JS, WebMse.JS, WebShelves.JS, SCRIPT_END).joinToString("") }
+    val HTML: String by lazy { listOf(TOP, WebPlayer.CSS, STYLE_END, WebPlayer.MARKUP, SCRIPT_START, WebPlayer.JS, WebMse.JS, WebShelves.JS, WebSimkl.JS, SCRIPT_END).joinToString("") }
 
     private val TOP = """<!doctype html>
 <html lang="en"><head>
@@ -228,7 +228,7 @@ h2.rt{font:650 21px var(--disp);letter-spacing:-.01em;margin:34px 4vw 12px}
 
 <div id="app" class="hide">
  <header id="hd"><button class="logo" id="home">CNC<i>Verse</i></button>
-  <nav class="navs" aria-label="Sections"><button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navbr" type="button">Browse</button><button class="nav" id="navtv" type="button">Live TV</button><button class="nav" id="navdr" type="button">Short dramas</button><button class="nav" id="navmu" type="button">Music</button></nav>
+  <nav class="navs" aria-label="Sections"><button class="nav" id="navmov" type="button">Movies &amp; series</button><button class="nav" id="navbr" type="button">Browse</button><button class="nav" id="navtv" type="button">Live TV</button><button class="nav" id="navdr" type="button">Short dramas</button><button class="nav" id="navmu" type="button">Music</button><button class="nav hide" id="navsk" type="button">Simkl</button></nav>
   <form class="sbox" id="sf" role="search"><input id="q" type="search" list="rs" autocomplete="off" enterkeyhint="search" placeholder="Search movies and series" aria-label="Search"><datalist id="rs"></datalist><button class="quiet" id="sm" type="button" aria-pressed="false" title="Where to search">In: Catalog</button><button class="srch" id="sbtn" type="submit" aria-label="Search">Search</button></form>
   <button class="quiet gear" id="cfgb" type="button" aria-label="Settings">Settings</button><button class="quiet" id="out" type="button">Log out</button>
  </header>
@@ -252,7 +252,7 @@ function g(id){return document.getElementById(id)}
 function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
 function api(path){return fetch(path,{credentials:'same-origin'}).then(function(r){if(r.status===401){showLogin();throw new Error('auth')}if(!r.ok)throw new Error('http '+r.status);return r.json()})}
 function showLogin(){g('app').classList.add('hide');g('login').classList.remove('hide');g('pw').focus()}
-function showApp(){g('login').classList.add('hide');g('app').classList.remove('hide');api('/web/api/config').then(function(c){cfg=c});route()}
+function showApp(){g('login').classList.add('hide');g('app').classList.remove('hide');api('/web/api/config').then(function(c){cfg=c});simklInit();route()}
 
 g('lf').addEventListener('submit',function(ev){ev.preventDefault();g('lerr').textContent='';
  fetch('/web/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'password='+encodeURIComponent(g('pw').value)}).then(function(r){
@@ -270,6 +270,7 @@ function openSettings(){var d=el('div');d.appendChild(el('h3',null,'Settings'));
  choose('Subtitle size',null,'subsz','m',[['s','Small'],['m','Medium'],['l','Large'],['xl','Huge']]);
  choose('Subtitle colour',null,'subcol','white',[['white','White'],['yellow','Yellow'],['cyan','Cyan']]);
  choose('Subtitle background',null,'subbg','shadow',[['shadow','Outline'],['box','Dim box'],['solid','Black box']]);
+ simklSettings(d);
  var cl=el('div','btns');var b1=el('button','quiet','Clear continue watching');b1.type='button';b1.onclick=function(){lsSet('cncPos','{}');Sset('done',{});refreshMarks();b1.textContent='Cleared'};
  var b2=el('button','quiet','Clear My list');b2.type='button';b2.onclick=function(){lsSet('cncList','[]');b2.textContent='Cleared'};cl.appendChild(b1);cl.appendChild(b2);d.appendChild(cl);
  d.appendChild(el('div','kbd','Player keys: Space play/pause, ← → 10 s, ↑ ↓ volume, F full screen, M mute, C subtitles, A audio, Q quality, < > speed, N / P next / previous, I stats, 0-9 jump. Double-tap the sides of the picture to skip 10 s.'));
@@ -278,7 +279,7 @@ g('cfgb').onclick=openSettings;
 
 g('out').onclick=function(){fetch('/web/logout',{method:'POST',credentials:'same-origin'}).then(showLogin)};
 g('home').onclick=function(){g('q').value='';location.hash='#/'};
-g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};g('navbr').onclick=function(){location.hash='#/browse'};g('navdr').onclick=function(){location.hash='#/drama'};g('navmu').onclick=function(){location.hash='#/music'};
+g('navmov').onclick=function(){g('q').value='';location.hash='#/'};g('navtv').onclick=function(){location.hash='#/tv'};g('navbr').onclick=function(){location.hash='#/browse'};g('navdr').onclick=function(){location.hash='#/drama'};g('navmu').onclick=function(){location.hash='#/music'};g('navsk').onclick=function(){location.hash='#/simkl'};
 function searches(){return store('cncSearches')}
 function fillSearches(){var d=g('rs');d.textContent='';searches().forEach(function(s){var o=document.createElement('option');o.value=s;d.appendChild(o)})}
 function addSearch(s){if(!s)return;var l=searches().filter(function(x){return x.toLowerCase()!==s.toLowerCase()});l.unshift(s);put('cncSearches',l.slice(0,8));fillSearches()}
@@ -288,8 +289,8 @@ window.addEventListener('scroll',function(){g('hd').classList.toggle('solid',win
 window.addEventListener('hashchange',function(){if(!g('app').classList.contains('hide'))route()});
 
 function route(){var h=location.hash.replace(/^#\/?/,'').split('/');window.scrollTo(0,0);closePanel();
- g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navbr').setAttribute('aria-current',h[0]==='browse'?'page':'false');g('navdr').setAttribute('aria-current',h[0]==='drama'?'page':'false');g('navmu').setAttribute('aria-current',h[0]==='music'?'page':'false');g('navmov').setAttribute('aria-current',(h[0]==='tv'||h[0]==='browse'||h[0]==='drama'||h[0]==='music')?'false':'page');
- if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='drama')shelf('drama');else if(h[0]==='music')shelf('music');else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else if(h[0]==='x'&&h[1])xsearch(decodeURIComponent(h[1]));else if(h[0]==='xt'&&h[2])xtitle(decodeURIComponent(h[1]),decodeURIComponent(h[2]));else goHome()}
+ g('navtv').setAttribute('aria-current',h[0]==='tv'?'page':'false');g('navbr').setAttribute('aria-current',h[0]==='browse'?'page':'false');g('navdr').setAttribute('aria-current',h[0]==='drama'?'page':'false');g('navmu').setAttribute('aria-current',h[0]==='music'?'page':'false');g('navsk').setAttribute('aria-current',h[0]==='simkl'?'page':'false');g('navmov').setAttribute('aria-current',(h[0]==='tv'||h[0]==='browse'||h[0]==='drama'||h[0]==='music'||h[0]==='simkl')?'false':'page');
+ if(h[0]==='tv')liveTv();else if(h[0]==='browse')browse();else if(h[0]==='drama')shelf('drama');else if(h[0]==='music')shelf('music');else if(h[0]==='simkl')simklPage();else if(h[0]==='t'&&h[2])openTitle(h[1],h[2]);else if(h[0]==='s'&&h[1])search(decodeURIComponent(h[1]));else if(h[0]==='x'&&h[1])xsearch(decodeURIComponent(h[1]));else if(h[0]==='xt'&&h[2])xtitle(decodeURIComponent(h[1]),decodeURIComponent(h[2]));else goHome()}
 
 function recent(){try{return JSON.parse(localStorage.getItem('cncRecent')||'[]')}catch(e){return[]}}
 function remember(t){try{var l=recent().filter(function(x){return !(x.id===t.id&&x.type===t.type)});l.unshift({id:t.id,type:t.type,title:t.title,year:t.year,poster:t.poster});localStorage.setItem('cncRecent',JSON.stringify(l.slice(0,20)))}catch(e){}}
@@ -297,7 +298,7 @@ function remember(t){try{var l=recent().filter(function(x){return !(x.id===t.id&
 function card(it){var c=el('button','card');c.type='button';
  if(it.poster){var i=el('img','p');i.loading='lazy';i.alt='';i.src=it.poster;c.appendChild(i)}else{c.appendChild(el('div','p noimg',it.title))}
  if(it.rating)c.appendChild(el('span','rt',String(it.rating)));
- c.appendChild(el('div','t',it.title));c.appendChild(el('div','s',[it.year,it.type==='tv'?'Series':'Movie'].filter(Boolean).join('  ')));
+ c.appendChild(el('div','t',it.title));c.appendChild(el('div','s',[it.year,it.type==='tv'?'Series':'Movie',it.sub].filter(Boolean).join('  ')));
  c.onclick=function(){location.hash='#/t/'+it.type+'/'+it.id};return c}
 function rowEl(title,items,big){var m=g('main');m.appendChild(el('h2','rt',title));var w=el('div','rowwrap'+(big?' big':''));var row=el('div','row');items.forEach(function(it){row.appendChild(card(it))});
  var l=el('button','arrow l','‹'),r=el('button','arrow r','›');l.type=r.type='button';l.setAttribute('aria-label','Scroll left');r.setAttribute('aria-label','Scroll right');

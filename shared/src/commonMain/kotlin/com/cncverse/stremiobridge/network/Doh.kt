@@ -258,4 +258,13 @@ object DohHttp {
     }
 
     fun text(url: String, headers: Map<String, String> = emptyMap()): String = String(bytes(url, headers), Charsets.UTF_8)
+
+    /** Any request: the status code and the body, whatever the code is (an API that answers errors with a JSON explanation). */
+    fun request(method: String, url: String, body: String? = null, headers: Map<String, String> = emptyMap()): Pair<Int, String> {
+        val b = okhttp3.Request.Builder().url(url)
+        headers.forEach { (k, v) -> b.header(k, v) }
+        val rb = if (body != null) body.toRequestBody("application/json".toMediaType()) else if (method == "GET") null else "".toRequestBody()
+        b.method(method, rb)
+        client.newCall(b.build()).execute().use { r -> return r.code to (r.body?.string() ?: "") }
+    }
 }

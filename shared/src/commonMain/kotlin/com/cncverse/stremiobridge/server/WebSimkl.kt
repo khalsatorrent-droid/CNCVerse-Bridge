@@ -1,0 +1,260 @@
+package com.cncverse.stremiobridge.server
+
+import com.cncverse.stremiobridge.network.DohHttp
+import com.cncverse.stremiobridge.state.ServerState
+import io.ktor.http.*
+import io.ktor.server.application.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Simkl on the website: link a Simkl account (PIN login, no password passes through the bridge), show the library, and mark
+ * a movie / episode as watched. The app's Client ID (a free app made at simkl.com/settings/developer) and the account's token
+ * are kept here on the bridge, in simkl.json, never in the browser.
+ */
+object WebSimkl {
+    @Serializable
+    private data class Saved(val clientId: String = "", val token: String = "")
+
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    @Volatile private var saved = Saved()
+    private var file: File? = null
+    private const val API = "https://api.simkl.com"
+    private val STATUSES = setOf("watching", "plantowatch", "completed", "hold", "dropped")
+    private val CLIENT_ID = Regex("[A-Za-z0-9]{16,100}")
+    private val PIN = Regex("[A-Za-z0-9]{3,24}")
+
+    fun load(cacheDir: String) {
+        val f = File(cacheDir, "simkl.json")
+        file = f
+        saved = runCatching { json.decodeFromString<Saved>(f.readText()) }.getOrDefault(Saved())
+    }
+
+    private fun save(s: Saved) {
+        saved = s
+        libCache.clear()
+        runCatching { file?.writeText(json.encodeToString(s)) }.onFailure { ServerState.warn("Failed to save simkl.json: ${it.message}") }
+    }
+
+    private fun headers(withToken: Boolean): Map<String, String> {
+        val h = linkedMapOf("simkl-api-key" to saved.clientId, "User-Agent" to "CNCVerse-Bridge")
+        if (withToken && saved.token.isNotEmpty()) h["Authorization"] = "Bearer " + saved.token
+        return h
+    }
+
+    private suspend fun sk(method: String, path: String, body: String? = null, withToken: Boolean = true): Pair<Int, String> =
+        withContext(Dispatchers.IO) { DohHttp.request(method, API + path, body, headers(withToken)) }
+
+    private fun parse(t: String): JsonObject? = runCatching { json.parseToJsonElement(t) as? JsonObject }.getOrNull()
+    private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.contentOrNull
+    private fun JsonObject.obj(k: String): JsonObject? = this[k] as? JsonObject
+
+    private class Lib(val at: Long, val body: String)
+    private val libCache = ConcurrentHashMap<String, Lib>()
+
+    /** One library entry for the page: the card of the site (TMDB id, so it opens like any title), with the watched count as its note. */
+    private fun entries(root: JsonObject?, key: String, inner: String, type: String, skipped: IntArray): List<Pair<String, JsonObject>> {
+        val list = root?.get(key) as? JsonArray ?: return emptyList()
+        return list.mapNotNull { e ->
+            val o = e as? JsonObject ?: return@mapNotNull null
+            val m = o.obj(inner) ?: return@mapNotNull null
+            val tmdb = m.obj("ids")?.str("tmdb")?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) && it.length <= 10 }
+            if (tmdb == null) { skipped[0]++; return@mapNotNull null }
+            val title = m.str("title") ?: return@mapNotNull null
+            val watched = o.str("watched_episodes_count")?.toIntOrNull()
+            val total = o.str("total_episodes_count")?.toIntOrNull()
+            val sub = if (type == "tv" && watched != null && total != null && total > 0) "$watched/$total watched" else ""
+            (o.str("last_watched_at") ?: o.str("added_to_watchlist_at") ?: "") to buildJsonObject {
+                put("id", tmdb); put("type", type); put("title", title)
+                put("year", m.str("year") ?: "")
+                m.str("poster")?.takeIf { it.isNotBlank() }?.let { put("poster", "https://simkl.in/posters/${it}_m.jpg") }
+                if (sub.isNotEmpty()) put("sub", sub)
+            }
+        }
+    }
+
+    private suspend fun library(status: String): String {
+        libCache[status]?.let { if (System.currentTimeMillis() - it.at < 120_000) return it.body }
+        val skipped = IntArray(1)
+        val parts = coroutineScope {
+            listOf("movies", "shows", "anime").map { t ->
+                async {
+                    val (code, body) = sk("GET", "/sync/all-items/$t/$status?extended=full")
+                    if (code == 401) { save(saved.copy(token = "")); return@async null }
+                    if (code != 200) return@async null
+                    t to parse(body)
+                }
+            }.awaitAll()
+        }
+        if (saved.token.isEmpty()) return """{"linked":false,"items":[]}"""
+        val all = ArrayList<Pair<String, JsonObject>>()
+        var failed = 0
+        for (p in parts) {
+            if (p == null) { failed++; continue }
+            val (t, root) = p
+            when (t) {
+                "movies" -> all += entries(root, "movies", "movie", "movie", skipped)
+                "shows" -> all += entries(root, "shows", "show", "tv", skipped)
+                else -> all += entries(root, "anime", "show", "tv", skipped)
+            }
+        }
+        val body = buildJsonObject {
+            put("linked", true)
+            put("items", buildJsonArray { all.sortedByDescending { it.first }.distinctBy { it.second.str("type") + it.second.str("id") }.forEach { add(it.second) } })
+            put("hidden", skipped[0])
+            put("failed", failed)
+        }.toString()
+        if (failed == 0) libCache[status] = Lib(System.currentTimeMillis(), body)
+        return body
+    }
+
+    /** Marks a movie / an episode as watched on Simkl (TMDB ids). Returns {"ok":..,"found":..}. */
+    private suspend fun markWatched(type: String, id: String, s: Int?, e: Int?): String {
+        val now = java.time.Instant.now().toString()
+        val body = buildJsonObject {
+            if (type == "movie") put("movies", buildJsonArray { add(buildJsonObject { put("watched_at", now); put("ids", buildJsonObject { put("tmdb", id.toLong()) }) }) })
+            else put("shows", buildJsonArray {
+                add(buildJsonObject {
+                    put("ids", buildJsonObject { put("tmdb", id.toLong()) })
+                    put("seasons", buildJsonArray {
+                        add(buildJsonObject {
+                            put("number", s ?: 1)
+                            put("episodes", buildJsonArray { add(buildJsonObject { put("number", e ?: 1); put("watched_at", now) }) })
+                        })
+                    })
+                })
+            })
+        }.toString()
+        val (code, text) = sk("POST", "/sync/history", body)
+        if (code == 401) { save(saved.copy(token = "")); return """{"ok":false,"linked":false}""" }
+        if (code !in 200..299) return """{"ok":false,"linked":true}"""
+        libCache.clear()
+        val nf = parse(text)?.obj("not_found")
+        val missing = nf != null && nf.values.any { (it as? JsonArray)?.isNotEmpty() == true }
+        ServerState.info("[Simkl] marked watched: $type $id" + (if (type == "tv") " S$s E$e" else "") + if (missing) " (Simkl does not know this title)" else "")
+        return """{"ok":true,"linked":true,"found":${!missing}}"""
+    }
+
+    fun Route.simklRoutes(guard: suspend ApplicationCall.() -> Boolean) {
+        get("/web/api/simkl/status") {
+            if (!call.guard()) return@get
+            call.respondText("""{"keyed":${saved.clientId.isNotEmpty()},"linked":${saved.token.isNotEmpty()}}""", ContentType.Application.Json)
+        }
+        post("/web/api/simkl/config") {
+            if (!call.guard()) return@post
+            val id = call.receiveParameters()["client_id"].orEmpty().trim()
+            if (id.isNotEmpty() && !CLIENT_ID.matches(id)) return@post call.respond(HttpStatusCode.BadRequest)
+            // another app's id: the old token does not belong to it
+            if (id != saved.clientId) save(Saved(id, ""))
+            call.respondText("""{"keyed":${saved.clientId.isNotEmpty()}}""", ContentType.Application.Json)
+        }
+        post("/web/api/simkl/pin") {
+            if (!call.guard()) return@post
+            if (saved.clientId.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest)
+            val (code, text) = runCatching { sk("GET", "/oauth/pin?client_id=${saved.clientId}", withToken = false) }.getOrNull() ?: (0 to "")
+            val o = parse(text)
+            val user = o?.str("user_code")
+            if (code != 200 || user == null) return@post call.respond(HttpStatusCode.BadGateway)
+            call.respondText(buildJsonObject {
+                put("user_code", user)
+                put("verification_url", o?.str("verification_url") ?: "https://simkl.com/pin/")
+                put("expires_in", o?.str("expires_in")?.toIntOrNull() ?: 900)
+                put("interval", (o?.str("interval")?.toIntOrNull() ?: 5).coerceIn(3, 30))
+            }.toString(), ContentType.Application.Json)
+        }
+        get("/web/api/simkl/poll") {
+            if (!call.guard()) return@get
+            val pin = call.request.queryParameters["code"].orEmpty()
+            if (!PIN.matches(pin) || saved.clientId.isEmpty()) return@get call.respond(HttpStatusCode.BadRequest)
+            val (_, text) = runCatching { sk("GET", "/oauth/pin/$pin?client_id=${saved.clientId}", withToken = false) }.getOrNull() ?: (0 to "")
+            val token = parse(text)?.str("access_token")?.takeIf { it.isNotBlank() }
+            if (token != null) { save(saved.copy(token = token)); ServerState.info("[Simkl] account linked") }
+            call.respondText("""{"linked":${saved.token.isNotEmpty()}}""", ContentType.Application.Json)
+        }
+        post("/web/api/simkl/unlink") {
+            if (!call.guard()) return@post
+            save(saved.copy(token = ""))
+            call.respondText("""{"linked":false}""", ContentType.Application.Json)
+        }
+        get("/web/api/simkl/library") {
+            if (!call.guard()) return@get
+            val status = call.request.queryParameters["status"].orEmpty().ifEmpty { "watching" }
+            if (status !in STATUSES) return@get call.respond(HttpStatusCode.BadRequest)
+            if (saved.token.isEmpty()) return@get call.respondText("""{"linked":false,"items":[]}""", ContentType.Application.Json)
+            call.respondText(library(status), ContentType.Application.Json)
+        }
+        post("/web/api/simkl/watched") {
+            if (!call.guard()) return@post
+            val p = call.receiveParameters()
+            val type = p["type"]
+            val id = p["id"].orEmpty()
+            val s = p["s"]?.toIntOrNull()
+            val e = p["e"]?.toIntOrNull()
+            if ((type != "movie" && type != "tv") || id.isEmpty() || !id.all(Char::isDigit) || id.length > 10) return@post call.respond(HttpStatusCode.BadRequest)
+            if (type == "tv" && (s == null || e == null || s < 0 || e < 0 || s > 999 || e > 9999)) return@post call.respond(HttpStatusCode.BadRequest)
+            if (saved.token.isEmpty()) return@post call.respondText("""{"ok":false,"linked":false}""", ContentType.Application.Json)
+            val r = runCatching { markWatched(type, id, s, e) }.getOrElse { """{"ok":false,"linked":true}""" }
+            call.respondText(r, ContentType.Application.Json)
+        }
+    }
+
+    val JS = """
+/* ----- Simkl: link the account in Settings, library page, mark watched at 85% ----- */
+var simkl={keyed:false,linked:false},skSent={},skBusy={};
+try{skSent=JSON.parse(localStorage.getItem('cncSimklSent')||'{}')}catch(e){skSent={}}
+function simklInit(){api('/web/api/simkl/status').then(function(s){simkl=s;g('navsk').classList.toggle('hide',!s.linked)}).catch(function(){})}
+function simklMark(key,c){if(!simkl.linked||!c||(c.type!=='movie'&&c.type!=='tv')||!c.id||skSent[key]||skBusy[key])return;
+ if(c.type==='tv'&&(c.s==null||c.e==null))return;skBusy[key]=1;
+ var b='type='+c.type+'&id='+encodeURIComponent(c.id)+(c.type==='tv'?'&s='+c.s+'&e='+c.e:'');
+ fetch('/web/api/simkl/watched',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b}).then(function(r){return r.json()}).then(function(r){
+  delete skBusy[key];if(r.linked===false){simkl.linked=false;g('navsk').classList.add('hide');return}
+  if(r.ok){skSent[key]=1;var k=Object.keys(skSent);if(k.length>400)delete skSent[k[0]];try{localStorage.setItem('cncSimklSent',JSON.stringify(skSent))}catch(e){}}
+ }).catch(function(){delete skBusy[key]})}
+function simklSettings(d){var box=el('div','setr');var t=el('div');t.style.width='100%';t.appendChild(el('b',null,'Simkl'));
+ var sm=el('small',null,'');t.appendChild(sm);var area=el('div');area.style.marginTop='8px';t.appendChild(area);box.appendChild(t);d.appendChild(box);
+ function draw(){area.textContent='';
+  if(simkl.linked){sm.textContent='Linked. Your library is in the Simkl tab, and a movie or episode is marked watched there once 85% of it has played.';
+   var u=el('button','quiet','Unlink Simkl');u.type='button';u.onclick=function(){fetch('/web/api/simkl/unlink',{method:'POST',credentials:'same-origin'}).then(function(){simkl.linked=false;g('navsk').classList.add('hide');draw()})};area.appendChild(u);return}
+  sm.textContent='Needs a free Simkl app: make one at simkl.com/settings/developer and paste its Client ID here. Then link your account with the code Simkl shows.';
+  var row=el('div','btns');var inp=document.createElement('input');inp.type='text';inp.placeholder='Simkl Client ID';inp.autocomplete='off';inp.spellcheck=false;inp.style.flex='1 1 220px';row.appendChild(inp);
+  var sv=el('button','quiet','Save ID');sv.type='button';row.appendChild(sv);area.appendChild(row);
+  var msg=el('div','kbd','');area.appendChild(msg);var lk=el('button',null,'Link my Simkl account');lk.type='button';lk.style.marginTop='8px';lk.disabled=!simkl.keyed;area.appendChild(lk);
+  if(simkl.keyed){inp.placeholder='Client ID saved (paste another to replace it)'}
+  sv.onclick=function(){fetch('/web/api/simkl/config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'client_id='+encodeURIComponent(inp.value.trim())}).then(function(r){
+   if(!r.ok){msg.textContent='That does not look like a Client ID.';return}return r.json().then(function(s){simkl.keyed=!!s.keyed;lk.disabled=!simkl.keyed;msg.textContent=s.keyed?'Saved.':'Removed.'})})};
+  lk.onclick=function(){lk.disabled=true;msg.textContent='Asking Simkl for a code';
+   fetch('/web/api/simkl/pin',{method:'POST',credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('pin');return r.json()}).then(function(p){
+    msg.textContent='';var a=document.createElement('a');a.href=p.verification_url;a.target='_blank';a.rel='noopener';a.textContent=p.verification_url;a.style.color='var(--lamp)';
+    msg.appendChild(document.createTextNode('Open '));msg.appendChild(a);msg.appendChild(document.createTextNode(' and enter the code '));var cb=el('b',null,p.user_code);cb.style.fontSize='18px';msg.appendChild(cb);msg.appendChild(document.createTextNode('. Waiting for you to confirm'));
+    var until=Date.now()+(p.expires_in||900)*1000;
+    (function poll(){if(!document.body.contains(area)||simkl.linked)return;if(Date.now()>until){msg.textContent='The code expired. Try again.';lk.disabled=false;return}
+     fetch('/web/api/simkl/poll?code='+encodeURIComponent(p.user_code),{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(s){if(s.linked){simkl.linked=true;g('navsk').classList.remove('hide');draw()}else setTimeout(poll,(p.interval||5)*1000)}).catch(function(){setTimeout(poll,(p.interval||5)*1000)})})()
+   }).catch(function(){msg.textContent='Simkl did not answer (is the Client ID right?). Try again.';lk.disabled=!simkl.keyed})}}
+ draw()}
+var SK_TABS=[['watching','Watching'],['plantowatch','Plan to watch'],['completed','Completed'],['hold','On hold'],['dropped','Dropped']];
+function simklPage(){var my=++xrun;document.title='Simkl - CNCVerse';var m=g('main');m.textContent='';m.appendChild(el('div','top-gap'));
+ var head=el('div','tvh');head.appendChild(el('h2',null,'Simkl'));var cnt=el('span','cnt');head.appendChild(cnt);m.appendChild(head);
+ var chips=el('div','chips');chips.style.padding='0 4vw 10px';m.appendChild(chips);var info=el('p','msg','Loading');m.appendChild(info);var gr=el('div','grid');m.appendChild(gr);
+ var cur=S('skTab','watching'),run=0;
+ function load(){var r=++run;gr.textContent='';info.textContent='Loading';info.classList.remove('hide');cnt.textContent='';
+  Array.prototype.forEach.call(chips.children,function(c){c.setAttribute('aria-pressed',String(c.dataset.s===cur))});
+  api('/web/api/simkl/library?status='+cur).then(function(d){if(my!==xrun||r!==run)return;
+   if(!d.linked){info.textContent='Simkl is not linked. Link your account in Settings.';return}
+   var it=d.items||[];it.forEach(function(x){gr.appendChild(card(x))});cnt.textContent=it.length+' title(s)';
+   info.textContent=it.length?(d.hidden?d.hidden+' title(s) without a TMDB id are not shown.':''):(d.failed?'Simkl did not answer. Try again in a moment.':'Nothing in this list.');if(!info.textContent)info.classList.add('hide')
+  }).catch(function(e){if(e.message!=='auth'&&r===run)info.textContent='Could not load your Simkl library. Try again.'})}
+ SK_TABS.forEach(function(t){var c=el('button','chip',t[1]);c.type='button';c.dataset.s=t[0];c.onclick=function(){cur=t[0];Sset('skTab',cur);load()};chips.appendChild(c)});
+ load()}
+"""
+}
