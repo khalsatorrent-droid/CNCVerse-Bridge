@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.25
 
 - **Simkl on the website.** Settings has a new Simkl section: paste the Client ID of a free Simkl app (made at simkl.com/settings/developer), press *Link my Simkl account* and enter the shown code at simkl.com/pin. Then a **Simkl** tab appears with your library (Watching, Plan to watch, Completed, On hold, Dropped; titles open like any other), and a movie or episode is **marked watched on Simkl when 85% of it has played** (also marked watched on the site, and sent once per title). The Client ID and the account's token stay on the bridge (`simkl.json`), not in the browser. Titles Simkl has no TMDB id for are not shown in the library.
 
