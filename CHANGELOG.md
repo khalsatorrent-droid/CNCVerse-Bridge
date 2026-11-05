@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.28
 
 - **Website player: brightness.** Player → ⋯ → *Brightness* (75% to 250% presets, or ±10% steps up to 300%), the keys `b` (brighter) and `Shift+B` (darker), or on a phone or tablet a swipe up / down on the left half of the picture. Handy for dark scenes. It's remembered in that browser and applies to every video.
 ## 1.8.27
