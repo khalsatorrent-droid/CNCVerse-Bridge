@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: a refusing host is probed again instead of being capped for 2 minutes.** One HTTP 200 answer to an extra connection (seen on pixeldrain mirrors) capped the whole host at 3 connections for 2 minutes, so raising the setting from 8 to 16 changed nothing. Now a refusal takes away one connection (never below 2), the allowance grows by one every 15 s while the host stays quiet until the setting is reached again, a 200 to a range that starts at the beginning of the file is used instead of counted as a refusal, and the log says `using N connections to it for now, trying more later`.
+
 ## 1.8.34
 
 - **Media server: a host that refuses downloads no longer gets hammered.** When a host answered an extra download connection with anything but a part of the file (429 too many requests, 503, 403…), that connection asked for the same piece again at once, without waiting and without a word in the log - which made a host that limits connections or requests refuse more and buffer more. Now each refusal makes the connection wait longer (up to 10 refusals in a row, then it leaves and is started again later), the host gets at most 3 connections for 2 minutes, and the log says so once: `[MediaServer] <host> answered HTTP 429 to a download request - using at most 3 connections to it for 2 minutes`.
