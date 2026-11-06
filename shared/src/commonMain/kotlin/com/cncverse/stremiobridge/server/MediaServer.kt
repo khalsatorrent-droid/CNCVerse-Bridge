@@ -463,7 +463,11 @@ object MediaServer {
 
     /** Connections allowed for this file (main download included). */
     private fun connectionsFor(e: FileEntry): Int {
-        val n = if (isHeavy(e)) minOf(prefs.connections, HEAVY_CONNECTIONS) else prefs.connections
+        // A heavy source gets fewer connections, but never fewer than half of what was asked for (3 at the floor): each connection
+        // now streams for a long stretch instead of making a request per piece, so the load a heavy origin sees is a fraction of
+        // what it was, and pinning the whole file to 3 connections made a 16-connection setting worth nothing on a host that was
+        // merely slow to answer its first byte.
+        val n = if (isHeavy(e)) minOf(prefs.connections, maxOf(HEAVY_CONNECTIONS, prefs.connections / 2)) else prefs.connections
         return refusedCap(e.url, n)
     }
 
@@ -736,6 +740,8 @@ object MediaServer {
     private const val MIN_READ_AHEAD = 256L * 1024 * 1024
     /** Next to the reading position the missing part is fetched in 2 MB pieces (all connections at once), further on in 8 MB ones. */
     private const val NEAR_BYTES = 48L * 1024 * 1024
+    /** One extra connection's request covers this much of the file; it keeps extending its claim inside it instead of asking again. */
+    private const val REQUEST_SPAN = 64L * 1024 * 1024
     private const val NEAR_SEG = 2L * 1024 * 1024
 
     /** The read-ahead window in bytes (0 in the settings = no limit). */
@@ -986,7 +992,7 @@ object MediaServer {
                         // a hiccup on one piece: this connection waits a moment and goes on (gives up after ten in a row)
                         if (++failures > 10) throw t
                         Thread.sleep(500L * failures)
-                    } finally { synchronized(e.claims) { e.claims.remove(piece.first) } }
+                    } finally { /* the piece claim is released by downloadSegment itself */ }
                     idleSince = System.currentTimeMillis()
                 }
                 if (!did) {
@@ -1046,45 +1052,106 @@ object MediaServer {
         val c = e.claims.floorEntry(off); c != null && c.value > off
     }
 
+    /**
+     * One extra connection's download. The request covers a long span of the file and the connection keeps streaming while it can
+     * claim the piece after the one it is on, so a connection makes ONE request for up to [REQUEST_SPAN] of the file instead of
+     * one per piece.
+     *
+     * This is how the player itself reads a file, and it is what a host with a slow first byte needs (a redirect chain, a cold CDN
+     * node, a host that queues requests). At one request per 2 MB piece, a host that answers after a second spent a third of every
+     * connection's life waiting to start: sixteen connections delivered less than one direct stream, and the extra requests are
+     * also what makes a host start refusing (429). The claim still moves in 2 MB steps, so the pieces next to this one stay free
+     * for the other connections and none of them holds a big piece while the player waits.
+     */
     private fun downloadSegment(e: FileEntry, client: okhttp3.OkHttpClient, s0: Long, s1: Long, buf: ByteArray, wr: ChunkStore.Rw) {
-        val pos = e.have.firstGapFrom(s0)
-        if (pos >= s1) return
-        val t0 = System.currentTimeMillis()
-        client.newCall(requestFor(e.src, e.url, "bytes=$pos-${s1 - 1}")).execute().use { r ->
-            noteTtfb(e.url, System.currentTimeMillis() - t0)
-            // The whole file from its start answers 200 to a range that begins at 0 (some hosts do): that is usable as it is
-            val whole = r.code == 200 && pos == 0L
-            if (r.code != 206 && !whole) {
-                // Refused (429 / 503 / 403...) or ranges not honoured. This used to return silently, so the connection asked for the
-                // same piece again at once, over and over - which only made a host that limits connections or requests worse.
-                // Now it counts as a failure (the connection waits longer each time) and the host gets fewer connections for a while.
-                noteRefused(e.url, r.code, 1 + e.boosters.get())
-                throw IOException("HTTP ${r.code} from the source")
+        // the piece this connection holds right now: it moves forward as the claim is extended
+        var claimStart = s0
+        var claimEnd = s1
+        try {
+            val pos = e.have.firstGapFrom(s0)
+            if (pos >= s1 || e.total <= 0) return
+            val t0 = System.currentTimeMillis()
+            // A closed range of one long span rather than an open-ended one: a host that answers 200 (not 206) to "bytes=N-" would
+            // count as a refusal here, and 64 MB per request is already 32x fewer requests than one per piece. The connection may
+            // extend its claim several times inside this span; when the span is used up the caller asks for the next one.
+            val hardEnd = if (e.closedTotal > 0) minOf(e.total, e.closedTotal) else e.total
+            val reqEnd = minOf(hardEnd, pos + REQUEST_SPAN)
+            val range = "bytes=$pos-${reqEnd - 1}"
+            client.newCall(requestFor(e.src, e.url, range)).execute().use { r ->
+                noteTtfb(e.url, System.currentTimeMillis() - t0)
+                // The whole file from its start answers 200 to a range that begins at 0 (some hosts do): that is usable as it is
+                val whole = r.code == 200 && pos == 0L
+                if (r.code != 206 && !whole) {
+                    // Refused (429 / 503 / 403...) or ranges not honoured. This used to return silently, so the connection asked for the
+                    // same piece again at once, over and over - which only made a host that limits connections or requests worse.
+                    // Now it counts as a failure (the connection waits longer each time) and the host gets fewer connections for a while.
+                    noteRefused(e.url, r.code, 1 + e.boosters.get())
+                    throw IOException("HTTP ${r.code} from the source")
+                }
+                val input = r.body?.byteStream() ?: return@use
+                var off = if (whole) 0L else (parseStart(r.header("Content-Range")) ?: pos)
+                while (!e.stop) {
+                    if (off >= claimEnd) {
+                        // This piece is done: stay on the same connection if the next gap can be claimed for it
+                        if (claimEnd >= reqEnd) break
+                        val next = extendClaim(e, claimStart, claimEnd) ?: break
+                        claimStart = claimEnd
+                        claimEnd = minOf(next, reqEnd)
+                    }
+                    val want = minOf(buf.size.toLong(), claimEnd - off).toInt()
+                    if (want <= 0) break
+                    val n = input.read(buf, 0, want)
+                    if (n < 0) break
+                    wr.write(off, buf, n)
+                    e.have.add(off, off + n)
+                    e.dlBytes.addAndGet(n.toLong())
+                    off += n
+                }
             }
-            val input = r.body?.byteStream() ?: return@use
-            var off = if (whole) 0L else (parseStart(r.header("Content-Range")) ?: pos)
-            while (!e.stop && off < s1) {
-                val n = input.read(buf, 0, minOf(buf.size.toLong(), s1 - off).toInt())
-                if (n < 0) break
-                wr.write(off, buf, n)
-                e.have.add(off, off + n)
-                e.dlBytes.addAndGet(n.toLong())
-                off += n
+        } finally {
+            // whatever piece this connection still holds (it may have moved several times)
+            synchronized(e.claims) { e.claims.remove(claimStart) }
+            trimBehind(e)
+            val nowMs = System.currentTimeMillis()
+            if (nowMs - e.lastSaved > 2_000) synchronized(e.metaFile) { e.lastSaved = nowMs; saveMeta(e) }
+            // A full cache means "fetch less ahead", not "give up on this file": setting [FileEntry.stop] here also stopped the main
+            // download, so a file that was playing fine stalled for good the moment the cache filled. This connection now waits and
+            // tries again; what is already on disk keeps serving the player.
+            if (!makeRoom(0, e.id)) {
+                if (nowMs - e.lastFullLog > 30_000L) {
+                    e.lastFullLog = nowMs
+                    ServerState.warn("[MediaServer] the media cache is full (limit ${prefs.maxCacheMb} MB) - pausing the read-ahead for ${hostOf(e.url)}")
+                }
+                Thread.sleep(1_000)
             }
         }
-        trimBehind(e)
-        val nowMs = System.currentTimeMillis()
-        if (nowMs - e.lastSaved > 2_000) synchronized(e.metaFile) { e.lastSaved = nowMs; saveMeta(e) }
-        // A full cache means "fetch less ahead", not "give up on this file": setting [FileEntry.stop] here also stopped the main
-        // download, so a file that was playing fine stalled for good the moment the cache filled. This connection now waits and
-        // tries again; what is already on disk keeps serving the player.
-        if (!makeRoom(0, e.id)) {
-            if (nowMs - e.lastFullLog > 30_000L) {
-                e.lastFullLog = nowMs
-                ServerState.warn("[MediaServer] the media cache is full (limit ${prefs.maxCacheMb} MB) - pausing the read-ahead for ${hostOf(e.url)}")
-            }
-            Thread.sleep(1_000)
-        }
+    }
+
+    /**
+     * Hands the connection that just finished [from, end) the next piece after it, when it is still free: the new end, or null.
+     * The old claim is replaced by the longer one, so the other connections see one continuous region and never a hole.
+     */
+    private fun extendClaim(e: FileEntry, from: Long, end: Long): Long? = synchronized(e.claims) {
+        if (e.total <= end) return null
+        val ahead = aheadBytes()
+        val to = if (ahead > 0) minOf(e.total, playPos(e) + ahead) else e.total
+        if (to <= end) return null
+        // the next bytes are already taken (another connection, the main download, or they are on disk)
+        val covering = e.claims.floorEntry(end)
+        if (covering != null && covering.value > end) return null
+        val mainAt = if (e.worker != null) e.writePos else -1L
+        if (mainAt >= 0 && end >= mainAt && end < mainAt + NEAR_SEG) return null
+        if (e.have.contiguousEnd(end) > end) return null
+        val near = end < playPos(e) + NEAR_BYTES
+        val unit = if (near) NEAR_SEG else SEG
+        var newEnd = minOf(to, e.total, (end / unit + 1) * unit)
+        e.claims.ceilingEntry(end + 1)?.let { if (it.key < newEnd) newEnd = it.key }
+        if (mainAt > end && mainAt < newEnd) newEnd = mainAt
+        newEnd = minOf(newEnd, maxOf(end + 1, nextHave(e, end, newEnd)))
+        if (newEnd <= end) return null
+        e.claims.remove(from)
+        e.claims[end] = newEnd
+        newEnd
     }
 
     private fun parseTotal(contentRange: String?): Long? =
@@ -1359,7 +1426,9 @@ object MediaServer {
                         if (e.ranges && !near && e.focus < 0 && !isClaimed(e, pos)) e.focus = pos
                         if (e.error != null && e.worker == null) throw IOException(e.error)
                         if (System.currentTimeMillis() - lastProgress > 90_000) throw IOException("download stalled")
-                        delay(15)
+                        // Short poll: the download writes in 128 KB steps, and 15 ms of sleep per step capped what one response could
+                        // hand a player at about 8 MB/s however fast the host and the disk were - a ceiling a direct link never has.
+                        delay(3)
                         continue
                     }
                     val n = minOf(avail - pos, end - pos + 1, buf.size.toLong()).toInt()
