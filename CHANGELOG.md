@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.30
 
 - **Relay: no more stopping mid-video.** The relay now reads the host ahead through a small 4 MB pipe, so the host keeps sending while the player is busy. When the host drops or stalls the connection (15 s without data), the relay asks again from the byte it reached, up to 6 times with growing waits, and the player never sees the answer cut short. Before, a dropped connection ended the answer early and the player had to buffer and reconnect. Every pick-up is logged (`[Relay] … picked up again`).
 - **Better keep-alive on Android** (Settings → *Keep running*):
