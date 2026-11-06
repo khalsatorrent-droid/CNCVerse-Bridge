@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.33
 
 - **Anime link order:** resolution first, then hardsub, then sub before dub (dub first when *Anime audio* is set to dub; unlabelled links in between), then the preferred audio languages.
 ## 1.8.32
