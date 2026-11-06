@@ -43,6 +43,7 @@ fun SettingsScreen() {
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
+            KeepAliveCard()
             TunnelSettingsCard()
             WebsiteCard()
             CloudflareChecksCard()

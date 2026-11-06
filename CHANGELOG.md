@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Relay: no more stopping mid-video.** The relay now reads the host ahead through a small 4 MB pipe, so the host keeps sending while the player is busy. When the host drops or stalls the connection (15 s without data), the relay asks again from the byte it reached, up to 6 times with growing waits, and the player never sees the answer cut short. Before, a dropped connection ended the answer early and the player had to buffer and reconnect. Every pick-up is logged (`[Relay] … picked up again`).
+- **Better keep-alive on Android** (Settings → *Keep running*):
+  - The bridge starts again by itself after a phone restart and after an app update, if it was running before.
+  - A check every 15 minutes, and a few seconds after the app is swiped away or the service is closed, starts it again if Android closed it.
+  - The web server is tested every minute with a request to itself. If it stops answering twice in a row, it's restarted on the same port without reloading the extensions.
+  - Pressing **Stop** turns all of this off until you start the bridge again.
+  - The new card shows whether battery optimisation is off for the app, with a button to allow running in the background, and opens the phone maker's auto-start screen (Xiaomi, Oppo/Realme, Vivo, OnePlus, Huawei/Honor, Samsung…) or the app's settings.
 ## 1.8.29
 
 - **Website player: brightness on a 0–100% scale**, like a phone's slider. 50% is the normal picture, 100% the brightest (twice as bright) and 0% half as bright. A level set before is carried over.

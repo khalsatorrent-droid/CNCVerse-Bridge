@@ -128,6 +128,7 @@ object BridgeRuntime {
 
     private var watchdogJob: Job? = null
     private var lastHeal = 0L
+    private var deadChecks = 0
 
     /**
      * Self-healing for unattended runs (a tablet left on overnight): every 2 minutes, if extensions are installed but
@@ -137,13 +138,24 @@ object BridgeRuntime {
         watchdogJob?.cancel()
         watchdogJob = appScope?.launch(Dispatchers.IO) {
             while (isActive) {
-                delay(2 * 60 * 1000L)
+                delay(60 * 1000L)
                 runCatching {
                     if (ServerState.status.value !is ServerStatus.Running) return@runCatching
                     if (!StremioServer.isRunning) {
                         ServerState.warn("Watchdog: web server was down, starting it again")
                         StremioServer.start(port, cacheDir)
-                    }
+                        deadChecks = 0
+                    } else if (!StremioServer.answers()) {
+                        // "running" but not answering (frozen after the phone slept, or the socket was lost): twice in a row -> restart it
+                        deadChecks++
+                        if (deadChecks >= 2) {
+                            ServerState.warn("Watchdog: web server stopped answering, starting it again")
+                            runCatching { StremioServer.restartEngine() }.onFailure {
+                                StremioServer.stop(); StremioServer.start(port, cacheDir)
+                            }
+                            deadChecks = 0
+                        }
+                    } else deadChecks = 0
                     val installed = PluginInstaller.loadInstalledPlugins(cacheDir)
                     val active = ServerState.globalLoadedPlugins.value.count { it.apiRegistered }
                     val since = System.currentTimeMillis() - lastHeal

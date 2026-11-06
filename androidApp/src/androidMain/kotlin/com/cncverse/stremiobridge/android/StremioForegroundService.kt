@@ -43,6 +43,11 @@ class StremioForegroundService : Service() {
         fun getService(): StremioForegroundService = this@StremioForegroundService
     }
 
+    companion object {
+        /** True while the service runs (the keep-alive checks read it). */
+        @Volatile var alive = false
+    }
+
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -84,6 +89,8 @@ class StremioForegroundService : Service() {
             val i = Intent(applicationContext, StremioForegroundService::class.java)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(i) else startService(i)
         }
+        // in case that was not allowed or the phone maker closes the process anyway: a check in a few seconds
+        KeepAlive.checkSoon(applicationContext)
     }
 
     override fun onCreate() {
@@ -112,6 +119,7 @@ class StremioForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand")
+        alive = true
         acquireLocks()
         startLiveNotification()
         if (ServerState.status.value is ServerStatus.Running && StremioServer.isRunning) {
@@ -148,6 +156,9 @@ class StremioForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        alive = false
+        // closed while it should run (not Stop): ask for a check soon
+        if (KeepAlive.wanted(applicationContext)) KeepAlive.checkSoon(applicationContext, 10_000)
         releaseLocks()
         stopServer()
         serviceScope.cancel()

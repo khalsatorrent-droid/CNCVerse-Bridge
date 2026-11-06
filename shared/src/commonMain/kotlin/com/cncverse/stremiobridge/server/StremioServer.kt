@@ -491,6 +491,24 @@ object StremioServer {
         return targetPort
     }
 
+    /** Whether the web server really answers (a request to itself, 4 s at most): "running" flags can be wrong after a freeze. */
+    fun answers(): Boolean = engine != null && runCatching {
+        val c = java.net.URL("http://127.0.0.1:$activePort/health-ping").openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 4_000; c.readTimeout = 4_000; c.instanceFollowRedirects = false
+        try { c.responseCode > 0 } finally { c.disconnect() }
+    }.getOrDefault(false)
+
+    /** Starts the web server again on the same port without touching the rest (extensions, tunnel, caches). */
+    fun restartEngine() {
+        runCatching { engine?.stop(0, 500) }
+        engine = null
+        engine = embeddedServer(CIO, port = activePort, host = "0.0.0.0") {
+            setupPlugins()
+            setupRoutes()
+        }.start(wait = false)
+        ServerState.info("Web server started again on port $activePort")
+    }
+
     fun stop() {
         stopPeriodicRefreshJob()
         com.cncverse.stremiobridge.tunnel.CloudflaredManager.stopTunnel()
@@ -818,6 +836,9 @@ object StremioServer {
             head("/media/{id}/file/{name}") { MediaServer.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["name"].orEmpty()) }
             get("/media/{id}/pl/{tok}") { MediaServer.servePlaylist(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
             get("/media/{id}/seg/{tok}") { MediaServer.serveSegment(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty()) }
+
+            // the watchdog's "are you there?" (answered without any work)
+            get("/health-ping") { call.respondText("ok") }
 
             // ── Relay: links that need headers, passed through with them (nothing kept on this device) ──
             get("/relay/{id}/f/{tok}/{name}") { Relay.serveFile(call, call.parameters["id"].orEmpty(), call.parameters["tok"].orEmpty(), call.parameters["name"].orEmpty()) }

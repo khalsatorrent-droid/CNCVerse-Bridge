@@ -201,6 +201,8 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
     }
 
     private fun onStopPressed() {
+        // stopped by hand: no restarting it in the background until it is started again
+        KeepAlive.setWanted(applicationContext, false)
         bridgeService?.stopServer()
         stopService(Intent(this, StremioForegroundService::class.java))
         if (ServerState.status.value !is ServerStatus.Stopped) BridgeRuntime.stopBridge()
@@ -224,6 +226,7 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
 
     private fun startBridgeService() {
         askBatteryExemption()
+        KeepAlive.setWanted(applicationContext, true)
         com.cncverse.stremiobridge.plugin.PluginUIContext.currentActivity = this
         val intent = Intent(this, StremioForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

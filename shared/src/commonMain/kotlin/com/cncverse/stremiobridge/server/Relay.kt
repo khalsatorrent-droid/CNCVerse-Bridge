@@ -125,6 +125,13 @@ object Relay {
         return RELAY
     }
 
+    /**
+     * The media server's client with a shorter wait for data: a host that goes quiet for 15 s mid-video is asked again from the
+     * byte reached (the player usually has more than that buffered), instead of 45 s of nothing.
+     */
+    private fun relayClient(id: String, src: MediaSource) =
+        MediaServer.clientFor(id, src).newBuilder().readTimeout(15, TimeUnit.SECONDS).build()
+
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
 
     /**
@@ -178,6 +185,11 @@ object Relay {
 
     private val CR_TOTAL = Regex("/(\\d+)\\s*$")
     private val CR_START = Regex("bytes\\s+(\\d+)-")
+    private val RANGE_END = Regex("bytes=\\d*-(\\d+)")
+    /** chunks of 128 KB the host may be ahead of the player (4 MB) */
+    private const val PIPE_CHUNKS = 32
+    /** times a dropped connection is asked again in a row (each wait a little longer) */
+    private const val MAX_RESUMES = 6
 
     suspend fun serveStream(call: ApplicationCall, id: String, tok: String, fileName: String? = null) {
         val src = MediaServer.sourceFor(id) ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
@@ -185,7 +197,7 @@ object Relay {
         requests.incrementAndGet()
         val head = call.request.httpMethod == HttpMethod.Head
         val t0 = System.currentTimeMillis()
-        val okCall = MediaServer.clientFor(id, src).newCall(MediaServer.requestFor(src, url, call.request.header("Range")))
+        val okCall = relayClient(id, src).newCall(MediaServer.requestFor(src, url, call.request.header("Range")))
         // smart switch: the 4 s limit covers the whole decision, the host's first answer included
         val mayDecide = fileName != null && !head && decisions[id] == null && mediaCan(false) && knownSpeed(LinkUrl.host(url)) == null
         val measuring = java.util.concurrent.atomic.AtomicBoolean(mayDecide)
@@ -300,19 +312,77 @@ object Relay {
                 val firstLen = preLen
                 pre = null
                 val stream = input ?: body.byteStream()
+                // where this answer starts in the file, and where the player's range ends (for picking up after a drop)
+                val startAt = resp.header("Content-Range")?.let { CR_START.find(it)?.groupValues?.get(1)?.toLongOrNull() } ?: 0L
+                val rangeEnd = call.request.header("Range")?.let { RANGE_END.find(it)?.groupValues?.get(1)?.toLongOrNull() }
+                val resumable = resp.code == 206 || resp.header("Accept-Ranges")?.contains("bytes", true) == true
+                val name = linkName(url)
                 call.respondBytesWriter(ct, status, len) {
-                    val buf = ByteArray(BUF)
-                    try {
-                        firstBytes[0]?.let { if (firstLen > 0) writeFully(it, 0, firstLen) }
-                        firstBytes[0] = null
-                        while (true) {
-                            val n = withContext(Dispatchers.IO) { stream.read(buf) }
-                            if (n < 0) break
-                            if (n > 0) writeFully(buf, 0, n)
+                    var written = 0L
+                    firstBytes[0]?.let { if (firstLen > 0) { writeFully(it, 0, firstLen); written += firstLen } }
+                    firstBytes[0] = null
+                    // The host is read by its own coroutine into a small pipe (up to PIPE_CHUNKS x 128 KB), so it keeps
+                    // sending while the player is busy; a dropped or stalled connection is picked up again from the
+                    // byte reached (a new request with Range), so the player never sees the answer cut short.
+                    val pipe = kotlinx.coroutines.channels.Channel<ByteArray>(PIPE_CHUNKS)
+                    // the connection being read right now: closing it is what frees a read that is waiting on the host
+                    val live = java.util.concurrent.atomic.AtomicReference<okhttp3.Response?>(null)
+                    val reader = scope.launch(Dispatchers.IO) {
+                        var cur = stream
+                        var curResp: okhttp3.Response? = null
+                        var pos = startAt + firstLen
+                        var retries = 0
+                        try {
+                            while (true) {
+                                val buf = ByteArray(BUF)
+                                val n = try { cur.read(buf) } catch (e: java.io.IOException) { -2 }
+                                if (n > 0) {
+                                    pipe.send(if (n == buf.size) buf else buf.copyOf(n))
+                                    pos += n
+                                    retries = 0
+                                    continue
+                                }
+                                if (n == 0) continue
+                                val expectedEnd = len?.let { startAt + it }
+                                if (n == -1 && (expectedEnd == null || pos >= expectedEnd)) break // the whole answer is out
+                                // the host dropped the connection (or ended early): ask again from where it stopped
+                                if (!resumable || retries >= MAX_RESUMES) {
+                                    ServerState.warn("[Relay] $name: the host stopped sending at ${pos / 1_048_576} MB and could not be resumed")
+                                    break
+                                }
+                                retries++
+                                runCatching { curResp?.close() }
+                                kotlinx.coroutines.delay(300L * retries)
+                                val again = runCatching {
+                                    relayClient(id, src).newCall(
+                                        MediaServer.requestFor(src, url, "bytes=$pos-" + (rangeEnd?.toString() ?: ""))
+                                    ).execute()
+                                }.getOrNull()
+                                val from = again?.header("Content-Range")?.let { CR_START.find(it)?.groupValues?.get(1)?.toLongOrNull() }
+                                if (again == null || again.code != 206 || from != pos || again.body == null) {
+                                    runCatching { again?.close() }
+                                    continue // counted as a try; the next one waits a little longer
+                                }
+                                ServerState.info("[Relay] $name: the host dropped the connection at ${pos / 1_048_576} MB, picked up again (try $retries)")
+                                curResp = again
+                                live.set(again)
+                                cur = again.body!!.byteStream()
+                            }
+                        } finally {
+                            runCatching { curResp?.close() }
+                            pipe.close()
                         }
+                    }
+                    try {
+                        for (chunk in pipe) { writeFully(chunk, 0, chunk.size); written += chunk.size }
                     } catch (t: Throwable) {
-                        // the player closed the connection (seek / stop) or the host dropped it: end this answer
-                        if (t is kotlinx.coroutines.CancellationException) throw t
+                        // the player closed the connection (seek / stop): the host is let go too
+                        if (t is kotlinx.coroutines.CancellationException) { reader.cancel(); throw t }
+                    } finally {
+                        reader.cancel()
+                        pipe.cancel()
+                        runCatching { live.get()?.close() }
+                        runCatching { resp.close() }
                     }
                 }
             } finally {
