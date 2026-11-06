@@ -1023,6 +1023,29 @@ object StremioServer {
         return kept.indices.sortedWith(compareBy({ -heights[it] }, { ranks[it] }, { it })).map { kept[it] }
     }
 
+    /**
+     * Anime order: resolution first, then hardsub (subtitles burned in), then sub before dub (the preferred kind first when
+     * "Anime audio" is set to dub; unlabelled links in between), then the preferred audio languages; ties keep their order.
+     */
+    private fun animeOrder(list: List<StremioStream>, p: StreamPrefs): List<StremioStream> {
+        if (list.size < 2) return list
+        val first = if (p.animeAudio == "dub") "dub" else "sub"
+        val wanted = p.audioLangs.split(',', '/', '|').mapNotNull { AudioLangs.canonical(it) }.distinct()
+        class K(val i: Int, val h: Int, val hard: Int, val kind: Int, val lang: Int)
+        val keys = list.mapIndexed { i, st ->
+            val k = audioKind(st)
+            val l = if (wanted.isEmpty()) emptyList() else com.cncverse.stremiobridge.format.StreamVariables.languagesOf(st)
+            K(
+                i, resolutionHeight(st) ?: 0,
+                if (com.cncverse.stremiobridge.format.StreamVariables.subTypeOf(st) == "Hardsub") 0 else 1,
+                when (k) { first -> 0; null -> 1; else -> 2 },
+                if (wanted.isEmpty()) 0 else wanted.indexOfFirst { w -> l.any { it.equals(w, ignoreCase = true) } }.let { if (it < 0) wanted.size else it },
+            )
+        }
+        return keys.sortedWith(compareByDescending<K> { it.h }.thenBy { it.hard }.thenBy { it.kind }.thenBy { it.lang }.thenBy { it.i })
+            .map { list[it.i] }
+    }
+
     private suspend fun ApplicationCall.respondStreams() {
         val type = parameters["type"] ?: return respond(HttpStatusCode.BadRequest)
         val id   = parameters["id"]   ?: return respond(HttpStatusCode.BadRequest)
@@ -1224,6 +1247,7 @@ object StremioServer {
             val ordered = hardsubFirst(audioed)
             val inRange = enforceResolutionOrder(ordered).also { trace.step("Below the minimum resolution (${p.minResolution.ifBlank { "none" }})", ordered, it) }
             applyAudioLanguages(inRange, p, type).also { trace.step("Setting \"Only these audio languages\"", inRange, it) }
+                .let { if (isAnime(type, id)) animeOrder(it, p) else it }
         }
         ServerState.info("[Request] $type/$id timing: search ${(tBuilt - requestStart) / 1000.0}s, quality probe ${(tProbed - tBuilt) / 1000.0}s, seek check ${(tSeek - tProbed) / 1000.0}s")
 
