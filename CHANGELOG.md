@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.31
 
 - **Media server: smoother playback of high-bitrate files**, tuned for TV players such as Nuvio TV, which buffer up to 45 s / 200 MB themselves:
   - **Real parallel connections.** Downloads now use HTTP/1.1. Over HTTP/2, all 8 "connections" of a file were multiplexed on one TCP connection, so they were no faster than one.
