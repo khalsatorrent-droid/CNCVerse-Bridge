@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: a host that refuses downloads no longer gets hammered.** When a host answered an extra download connection with anything but a part of the file (429 too many requests, 503, 403…), that connection asked for the same piece again at once, without waiting and without a word in the log - which made a host that limits connections or requests refuse more and buffer more. Now each refusal makes the connection wait longer (up to 10 refusals in a row, then it leaves and is started again later), the host gets at most 3 connections for 2 minutes, and the log says so once: `[MediaServer] <host> answered HTTP 429 to a download request - using at most 3 connections to it for 2 minutes`.
+
 ## 1.8.33
 
 - **Anime link order:** resolution first, then hardsub, then sub before dub (dub first when *Anime audio* is set to dub; unlabelled links in between), then the preferred audio languages.
