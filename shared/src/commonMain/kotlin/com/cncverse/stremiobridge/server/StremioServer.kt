@@ -1041,7 +1041,18 @@ object StremioServer {
         val search = streamSearchScope.async(pluginDispatcher + Profiles.element()) { buildStreams(type, id) }
         val built = withTimeoutOrNull(RESPONSE_CAP_MS) { search.await() }
         if (built == null) ServerState.warn("[Request] $type/$id: search still running after ${RESPONSE_CAP_MS / 1000}s - answering now, results will be in the cache for the next try")
-        val prep = prepareStreams(type, id, built, requestStart)
+        // A reload of a finished search: the list prepared last time goes out at once (the probes, checks, sorting and
+        // formatting are not done again) as long as the found links and every setting that shapes the list are the same
+        val prepKey = "${Profiles.current.get()?.id}|$type|$id|${mediaBase()}"
+        val sig = if (built != null) preparedSignature(built) else 0
+        val hit = if (built != null) preparedCache[prepKey]?.takeIf { it.sig == sig && System.currentTimeMillis() - it.at < PREPARED_TTL_MS } else null
+        val prep = hit?.prep ?: prepareStreams(type, id, built, requestStart).also {
+            if (built != null && it.out.isNotEmpty()) {
+                if (preparedCache.size > 300) preparedCache.clear()
+                preparedCache[prepKey] = PreparedHit(System.currentTimeMillis(), sig, it)
+            }
+        }
+        if (hit != null) ServerState.info("[Request] $type/$id: same links as before - the prepared list went out without probing again")
         val streams = prep.streams
         val out = prep.out
         val safeOut = prep.safeOut
@@ -1117,6 +1128,20 @@ object StremioServer {
     }
 
     private class Prepared(val streams: List<StremioStream>, val out: List<StremioStream>, val safeOut: List<StremioStream>, val trace: SearchTrace = SearchTrace())
+
+    private class PreparedHit(val at: Long, val sig: Int, val prep: Prepared)
+    private val preparedCache = java.util.concurrent.ConcurrentHashMap<String, PreparedHit>()
+    /** How long a prepared list is reused for reloads (its links are re-checked after that). */
+    private const val PREPARED_TTL_MS = 10 * 60_000L
+
+    /** What the prepared list depends on: the links found and the settings that filter, sort, format and rewrite them. */
+    private fun preparedSignature(built: List<StremioStream>): Int = java.util.Objects.hash(
+        built.size,
+        built.map { it.url ?: it.externalUrl ?: it.infoHash ?: it.ytId ?: "" },
+        streamPrefs, MediaServer.prefs,
+        com.cncverse.stremiobridge.format.StreamFormatter.config,
+        Profiles.current.get(),
+    )
 
     /**
      * What the stream settings did to each extension's links in one request (for the search report in History):
@@ -3667,6 +3692,9 @@ object StremioServer {
         return if (fetchedHere) aggList else withFreshLocalLinks(aggList, type, id)
     }
 
+    /** Fresh local-server links found after a reload had already answered: (when, links) per profile|type:id. */
+    private val freshLocal = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<StremioStream>>>()
+
     /** Extensions whose links point at their own local server (ReAnime, GoTaku...), as last seen. */
     private val localLinkProviders: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
@@ -3681,7 +3709,10 @@ object StremioServer {
         val kitsuId = if (ext.scheme in setOf("imdb", "tmdb", "tvdb") && ext.season != null && ext.episode != null)
             runCatching { imdbIdOf(ext)?.let { tt -> KitsuMap.fromImdb(tt, ext.season, ext.episode) } }.getOrNull()?.let { "kitsu:${it.first}:${it.second}" }
         else null
-        val fresh = withTimeoutOrNull(12_000L) {
+        // A reload must stay quick: the fresh links get 2.5 s; if they take longer the search goes on in the background and
+        // its links (kept 150 s, the local servers keep theirs about 3 minutes) are used by the next reload
+        val freshKey = "${Profiles.current.get()?.id}|$type:$id"
+        val job = streamSearchScope.async(pluginDispatcher + Profiles.element()) { withTimeoutOrNull(12_000L) {
             coroutineScope {
                 apis.map { api ->
                     async {
@@ -3695,6 +3726,10 @@ object StremioServer {
                 }.awaitAll().flatten()
             }
         }.orEmpty().filter { com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(it.url) }
+            .also { if (it.isNotEmpty()) { if (freshLocal.size > 200) freshLocal.clear(); freshLocal[freshKey] = System.currentTimeMillis() to it } } }
+        val fresh = withTimeoutOrNull(2_500L) { job.await() }
+            ?: freshLocal[freshKey]?.takeIf { System.currentTimeMillis() - it.first < 150_000L }?.second
+            ?: emptyList()
         if (fresh.isEmpty()) return list
         // the cached local links of those extensions are replaced by the fresh ones
         val old = list.filterNot { com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(it.url) && apis.any { a -> a.name == it.info?.addonName } }

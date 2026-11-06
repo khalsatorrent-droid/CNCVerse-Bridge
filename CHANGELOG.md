@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Reloads of a finished search answer in about a second.**
+  - When the links found and the stream / formatter / media-server settings are the same as last time (within 10 minutes), the list prepared then goes out at once. The quality and seek checks, sorting and formatting are not run again. Changing a setting or new links arriving prepares it again.
+  - Extensions that serve links from their own local server (ReAnime, GoTaku…) now get 2.5 s to hand out fresh links on a reload instead of up to 12 s. If they're slower, their search finishes in the background and the next reload uses those links.
 ## 1.8.31
 
 - **Media server: smoother playback of high-bitrate files**, tuned for TV players such as Nuvio TV, which buffer up to 45 s / 200 MB themselves:
