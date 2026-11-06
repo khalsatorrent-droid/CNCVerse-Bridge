@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: smoother playback of high-bitrate files**, tuned for TV players such as Nuvio TV, which buffer up to 45 s / 200 MB themselves:
+  - **Real parallel connections.** Downloads now use HTTP/1.1. Over HTTP/2, all 8 "connections" of a file were multiplexed on one TCP connection, so they were no faster than one.
+  - **Small pieces next to the player.** The 48 MB after the reading position is fetched in 2 MB pieces shared by all connections, and 8 MB pieces further on. One connection no longer holds the player up with a big piece.
+  - **No duplicate downloads.** Connections claim their parts, and the main download skips parts another connection is on. The main download is only moved when the player is really low (under 24 MB or about 10 s), nobody is fetching that spot, and at most every 15 s. Before, it was moved every 5 s while the window refilled and fetched the same parts as the extra connections.
+  - **Room for the TV's own buffer.** The read-ahead is at least 256 MB, and 320 MB is kept behind the reading position (was 128 MB), so a short seek back doesn't download again what the TV already had.
+  - **Health in the log every 15 s:** MB ready ahead (≈ seconds), the host's speed and connection count, and how fast the player reads (≈ the video's bitrate). A warning shows when the host is slower than the video.
 ## 1.8.30
 
 - **Relay: no more stopping mid-video.** The relay now reads the host ahead through a small 4 MB pipe, so the host keeps sending while the player is busy. When the host drops or stalls the connection (15 s without data), the relay asks again from the byte it reached, up to 6 times with growing waits, and the player never sees the answer cut short. Before, a dropped connection ended the answer early and the player had to buffer and reconnect. Every pick-up is logged (`[Relay] … picked up again`).
