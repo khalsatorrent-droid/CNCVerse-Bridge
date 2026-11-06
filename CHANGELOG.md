@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.32
 
 - **Reloads of a finished search answer in about a second.**
   - When the links found and the stream / formatter / media-server settings are the same as last time (within 10 minutes), the list prepared then goes out at once. The quality and seek checks, sorting and formatting are not run again. Changing a setting or new links arriving prepares it again.
