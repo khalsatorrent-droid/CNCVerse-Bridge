@@ -123,7 +123,12 @@ object MediaServer {
     private val served = AtomicLong(0)
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val prefetchLimit = Semaphore(12)
+    /**
+     * HLS segment downloads in flight at once. This followed a fixed 12 whatever "Connections" said, so raising that setting to
+     * 16 or 20 changed nothing for an HLS link - and HLS is what almost every source hands out. It follows the setting now.
+     */
+    @Volatile private var prefetchLimit = Semaphore(12)
+    private fun segmentLimit(n: Int) = Semaphore(n.coerceIn(4, 20))
     /** A segment download that gets no data for this long is dropped and started again (a dead connection used to hold playback for up to 45 s). */
     private const val SEG_STALL_S = 8
     /** segments being fetched ahead right now (a second request for the same one must not take a download slot while it waits) */
@@ -149,6 +154,7 @@ object MediaServer {
             if (q.ver < 5) q = q.copy(ver = 5, readAheadMb = if (q.readAheadMb == 1024) 512 else q.readAheadMb)
             q
         }
+        prefetchLimit = segmentLimit(prefs.connections)
         val dir = File(base, "media_cache")
         dir.mkdirs()
         root = dir
@@ -238,6 +244,7 @@ object MediaServer {
             keepHours = p.keepHours.coerceIn(1, 24 * 365),
         )
         prefs = clean
+        prefetchLimit = segmentLimit(clean.connections)
         runCatching { prefsFile?.writeText(json.encodeToString(clean)) }
             .onFailure { ServerState.warn("Failed to save media_server.json: ${it.message}") }
     }
@@ -820,6 +827,8 @@ object MediaServer {
         /** Where the extra connections last waited for the player to get going, and since when (see [STARTUP_BYTES]). */
         @Volatile var gatePos = -1L
         @Volatile var gateAt = 0L
+        /** Last time the read-ahead was paused because the cache folder is full (so the warning is not repeated every piece). */
+        @Volatile var lastFullLog = 0L
         /**
          * Players read a file over several connections at once (a TV player: the video at the playing position, another at
          * the end of the file for the index, sometimes a third). Each response being written is a reader: [id] -> [position,
@@ -955,10 +964,16 @@ object MediaServer {
                 if (e.boosters.get() > (connectionsFor(e) - 1).coerceIn(0, 19)) break
                 val ahead = aheadBytes()
                 val from = maxOf(playPos(e), e.floor)
-                // Start-up (or after a seek): the main connection alone gets the whole bandwidth until a first piece is on disk,
-                // so playback starts at once; only then do the extra connections fill the read-ahead window
+                // Start-up ONLY: until the player has been sent its first byte, the main connection gets the bandwidth on its own
+                // so playback can begin; from then on every connection works, however thin the buffer is.
+                //
+                // It used to re-arm whenever the playing position had moved 8 MB - which is ordinary playback - and then park all
+                // the extra connections for 3 s (10 s on a heavy source) exactly while the buffer was running dry. A file that fell
+                // behind then starved itself: the connections that would have refilled it were asleep, so 16 connections behaved
+                // like one and the player buffered. Now the gate cannot come back after playback has started.
                 if (e.gatePos < 0 || kotlin.math.abs(from - e.gatePos) > SEG) { e.gatePos = from; e.gateAt = now }
-                if (e.have.contiguousEnd(from) - from < STARTUP_BYTES && now - e.gateAt < (if (isHeavy(e)) HEAVY_STARTUP_WAIT_MS else STARTUP_WAIT_MS)) { Thread.sleep(100); continue }
+                if (e.outBytes.get() == 0L && e.have.contiguousEnd(from) - from < STARTUP_BYTES &&
+                    now - e.gateAt < (if (isHeavy(e)) HEAVY_STARTUP_WAIT_MS else STARTUP_WAIT_MS)) { Thread.sleep(100); continue }
                 val to = if (ahead > 0) minOf(e.total, from + ahead) else e.total
                 val piece = claimNext(e, from, to)
                 val did = piece != null
@@ -1060,7 +1075,16 @@ object MediaServer {
         trimBehind(e)
         val nowMs = System.currentTimeMillis()
         if (nowMs - e.lastSaved > 2_000) synchronized(e.metaFile) { e.lastSaved = nowMs; saveMeta(e) }
-        if (!makeRoom(0, e.id)) { e.error = "the media cache is full (limit ${prefs.maxCacheMb} MB)"; e.stop = true }
+        // A full cache means "fetch less ahead", not "give up on this file": setting [FileEntry.stop] here also stopped the main
+        // download, so a file that was playing fine stalled for good the moment the cache filled. This connection now waits and
+        // tries again; what is already on disk keeps serving the player.
+        if (!makeRoom(0, e.id)) {
+            if (nowMs - e.lastFullLog > 30_000L) {
+                e.lastFullLog = nowMs
+                ServerState.warn("[MediaServer] the media cache is full (limit ${prefs.maxCacheMb} MB) - pausing the read-ahead for ${hostOf(e.url)}")
+            }
+            Thread.sleep(1_000)
+        }
     }
 
     private fun parseTotal(contentRange: String?): Long? =
