@@ -412,9 +412,36 @@ object MediaServer {
         }
     }
 
+    /** host -> (when it last refused a download, when that was last logged). A host that refuses gets few connections for [REFUSED_FOR_MS]. */
+    private val hostRefused = ConcurrentHashMap<String, LongArray>()
+    private const val REFUSED_FOR_MS = 2 * 60_000L
+    private const val REFUSED_CONNECTIONS = 3
+
+    /** A host answered a download with something other than 200 / 206 (rate limit, too many connections, blocked). */
+    private fun noteRefused(url: String, code: Int) {
+        if (hostRefused.size > 500) hostRefused.clear()
+        val h = hostOf(url)
+        val t = hostRefused.getOrPut(h) { longArrayOf(0L, 0L) }
+        val now = System.currentTimeMillis()
+        synchronized(t) {
+            t[0] = now
+            if (now - t[1] > 30_000L) {
+                t[1] = now
+                ServerState.warn("[MediaServer] $h answered HTTP $code to a download request - using at most $REFUSED_CONNECTIONS connections to it for 2 minutes")
+            }
+        }
+    }
+
+    private fun isRefusing(e: FileEntry): Boolean {
+        val t = hostRefused[hostOf(e.url)] ?: return false
+        return synchronized(t) { System.currentTimeMillis() - t[0] <= REFUSED_FOR_MS }
+    }
+
     /** Connections allowed for this file (main download included). */
-    private fun connectionsFor(e: FileEntry): Int =
-        if (isHeavy(e)) minOf(prefs.connections, HEAVY_CONNECTIONS) else prefs.connections
+    private fun connectionsFor(e: FileEntry): Int {
+        val n = if (isHeavy(e)) minOf(prefs.connections, HEAVY_CONNECTIONS) else prefs.connections
+        return if (isRefusing(e)) minOf(n, REFUSED_CONNECTIONS) else n
+    }
 
     internal fun looksLikeHls(url: String, linkType: String?): Boolean =
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
@@ -993,7 +1020,13 @@ object MediaServer {
         val t0 = System.currentTimeMillis()
         client.newCall(requestFor(e.src, e.url, "bytes=$pos-${s1 - 1}")).execute().use { r ->
             noteTtfb(e.url, System.currentTimeMillis() - t0)
-            if (r.code != 206) return@use // ranges not honoured: the main connection copes
+            if (r.code != 206) {
+                // Refused (429 / 503 / 403...) or ranges not honoured. This used to return silently, so the connection asked for the
+                // same piece again at once, over and over - which only made a host that limits connections or requests worse.
+                // Now it counts as a failure (the connection waits longer each time) and the host gets fewer connections for a while.
+                noteRefused(e.url, r.code)
+                throw IOException("HTTP ${r.code} from the source")
+            }
             val input = r.body?.byteStream() ?: return@use
             var off = parseStart(r.header("Content-Range")) ?: pos
             while (!e.stop && off < s1) {
@@ -1080,7 +1113,7 @@ object MediaServer {
                 val t0 = System.currentTimeMillis()
                 client.newCall(requestFor(e.src, e.url, range)).execute().use { r ->
                     noteTtfb(e.url, System.currentTimeMillis() - t0)
-                    if (r.code != 200 && r.code != 206) throw IOException("HTTP ${r.code} from the source")
+                    if (r.code != 200 && r.code != 206) { noteRefused(e.url, r.code); throw IOException("HTTP ${r.code} from the source") }
                     if (!e.ready) {
                         // A 200 to a range request: the origin may still seek (it only answered "bytes=0-" with the whole
                         // file), or another address of the same file may. Only when neither does is it downloaded in order.
