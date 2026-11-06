@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.35
 
 - **Media server: a refusing host is probed again instead of being capped for 2 minutes.** One HTTP 200 answer to an extra connection (seen on pixeldrain mirrors) capped the whole host at 3 connections for 2 minutes, so raising the setting from 8 to 16 changed nothing. Now a refusal takes away one connection (never below 2), the allowance grows by one every 15 s while the host stays quiet until the setting is reached again, a 200 to a range that starts at the beginning of the file is used instead of counted as a refusal, and the log says `using N connections to it for now, trying more later`.
 
