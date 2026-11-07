@@ -758,7 +758,12 @@ object StremioServer {
             } else {
                 "http://$reqHost"
             }
-            ServerState.publicBaseUrl = inferredBase
+            // A loopback request must not replace the address a real client is using: the bridge pings itself over 127.0.0.1 and
+            // fetches its own media-server links, and each of those used to flip every later stream link to 127.0.0.1.
+            val loopback = reqHost == "127.0.0.1" || reqHost.equals("localhost", true) || reqHost == "::1" || reqHost == "[::1]"
+            val tracked = ServerState.publicBaseUrl
+            val trackedIsLoopback = tracked.contains("//127.0.0.1") || tracked.contains("//localhost") || tracked.contains("//[::1]")
+            if (!loopback || tracked.isBlank() || trackedIsLoopback) ServerState.publicBaseUrl = inferredBase
             if (ServerState.ownHosts.size < 64) ServerState.ownHosts.add(reqHost.lowercase())
             if (reqPort > 0 && ServerState.ownPorts.size < 16) ServerState.ownPorts.add(reqPort)
             
@@ -1050,6 +1055,8 @@ object StremioServer {
         val type = parameters["type"] ?: return respond(HttpStatusCode.BadRequest)
         val id   = parameters["id"]   ?: return respond(HttpStatusCode.BadRequest)
         val requestStart = System.currentTimeMillis()
+        // the address this player reached us on: its own links must point back at it
+        val base = mediaBaseForRequest()
         if (streamRequestStart.size > 2_000) streamRequestStart.clear()
         streamRequestStart["$type:$id"] = requestStart
         ServerState.info("[Request] streams for $type/$id from ${request.local.remoteHost.let { request.headers["X-Forwarded-For"] ?: it }}")
@@ -1066,10 +1073,10 @@ object StremioServer {
         if (built == null) ServerState.warn("[Request] $type/$id: search still running after ${RESPONSE_CAP_MS / 1000}s - answering now, results will be in the cache for the next try")
         // A reload of a finished search: the list prepared last time goes out at once (the probes, checks, sorting and
         // formatting are not done again) as long as the found links and every setting that shapes the list are the same
-        val prepKey = "${Profiles.current.get()?.id}|$type|$id|${mediaBase()}"
+        val prepKey = "${Profiles.current.get()?.id}|$type|$id|$base"
         val sig = if (built != null) preparedSignature(built) else 0
         val hit = if (built != null) preparedCache[prepKey]?.takeIf { it.sig == sig && System.currentTimeMillis() - it.at < PREPARED_TTL_MS } else null
-        val prep = hit?.prep ?: prepareStreams(type, id, built, requestStart).also {
+        val prep = hit?.prep ?: prepareStreams(type, id, built, requestStart, base = base).also {
             if (built != null && it.out.isNotEmpty()) {
                 if (preparedCache.size > 300) preparedCache.clear()
                 preparedCache[prepKey] = PreparedHit(System.currentTimeMillis(), sig, it)
@@ -1209,7 +1216,7 @@ object StremioServer {
      * Everything after the search - archive filter, quality / seek checks, sorting, the stream settings, formatting and the
      * media-server links. Shared by the add-on answer and by the website's live results.
      */
-    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false, forWeb: Boolean = false): Prepared {
+    private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false, forWeb: Boolean = false, base: String = mediaBase()): Prepared {
         val tBuilt = System.currentTimeMillis()
         val trace = SearchTrace()
         trace.start(built ?: emptyList())
@@ -1301,7 +1308,7 @@ object StremioServer {
                 .map { st ->
                     try {
                         // Media server: links that need a Referer / Cookie are fetched by this bridge and cached here
-                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), mediaBase(), forWeb, runtimeGuess))
+                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, forWeb, runtimeGuess))
                     } catch (e: Throwable) {
                         ServerState.warn("[Request] could not prepare a link (${st.info?.addonName}): ${e.javaClass.simpleName}: ${e.message}")
                         st
@@ -1313,7 +1320,7 @@ object StremioServer {
                     // "Refresh results" button first (it is not a video: it opens a page in the browser)
                     if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size)) + withSupport else withSupport
                 }
-                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, mediaBase(), isAnime(type, id))) } ?: s }
+                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, base, isAnime(type, id))) } ?: s }
 
             out
         } catch (e: Throwable) {
@@ -1571,9 +1578,32 @@ object StremioServer {
     private fun isAnime(type: String, id: String): Boolean =
         type == "anime" || id.substringBefore(':').lowercase() in setOf("kitsu", "mal", "anilist", "anidb")
 
-    /** Where clients reach this bridge (for the links the media server hands out). */
-    private fun mediaBase(): String =
-        ServerState.streamBaseUrl ?: ServerState.publicBaseUrl.ifBlank { "http://127.0.0.1:${ServerState.serverPort}" }
+    /**
+     * Where clients reach this bridge (for the links the media server hands out).
+     *
+     * The address has to be the one the CLIENT used, which is why [host] is passed in from the request being answered: a player on
+     * a TV or another device cannot open 127.0.0.1, and a player on this device should not be sent out over the LAN address or the
+     * tunnel. Without [host] the last tracked address is used.
+     *
+     * This used to be the tracked value alone, and every request overwrote it - including the bridge's own health ping to
+     * 127.0.0.1 and its own media-server fetches - so the links handed to a TV flipped to 127.0.0.1 and stopped opening there.
+     */
+    private fun mediaBase(host: String? = null, port: Int = -1, https: Boolean = false): String {
+        ServerState.streamBaseUrl?.let { return it }
+        val h = host?.trim()
+        if (!h.isNullOrBlank() && h != "0.0.0.0") {
+            val scheme = if (https) "https" else "http"
+            return if (port > 0 && port != 80 && port != 443) "$scheme://$h:$port" else "$scheme://$h"
+        }
+        return ServerState.publicBaseUrl.ifBlank { "http://127.0.0.1:${ServerState.serverPort}" }
+    }
+
+    /** The address this particular client reached us on (X-Forwarded-Host when a tunnel/proxy is in front). */
+    private fun ApplicationCall.mediaBaseForRequest(): String = mediaBase(
+        host = request.headers["X-Forwarded-Host"]?.substringBefore(',')?.trim()?.takeIf { it.isNotEmpty() } ?: request.host(),
+        port = request.port(),
+        https = request.headers["X-Forwarded-Proto"]?.substringBefore(',')?.trim()?.equals("https", true) == true,
+    )
 
     private val SUB_TAG = Regex("\\[sub(?:bed)?\\]", RegexOption.IGNORE_CASE)
     private val DUB_TAG = Regex("\\[dub(?:bed)?\\]", RegexOption.IGNORE_CASE)
@@ -1739,7 +1769,7 @@ object StremioServer {
             return
         }
         val streams = withContext(pluginDispatcher) { buildStreams(type, id) }
-        val subtitles = SubtitleTools.process(streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }, streamPrefs, mediaBase(), isAnime(type, id))
+        val subtitles = SubtitleTools.process(streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }, streamPrefs, mediaBaseForRequest(), isAnime(type, id))
 
         respond(StremioSubtitleResponse(subtitles))
     }
