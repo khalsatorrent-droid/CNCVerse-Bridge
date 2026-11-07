@@ -73,8 +73,8 @@ object LocalRelay {
      *
      * The check used to be one 400 ms socket connect per link, done in a row. Two things were wrong with that. Forty links cost up
      * to sixteen seconds inside the request, and - worse - a server that took longer than 400 ms to accept (a busy device, an
-     * extension still starting) was taken for dead: the link was dropped, and since the reload feature keeps the prepared list for
-     * ten minutes, that source stayed missing on every reload afterwards, with the report still counting it as found.
+     * extension still starting) was taken for dead: the link was dropped and the report still counted it as found, so a source
+     * simply went missing.
      *
      * Each port is now probed once, all of them at the same time, and only a connection that is REFUSED counts as dead: a timeout
      * says nothing about a server that is merely busy, so those links are kept. An unknown answer also keeps the link - a missing
