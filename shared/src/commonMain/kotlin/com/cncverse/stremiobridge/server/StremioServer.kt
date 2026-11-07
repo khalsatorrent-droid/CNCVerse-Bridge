@@ -1072,17 +1072,27 @@ object StremioServer {
         val built = withTimeoutOrNull(RESPONSE_CAP_MS) { search.await() }
         if (built == null) ServerState.warn("[Request] $type/$id: search still running after ${RESPONSE_CAP_MS / 1000}s - answering now, results will be in the cache for the next try")
         // A reload of a finished search: the list prepared last time goes out at once (the probes, checks, sorting and
-        // formatting are not done again) as long as the found links and every setting that shapes the list are the same
+        // formatting are not done again) as long as the settings that shape it are the same AND the fresh search did not find
+        // anything the cached one did not already have.
+        //
+        // That second half matters. A second search of the same title often comes back WEAKER - a host rate-limits, a one-time
+        // token has expired, an extension's own server has gone quiet, a proxy hands out a new session address - and rebuilding
+        // the list from that answer dropped links the first search had found. Which is the opposite of what a reload is for: the
+        // HLS links an extension serves through its own local proxy were the ones that vanished this way.
         val prepKey = "${Profiles.current.get()?.id}|$type|$id|$base"
-        val sig = if (built != null) preparedSignature(built) else 0
-        val hit = if (built != null) preparedCache[prepKey]?.takeIf { it.sig == sig && System.currentTimeMillis() - it.at < PREPARED_TTL_MS } else null
+        val settings = preparedSettings()
+        val builtUrls = built?.mapNotNull { linkKey(it) }?.toSet().orEmpty()
+        val cached = preparedCache[prepKey]?.takeIf { it.settings == settings && System.currentTimeMillis() - it.at < PREPARED_TTL_MS }
+        // Nothing new came in (or the search did not even finish): the list prepared last time is the better answer
+        val reusable = cached != null && (built == null || cached.builtUrls.containsAll(builtUrls))
+        val hit = if (reusable) cached else null
         val prep = hit?.prep ?: prepareStreams(type, id, built, requestStart, base = base).also {
             if (built != null && it.out.isNotEmpty() && !it.lostDeadLinks) {
                 if (preparedCache.size > 300) preparedCache.clear()
-                preparedCache[prepKey] = PreparedHit(System.currentTimeMillis(), sig, it)
+                preparedCache[prepKey] = PreparedHit(System.currentTimeMillis(), settings, builtUrls, it)
             }
         }
-        if (hit != null) ServerState.info("[Request] $type/$id: same links as before - the prepared list went out without probing again")
+        if (hit != null) ServerState.info("[Request] $type/$id: the list prepared last time went out again (${prep.out.size} link(s), nothing new in this search)")
         val streams = prep.streams
         val out = prep.out
         val safeOut = prep.safeOut
@@ -1170,19 +1180,25 @@ object StremioServer {
         val lostDeadLinks: Boolean = false,
     )
 
-    private class PreparedHit(val at: Long, val sig: Int, val prep: Prepared)
+    /**
+     * A prepared list kept for reloads: when it was made, the settings it was made with, and every link it was built from.
+     * [builtUrls] is what a later search is compared against - anything it finds that is not in there needs a new list.
+     */
+    private class PreparedHit(val at: Long, val settings: Int, val builtUrls: Set<String>, val prep: Prepared)
     private val preparedCache = java.util.concurrent.ConcurrentHashMap<String, PreparedHit>()
     /** How long a prepared list is reused for reloads (its links are re-checked after that). */
     private const val PREPARED_TTL_MS = 10 * 60_000L
 
-    /** What the prepared list depends on: the links found and the settings that filter, sort, format and rewrite them. */
-    private fun preparedSignature(built: List<StremioStream>): Int = java.util.Objects.hash(
-        built.size,
-        built.map { it.url ?: it.externalUrl ?: it.infoHash ?: it.ytId ?: "" },
+    /** The settings that filter, sort, format and rewrite the list (everything about it except the links themselves). */
+    private fun preparedSettings(): Int = java.util.Objects.hash(
         streamPrefs, MediaServer.prefs,
         com.cncverse.stremiobridge.format.StreamFormatter.config,
         Profiles.current.get(),
     )
+
+    /** How one link is identified when comparing two searches for the same title. */
+    private fun linkKey(s: StremioStream): String =
+        s.url ?: s.externalUrl ?: s.infoHash?.let { "magnet:$it" } ?: s.ytId?.let { "yt:$it" } ?: ("#" + s.hashCode())
 
     /**
      * What the stream settings did to each extension's links in one request (for the search report in History):
