@@ -53,17 +53,26 @@ object Relay {
     // ── Smart switch (relay and media server both on) ─────────────────────────
     //
     // When playback starts, the host's speed is compared with the video's bitrate, within DECIDE_MS:
-    //  - files: the first answer is read for up to ~4 s (those bytes go on to the player, nothing is wasted); the bitrate is the
+    //  - files: the first answer is read for up to ~2 s (those bytes go on to the player, nothing is wasted); the bitrate is the
     //    file size over its running time (read from an MKV's header, else the usual running time of a movie / episode)
-    //  - HLS: the first segment of the media playlist is fetched (at most 4 s); its size over its #EXTINF length is the bitrate
+    //  - HLS: the first segment of the media playlist is fetched (at most 2 s); its size over its #EXTINF length is the bitrate
     // Host faster than the bitrate x MARGIN -> the relay passes it through; slower (or it stalls) -> the media server takes the
     // link over (it downloads ahead with several connections). Host speeds are kept for a while, so the next link of a host
     // that is known is decided at once.
+    //
+    // Two numbers here were what made both paths feel broken.
+    //  - The measurement held the player's first byte: nothing was written until it finished, so every link started with up to
+    //    4 s of nothing and then a burst. The window is halved (2 s, 1.2 s after the first byte, 3 MB) - still enough to tell a
+    //    fast host from a slow one, without a stall the player shows as buffering.
+    //  - MARGIN was 1.25, so a host measured at 25% above the video's bitrate was handed to the RELAY, which has no read-ahead
+    //    at all: a live pipe with a few MB of slack. At that margin the smallest dip in the host's speed emptied the player and it
+    //    buffered - and it was sent there precisely because it was "fast enough". A pass-through needs real headroom; below 2x the
+    //    bitrate the disk read-ahead of the media server is the better answer.
 
-    private const val DECIDE_MS = 4_000L
-    private const val MEASURE_AFTER_FIRST_BYTE_MS = 2_500L
-    private const val MEASURE_MAX_BYTES = 6 * 1024 * 1024
-    private const val MARGIN = 1.25
+    private const val DECIDE_MS = 2_000L
+    private const val MEASURE_AFTER_FIRST_BYTE_MS = 1_200L
+    private const val MEASURE_MAX_BYTES = 3 * 1024 * 1024
+    private const val MARGIN = 2.0
     private const val SPEED_TTL_MS = 15 * 60_000L
     private const val RELAY = 1
     private const val MEDIA = 2
@@ -186,8 +195,9 @@ object Relay {
     private val CR_TOTAL = Regex("/(\\d+)\\s*$")
     private val CR_START = Regex("bytes\\s+(\\d+)-")
     private val RANGE_END = Regex("bytes=\\d*-(\\d+)")
-    /** chunks of 128 KB the host may be ahead of the player (4 MB) */
-    private const val PIPE_CHUNKS = 32
+    /** chunks of 128 KB the host may be ahead of the player (8 MB): the pass-through has no disk buffer, so this slack is what
+     *  absorbs a host that hiccups mid-stream instead of leaving the player empty. */
+    private const val PIPE_CHUNKS = 64
     /** times a dropped connection is asked again in a row (each wait a little longer) */
     private const val MAX_RESUMES = 6
 
