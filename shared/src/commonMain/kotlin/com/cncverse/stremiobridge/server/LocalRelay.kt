@@ -65,13 +65,57 @@ object LocalRelay {
      * True for a link into an extension's local server that no longer answers (the extension or the app restarted) and has
      * no copy on this device (see [MediaServer.hasLocalCopy]) - such a result is left out instead of shown as a dead link.
      */
-    fun isDeadLink(s: StremioStream): Boolean {
-        val u = s.url ?: return false
-        val m = LOOPBACK.matchEntire(u.trim()) ?: return false
-        val port = m.groupValues[2].toIntOrNull() ?: return false
-        if (port == ServerState.serverPort) return false
-        if (MediaServer.hasLocalCopy(u, s.behaviorHints?.proxyHeaders?.request.orEmpty())) return false
-        return !runCatching { java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 400); true } }.getOrDefault(false)
+    fun isDeadLink(s: StremioStream): Boolean = dropDeadLinks(listOf(s)).isEmpty()
+
+    /**
+     * [dropDeadLinks] for a whole list: the links into extension-local servers that are really gone are removed, the ones whose
+     * server is only slow stay.
+     *
+     * The check used to be one 400 ms socket connect per link, done in a row. Two things were wrong with that. Forty links cost up
+     * to sixteen seconds inside the request, and - worse - a server that took longer than 400 ms to accept (a busy device, an
+     * extension still starting) was taken for dead: the link was dropped, and since the reload feature keeps the prepared list for
+     * ten minutes, that source stayed missing on every reload afterwards, with the report still counting it as found.
+     *
+     * Each port is now probed once, all of them at the same time, and only a connection that is REFUSED counts as dead: a timeout
+     * says nothing about a server that is merely busy, so those links are kept. An unknown answer also keeps the link - a missing
+     * source is worse than a link that fails to play.
+     */
+    fun dropDeadLinks(list: List<StremioStream>): List<StremioStream> {
+        if (list.isEmpty()) return list
+        // which port each loopback link uses; links with a copy on this device are never dropped
+        val linkPort = arrayOfNulls<Int>(list.size)
+        val ports = LinkedHashSet<Int>()
+        list.forEachIndexed { i, s ->
+            val u = s.url ?: return@forEachIndexed
+            val m = LOOPBACK.matchEntire(u.trim()) ?: return@forEachIndexed
+            val port = m.groupValues[2].toIntOrNull() ?: return@forEachIndexed
+            if (port == ServerState.serverPort) return@forEachIndexed
+            if (MediaServer.hasLocalCopy(u, s.behaviorHints?.proxyHeaders?.request.orEmpty())) return@forEachIndexed
+            linkPort[i] = port
+            ports.add(port)
+        }
+        if (ports.isEmpty()) return list
+        val alive = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+        val threads = ports.map { port ->
+            Thread({ alive[port] = answers(port) }, "local-port-$port").apply { isDaemon = true; start() }
+        }
+        threads.forEach { runCatching { it.join(1_500) } }
+        return list.filterIndexed { i, _ ->
+            val port = linkPort[i] ?: return@filterIndexed true
+            alive[port] ?: true // not answered in time: keep the link
+        }
+    }
+
+    /** True unless the connect was REFUSED: a timeout only means the server is busy. */
+    private fun answers(port: Int): Boolean = try {
+        java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 600) }
+        true
+    } catch (e: java.net.SocketTimeoutException) {
+        true
+    } catch (e: java.net.ConnectException) {
+        false // nothing listens on that port any more
+    } catch (e: Throwable) {
+        true // unknown: keep the link rather than hide a source
     }
 
     private fun isAllowed(port: Int): Boolean {
