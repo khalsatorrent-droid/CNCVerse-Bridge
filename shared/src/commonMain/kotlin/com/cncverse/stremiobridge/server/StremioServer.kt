@@ -1077,7 +1077,7 @@ object StremioServer {
         val sig = if (built != null) preparedSignature(built) else 0
         val hit = if (built != null) preparedCache[prepKey]?.takeIf { it.sig == sig && System.currentTimeMillis() - it.at < PREPARED_TTL_MS } else null
         val prep = hit?.prep ?: prepareStreams(type, id, built, requestStart, base = base).also {
-            if (built != null && it.out.isNotEmpty()) {
+            if (built != null && it.out.isNotEmpty() && !it.lostDeadLinks) {
                 if (preparedCache.size > 300) preparedCache.clear()
                 preparedCache[prepKey] = PreparedHit(System.currentTimeMillis(), sig, it)
             }
@@ -1157,7 +1157,18 @@ object StremioServer {
         }
     }
 
-    private class Prepared(val streams: List<StremioStream>, val out: List<StremioStream>, val safeOut: List<StremioStream>, val trace: SearchTrace = SearchTrace())
+    private class Prepared(
+        val streams: List<StremioStream>,
+        val out: List<StremioStream>,
+        val safeOut: List<StremioStream>,
+        val trace: SearchTrace = SearchTrace(),
+        /**
+         * Links were left out because an extension's own local server did not answer. That verdict can change on its own (the
+         * extension restarts), so such a list is not kept for reloads: reusing it would keep those sources missing for ten
+         * minutes while the report still counted them as found.
+         */
+        val lostDeadLinks: Boolean = false,
+    )
 
     private class PreparedHit(val at: Long, val sig: Int, val prep: Prepared)
     private val preparedCache = java.util.concurrent.ConcurrentHashMap<String, PreparedHit>()
@@ -1258,6 +1269,8 @@ object StremioServer {
         }
         ServerState.info("[Request] $type/$id timing: search ${(tBuilt - requestStart) / 1000.0}s, quality probe ${(tProbed - tBuilt) / 1000.0}s, seek check ${(tSeek - tProbed) / 1000.0}s")
 
+        // set when the dead-link step below leaves anything out (see Prepared.lostDeadLinks)
+        var lostDeadLinks = false
         val out: List<StremioStream> = try {
             // Drop results whose link is exactly the same as an earlier (better ranked) one; different links are never merged
             val unique = filtered.distinctBy<StremioStream, Any> { it.url ?: it.externalUrl ?: it.infoHash?.let { h -> "magnet:$h" } ?: it.ytId?.let { y -> "yt:$y" } ?: it }
@@ -1300,9 +1313,11 @@ object StremioServer {
             if (!fast) runCatching { HeaderNeed.precheck(formatted, if (forWeb) 0L else 3_500L) }
             val runtimeGuess = if (isAnime(type, id)) 24 else if (type == "movie") 120 else 45
             // "Hide subtitles": no subtitle tracks go out (after formatting, so the description stays truthful)
-            val out = (if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted)
-                // Links into an extension's own server that no longer answers (and have no copy here) are left out
-                .let { l -> l.filter { st -> !LocalRelay.isDeadLink(st) }.also { kept2 -> trace.step("The extension's own server no longer answers", l, kept2) } }
+            val beforeDead = if (p.hideSubtitles) formatted.map { it.copy(subtitles = null) } else formatted
+            // Links into an extension's own server that no longer answers (and have no copy here) are left out
+            val aliveLinks = LocalRelay.dropDeadLinks(beforeDead).also { kept2 -> trace.step("The extension's own server no longer answers", beforeDead, kept2) }
+            lostDeadLinks = aliveLinks.size < beforeDead.size
+            val out = aliveLinks
                 // One odd link must never cost the whole answer: a link whose rewrite fails goes out as it is
                 // (runtimeGuess: the usual running time, for the relay's bitrate estimate of files that do not say theirs)
                 .map { st ->
@@ -1333,7 +1348,7 @@ object StremioServer {
         // the best direct links are opened now, so their slow start (the source resolving the file) is over when one is chosen
         // (not for the website's growing lists: their best links change while the search runs)
         if (!fast && !forWeb) runCatching { MediaServer.prewarm(safeOut) }
-        return Prepared(streams, out, safeOut, trace)
+        return Prepared(streams, out, safeOut, trace, lostDeadLinks)
     }
 
     // ── Website: search straight in the extensions (their own catalogs and their own links) ──
