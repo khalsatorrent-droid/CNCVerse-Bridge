@@ -167,20 +167,28 @@ object MediaServer {
         if (monitor?.isActive != true) monitor = scope.launch { while (true) { delay(MONITOR_MS); runCatching { checkPlayback() } } }
     }
     @Volatile private var monitor: kotlinx.coroutines.Job? = null
-    private const val MONITOR_MS = 5_000L
+    /** How often the read-ahead is checked and topped up. It was 5 s, which is a long time to notice that a downloader has died. */
+    private const val MONITOR_MS = 2_000L
+    /**
+     * How long a file is kept warm after the last read from a player. The read-ahead is topped up for this long, so a pause, a
+     * seek that takes a while, or a player that went quiet for a moment finds the window already filled when it comes back. After
+     * it, the file is left alone (its downloader stops, and the cache is trimmed as usual).
+     */
+    private const val IDLE_STOP_MS = 30 * 60_000L
 
     /**
-     * Every 5 seconds: where is each player now? Files - the lowest position of the connections reading it; HLS - the last
+     * Every 2 seconds: where is each player now? Files - the lowest position of the connections reading it; HLS - the last
      * segment asked for. The read-ahead window after that position is topped up (a stopped downloader is started again, the
-     * download is pointed at the first missing piece after the position, the next segments are queued).
+     * download is pointed at the first missing piece after the position, the next segments are queued). This runs for
+     * [IDLE_STOP_MS] after the last activity on a file.
      */
     private fun checkPlayback() {
         if (!prefs.enabled) return
         val now = System.currentTimeMillis()
         for (e in files.values) {
-            if (e.warmOnly || now - e.lastAccess > 3 * 60_000L || e.passthrough || !e.ready || e.complete || e.total <= 0 || !e.ranges || e.isPlaylist) continue
+            if (e.warmOnly || now - e.lastAccess > IDLE_STOP_MS || e.passthrough || !e.ready || e.complete || e.total <= 0 || !e.ranges || e.isPlaylist) continue
             val pos = playPos(e)
-            // speeds over the last 5 s, smoothed (the player reads in bursts: its average is the video's bitrate)
+            // speeds over the last check (2 s), smoothed (the player reads in bursts: its average is the video's bitrate)
             val dlNow = e.dlBytes.get(); val outNow = e.outBytes.get()
             val sec = MONITOR_MS / 1000.0
             e.dlRate = e.dlRate * 0.6 + ((dlNow - e.lastDl) / sec) * 0.4
@@ -1053,7 +1061,9 @@ object MediaServer {
                     idleSince = System.currentTimeMillis()
                 }
                 if (!did) {
-                    if (e.readers.isEmpty() && System.currentTimeMillis() - idleSince > 180_000) break
+                    // nothing to fetch right now (the window is full): keep the connection alive for [IDLE_STOP_MS] after the last
+                    // read, so it is still here when the player asks for more. checkPlayback (every 2 s) restarts one that left.
+                    if (e.readers.isEmpty() && System.currentTimeMillis() - idleSince > IDLE_STOP_MS) break
                     Thread.sleep(300)
                 }
             }
@@ -1355,8 +1365,13 @@ object MediaServer {
                         val ahead = aheadBytes()
                         // An origin that cannot seek is downloaded completely, at full speed: stopping would mean starting over
                         if (ahead > 0 && e.ranges && off - playPos(e) > ahead) {
-                            // (a player whose own buffer is full stops reading for a while but still has its connection open: that is not idle)
-                            if (e.readers.isEmpty() && System.currentTimeMillis() - e.lastAccess > 180_000) { e.stop = true; break }
+                            // The window is full. With a player reading, keep the connection and wait for room (a player whose own
+                            // buffer is full stops reading for a while but still has its connection open: that is not idle).
+                            // With nobody reading, stop the download instead of holding a socket to the host open for up to
+                            // [IDLE_STOP_MS]: checkPlayback (every 2 s) starts it again the moment the window needs more.
+                            // (stop = true is what ends this worker; without it the outer loop would open a new request at once,
+                            // hit the same full window and open another, over and over.)
+                            if (e.readers.isEmpty()) { e.stop = true; break }
                             Thread.sleep(400)
                             continue
                         }
