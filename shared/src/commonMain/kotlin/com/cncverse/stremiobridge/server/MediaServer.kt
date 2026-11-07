@@ -468,7 +468,42 @@ object MediaServer {
         // what it was, and pinning the whole file to 3 connections made a 16-connection setting worth nothing on a host that was
         // merely slow to answer its first byte.
         val n = if (isHeavy(e)) minOf(prefs.connections, maxOf(HEAVY_CONNECTIONS, prefs.connections / 2)) else prefs.connections
-        return refusedCap(e.url, n)
+        return refusedCap(e.url, stalledCap(e.url, n))
+    }
+
+    /**
+     * host -> [connections allowed, until when]. Extra connections that kept missing [SLOW_PIECE_MS] on their piece say the host
+     * cannot carry them: the allowance drops (never below [REFUSED_MIN]) for a couple of minutes instead of every connection being
+     * thrown at a host that cannot use them and the player waiting for a piece none of them finishes.
+     */
+    private val hostStalled = ConcurrentHashMap<String, LongArray>()
+    private const val STALL_CAP_MS = 120_000L
+
+    private fun noteStall(url: String) {
+        if (hostStalled.size > 500) hostStalled.clear()
+        val t = hostStalled.getOrPut(hostOf(url)) { longArrayOf(Long.MAX_VALUE, 0L) }
+        val now = System.currentTimeMillis()
+        var was = Long.MAX_VALUE
+        var nowCap = 0L
+        synchronized(t) {
+            if (now > t[1]) t[0] = Long.MAX_VALUE
+            was = t[0]
+            t[0] = maxOf(REFUSED_MIN.toLong(), minOf(t[0], prefs.connections.toLong()) - 1)
+            t[1] = now + STALL_CAP_MS
+            nowCap = t[0]
+        }
+        // once per change, not once per missed piece
+        if (was != nowCap) {
+            ServerState.warn("[MediaServer] ${hostOf(url)} is not delivering 512 KB in ${SLOW_PIECE_MS / 1000} s - using $nowCap connection(s) to it for a while")
+        }
+    }
+
+    private fun stalledCap(url: String, limit: Int): Int {
+        val t = hostStalled[hostOf(url)] ?: return limit
+        return synchronized(t) {
+            val now = System.currentTimeMillis()
+            if (now > t[1]) { hostStalled.remove(hostOf(url)); limit } else minOf(limit, t[0].toInt())
+        }
     }
 
     internal fun looksLikeHls(url: String, linkType: String?): Boolean =
@@ -738,11 +773,16 @@ object MediaServer {
     private const val KEEP_BEHIND = 320L * 1024 * 1024
     /** Read-ahead never below this (a player that buffers 200 MB itself needs the bridge to be further ahead than that). */
     private const val MIN_READ_AHEAD = 256L * 1024 * 1024
-    /** Next to the reading position the missing part is fetched in 2 MB pieces (all connections at once), further on in 8 MB ones. */
+    /** Within this much of the reading position a piece is fetched the moment it is claimed (see [NEAR_SEG]). */
     private const val NEAR_BYTES = 48L * 1024 * 1024
     /** One extra connection's request covers this much of the file; it keeps extending its claim inside it instead of asking again. */
     private const val REQUEST_SPAN = 64L * 1024 * 1024
-    private const val NEAR_SEG = 2L * 1024 * 1024
+    /**
+     * One piece of the file claimed by one connection: 512 KB. Small pieces are what keeps a slow connection from standing between
+     * the player and its next bytes - a stalled 512 KB costs the player half a second of video, where an 8 MB piece cost it sixteen.
+     * They add no requests at all: a connection keeps streaming across pieces inside one [REQUEST_SPAN] request.
+     */
+    private const val NEAR_SEG = 512L * 1024
 
     /** The read-ahead window in bytes (0 in the settings = no limit). */
     private fun aheadBytes(): Long = if (prefs.readAheadMb > 0) maxOf(MIN_READ_AHEAD, prefs.readAheadMb * 1024L * 1024L) else 0L
@@ -918,12 +958,19 @@ object MediaServer {
     }
 
     /**
-     * Size of one request an extra connection makes. Every request costs a round trip and the server's start-up time, so
-     * 2 MB pieces left much of each connection idle (about a quarter of the time at 5 MB/s and 150 ms latency); 8 MB cuts that
-     * to a few percent while eight connections still share the window evenly. A whole number of [ChunkStore.CHUNK]s, so
-     * segments never share a piece file (the on-disk piece size stays 2 MB: changing it would orphan files already cached).
+     * Piece size further from the reading position. It used to be 8 MB because every piece was its own request, and a request
+     * costs a round trip plus the server's start-up time; the request is now one long stream ([REQUEST_SPAN]) and a piece only
+     * says how much one connection holds at a time, so the whole file is claimed in the same small steps.
      */
-    private const val SEG = 8L * 1024 * 1024
+    private const val SEG = 512L * 1024
+    /**
+     * A connection that has not finished its 512 KB piece within this long is standing between the player and its next bytes: the
+     * piece is given up (the connection stays open and takes the next free one, so its socket and its already-sent bytes are not
+     * wasted) and the region ahead is left to the other connections.
+     */
+    private const val SLOW_PIECE_MS = 4_000L
+    /** No byte at all for this long on a download connection: it is dropped and asked again (dead socket, host gone). */
+    private const val STALL_READ_S = 4L
 
     /** Playback may start with this much on disk; the read-ahead window is filled while it plays. */
     private const val STARTUP_BYTES = 6L * 1024 * 1024
@@ -957,8 +1004,11 @@ object MediaServer {
         var idleSince = System.currentTimeMillis()
         var failures = 0
         try {
-            val client = clientFor(e.id, e.src)
+            // No byte for [STALL_READ_S] and the read throws: a dead socket is noticed in seconds instead of the 45 s the shared
+            // client waits, which used to hold a piece the player needed for most of a minute.
+            val client = clientFor(e.id, e.src).newBuilder().readTimeout(STALL_READ_S, TimeUnit.SECONDS).build()
             val buf = ByteArray(128 * 1024)
+            var slowStreak = 0
             while (!e.stop && !e.passthrough) {
                 val now = System.currentTimeMillis()
                 if (!e.ready) {
@@ -986,8 +1036,15 @@ object MediaServer {
                 if (piece != null) {
                     try {
                         val w = wr ?: e.store.rw(true).also { wr = it }
-                        downloadSegment(e, client, piece.first, piece.second, buf, w)
+                        val slow = downloadSegment(e, client, piece.first, piece.second, buf, w) == 1
                         failures = 0
+                        if (slow) {
+                            // This host cannot carry this many connections: after three missed pieces in a row this one leaves and
+                            // the host is asked for fewer for a while, instead of every connection being thrown at it again.
+                            slowStreak++
+                            noteStall(e.url)
+                            if (slowStreak >= 3) break
+                        } else slowStreak = 0
                     } catch (t: IOException) {
                         // a hiccup on one piece: this connection waits a moment and goes on (gives up after ten in a row)
                         if (++failures > 10) throw t
@@ -1063,13 +1120,15 @@ object MediaServer {
      * also what makes a host start refusing (429). The claim still moves in 2 MB steps, so the pieces next to this one stay free
      * for the other connections and none of them holds a big piece while the player waits.
      */
-    private fun downloadSegment(e: FileEntry, client: okhttp3.OkHttpClient, s0: Long, s1: Long, buf: ByteArray, wr: ChunkStore.Rw) {
+    private fun downloadSegment(e: FileEntry, client: okhttp3.OkHttpClient, s0: Long, s1: Long, buf: ByteArray, wr: ChunkStore.Rw): Int {
         // the piece this connection holds right now: it moves forward as the claim is extended
         var claimStart = s0
         var claimEnd = s1
+        // 1 = this connection could not finish its piece in time and gave it up (the caller counts it)
+        var slow = 0
         try {
             val pos = e.have.firstGapFrom(s0)
-            if (pos >= s1 || e.total <= 0) return
+            if (pos >= s1 || e.total <= 0) return 0
             val t0 = System.currentTimeMillis()
             // A closed range of one long span rather than an open-ended one: a host that answers 200 (not 206) to "bytes=N-" would
             // count as a refusal here, and 64 MB per request is already 32x fewer requests than one per piece. The connection may
@@ -1090,6 +1149,7 @@ object MediaServer {
                 }
                 val input = r.body?.byteStream() ?: return@use
                 var off = if (whole) 0L else (parseStart(r.header("Content-Range")) ?: pos)
+                var claimAt = System.currentTimeMillis()
                 while (!e.stop) {
                     if (off >= claimEnd) {
                         // This piece is done: stay on the same connection if the next gap can be claimed for it
@@ -1097,6 +1157,7 @@ object MediaServer {
                         val next = extendClaim(e, claimStart, claimEnd) ?: break
                         claimStart = claimEnd
                         claimEnd = minOf(next, reqEnd)
+                        claimAt = System.currentTimeMillis()
                     }
                     val want = minOf(buf.size.toLong(), claimEnd - off).toInt()
                     if (want <= 0) break
@@ -1106,6 +1167,11 @@ object MediaServer {
                     e.have.add(off, off + n)
                     e.dlBytes.addAndGet(n.toLong())
                     off += n
+                    // Still inside its 512 KB piece after 4 s: this connection is standing between the player and its next bytes.
+                    // The piece is released (its bytes are already on disk, so nothing is lost) and the region ahead is left to
+                    // the other connections. The connection itself stays open and takes the next free piece - a socket that is
+                    // only slow, not dead, is still worth keeping.
+                    if (off < claimEnd && System.currentTimeMillis() - claimAt > SLOW_PIECE_MS) { slow = 1; break }
                 }
             }
         } finally {
@@ -1125,6 +1191,7 @@ object MediaServer {
                 Thread.sleep(1_000)
             }
         }
+        return slow
     }
 
     /**
