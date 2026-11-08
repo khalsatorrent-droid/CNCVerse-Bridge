@@ -564,8 +564,14 @@ object MediaServer {
         if (hls && !p.cacheHls && !lanUpstream && !webHls && !loop) return s
         if (!hls && !p.cacheFiles && !lanUpstream) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
-        // The extension declares headers, but the host answered a plain request (see HeaderNeed): the link needs no help from this server
-        if (!loop && !lanUpstream && !webHls && !needsCf && headers.isNotEmpty() && (p.mode == "headers" || (p.mode == "hls" && !hls)) &&
+        // The extension declares headers, but the host answered a plain request (see HeaderNeed): the link needs no help from this server.
+        //
+        // Not for a playlist. A playlist is a tree: the master is on one host and its variants and segments can be on others (AniPM:
+        // the master on media.settlar.io, the variants on fetch.nexabloom.top with their own token), and the extension's headers
+        // have to reach every request in it. The verdict comes from one probe of the first branch, made without those headers - so
+        // for a playlist it proves nothing about the rest, and acting on it handed the player a bare URL whose children then
+        // refused it. A playlist with declared headers is always served by this bridge now.
+        if (!hls && !loop && !lanUpstream && !webHls && !needsCf && headers.isNotEmpty() && (p.mode == "headers" || p.mode == "hls") &&
             HeaderNeed.verdict(url, headers) == false) return s
         val id = register(url, headers)
         // The extension's server may stop at any time: its playlists (and the first segments) are fetched and kept now
