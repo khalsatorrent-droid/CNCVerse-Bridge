@@ -194,7 +194,10 @@ object MediaServer {
             e.dlRate = e.dlRate * 0.6 + ((dlNow - e.lastDl) / sec) * 0.4
             e.outRate = e.outRate * 0.85 + ((outNow - e.lastOut) / sec) * 0.15
             e.lastDl = dlNow; e.lastOut = outNow
-            val ahead = aheadBytes().takeIf { it > 0 } ?: e.total
+            // The part kept behind the player is cleaned up here too (it used to happen only when the main download wrote, which
+            // a window filled by the extra connections may not do for a long time - and the window can now be bigger)
+            runCatching { trimBehind(e) }
+            val ahead = aheadFor(e).takeIf { it > 0 } ?: e.total
             val want = minOf(e.total, pos + ahead)
             val contiguous = e.have.contiguousEnd(pos) - pos
             logHealth(e, contiguous, now)
@@ -214,9 +217,11 @@ object MediaServer {
             }
         }
         for ((id, v) in hlsPlay) {
-            if (now - v.third > 3 * 60_000L) { hlsPlay.remove(id); continue }
+            val quiet = now - v.third
+            if (quiet > PAUSE_DEEP_MS) { hlsPlay.remove(id); continue }
             val src = sourceFor(id) ?: continue
-            prefetch(id, src, v.first, v.second + 1)
+            // paused (no segment asked for lately): fetch more segments ahead than while playing
+            prefetch(id, src, v.first, v.second + 1, deep = quiet >= PAUSE_QUIET_MS)
         }
     }
     @Volatile private var cleaner: kotlinx.coroutines.Job? = null
@@ -233,7 +238,8 @@ object MediaServer {
         val conns = 1 + e.boosters.get()
         val line = "[MediaServer] ${hostOf(e.url)}: ${"%.0f".format(contiguous / mb)} MB ready ahead" +
             (if (!secs.isNaN()) " (~${"%.0f".format(secs)} s)" else "") +
-            ", host ${"%.1f".format(e.dlRate / mb)} MB/s on $conns connection(s), player reads ${"%.1f".format(e.outRate / mb)} MB/s"
+            ", host ${"%.1f".format(e.dlRate / mb)} MB/s on $conns connection(s), player reads ${"%.1f".format(e.outRate / mb)} MB/s"+
+            (aheadFor(e).takeIf { it > 0 }?.let { ", window ${"%.0f".format(it / mb)} MB" } ?: "")
         if (!secs.isNaN() && secs < 10 && e.dlRate < e.outRate * 1.1 && !e.complete)
             ServerState.warn("$line - the host is slower than the video: it will buffer (try fewer apps on the network, more connections, or another link)")
         else ServerState.info(line)
@@ -807,6 +813,30 @@ object MediaServer {
     /** The read-ahead window in bytes (0 in the settings = no limit). */
     private fun aheadBytes(): Long = if (prefs.readAheadMb > 0) maxOf(MIN_READ_AHEAD, prefs.readAheadMb * 1024L * 1024L) else 0L
 
+    /** A player that has not read for this long is paused (or has its own buffer full): the window grows, see [aheadFor]. */
+    private const val PAUSE_QUIET_MS = 15_000L
+    /** The window stays grown until this long after the last read (a pause); after that the file is back to the normal window. */
+    private const val PAUSE_DEEP_MS = 10 * 60_000L
+    /** While paused the window is this many times the normal one... */
+    private const val DEEP_FACTOR = 3
+    /** ...but always leaves room in the cache for the part kept behind the player plus this margin. */
+    private const val CACHE_MARGIN = 256L * 1024 * 1024
+
+    /**
+     * The read-ahead window of one file. Normally [aheadBytes]. While the player is paused - or has filled its own buffer and
+     * stopped reading - for [PAUSE_QUIET_MS] the window is [DEEP_FACTOR] times as big (kept inside the cache limit), so the
+     * time of a pause is used to bank much more on disk and the player does not run dry soon after it carries on. A player
+     * that is waiting for data is not quiet (it is hungry, not paused): its window stays the normal one.
+     */
+    private fun aheadFor(e: FileEntry): Long {
+        val base = aheadBytes()
+        if (base <= 0) return 0L
+        val quiet = System.currentTimeMillis() - e.lastAccess
+        if (e.outBytes.get() == 0L || quiet < PAUSE_QUIET_MS || quiet > PAUSE_DEEP_MS) return base
+        val room = capBytes() - KEEP_BEHIND - CACHE_MARGIN
+        return maxOf(base, minOf(base * DEEP_FACTOR, room))
+    }
+
     /** A downloaded file is stored as 2 MB pieces (chunks/0, chunks/1, ...) so pieces already watched can be deleted. */
     private class ChunkStore(val dir: File) {
         companion object { const val CHUNK = 2L * 1024 * 1024 }
@@ -1038,7 +1068,7 @@ object MediaServer {
                 if (!e.ranges || e.total <= 0 || e.isPlaylist) break
                 // The source turned out to be a heavy one: surplus extra connections leave (a missing one is started again if needed)
                 if (e.boosters.get() > (connectionsFor(e) - 1).coerceIn(0, 19)) break
-                val ahead = aheadBytes()
+                val ahead = aheadFor(e)
                 val from = maxOf(playPos(e), e.floor)
                 // Start-up ONLY: until the player has been sent its first byte, the main connection gets the bandwidth on its own
                 // so playback can begin; from then on every connection works, however thin the buffer is.
@@ -1222,7 +1252,7 @@ object MediaServer {
      */
     private fun extendClaim(e: FileEntry, from: Long, end: Long): Long? = synchronized(e.claims) {
         if (e.total <= end) return null
-        val ahead = aheadBytes()
+        val ahead = aheadFor(e)
         val to = if (ahead > 0) minOf(e.total, playPos(e) + ahead) else e.total
         if (to <= end) return null
         // the next bytes are already taken (another connection, the main download, or they are on disk)
@@ -1260,12 +1290,12 @@ object MediaServer {
     }
 
     /** Deletes the 2 MB pieces that lie more than KEEP_BEHIND behind the playing position (only for sources that can seek). */
-    private fun trimBehind(e: FileEntry) {
+    private fun trimBehind(e: FileEntry) = synchronized(e.store) {
         val pp = playPos(e)
-        if (!e.ranges || e.total < 0 || pp <= 0) return
+        if (!e.ranges || e.total < 0 || pp <= 0) return@synchronized
         val keepFrom = pp - KEEP_BEHIND
         val firstKept = keepFrom / ChunkStore.CHUNK
-        if (keepFrom <= 0 || firstKept <= e.floor / ChunkStore.CHUNK) return
+        if (keepFrom <= 0 || firstKept <= e.floor / ChunkStore.CHUNK) return@synchronized
         e.store.deleteBefore(firstKept)
         e.have.remove(0, firstKept * ChunkStore.CHUNK)
         e.floor = firstKept * ChunkStore.CHUNK
@@ -1374,7 +1404,7 @@ object MediaServer {
                         // A heavy source's request ends by itself after HEAVY_REQUEST (the first one is open-ended: it is cut here)
                         if (e.ranges && off - startAt >= HEAVY_REQUEST && isHeavy(e)) break
                         // Do not run far past what is being watched
-                        val ahead = aheadBytes()
+                        val ahead = aheadFor(e)
                         // An origin that cannot seek is downloaded completely, at full speed: stopping would mean starting over
                         if (ahead > 0 && e.ranges && off - playPos(e) > ahead) {
                             // The window is full. With a player reading, keep the connection and wait for room (a player whose own
@@ -1746,8 +1776,8 @@ object MediaServer {
         runCatching { File(root ?: return, id).setLastModified(System.currentTimeMillis()) }
     }
 
-    private fun prefetch(id: String, src: MediaSource, playlistKey: String, fromIndex: Int) {
-        val n = prefs.prefetchSegments
+    private fun prefetch(id: String, src: MediaSource, playlistKey: String, fromIndex: Int, deep: Boolean = false) {
+        val n = prefs.prefetchSegments.let { if (deep) minOf(it * DEEP_FACTOR, 120) else it }
         if (n <= 0) return
         val list = playlistSegs[playlistKey] ?: return
         for (i in fromIndex until minOf(list.size, fromIndex + n)) {
