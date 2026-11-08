@@ -93,8 +93,10 @@ object HeaderNeed {
             if (s.info?.linkType == "UPSTREAM" || !url.startsWith("http", true)) continue
             val path = url.substringBefore('?')
             if (path.endsWith(".mpd", true)) continue
-            // in "hls" mode every playlist goes through the media server anyway: only files are judged
-            if (p.mode == "hls" && (path.endsWith(".m3u8", true) || url.contains(".m3u8", true) || s.info?.linkType.equals("M3U8", true))) continue
+            // A playlist is served by this bridge whatever this says (its headers have to reach a whole tree of child requests on
+            // possibly other hosts), so probing one would only spend the link's signed token and the user's time for an answer
+            // nothing reads.
+            if (path.endsWith(".m3u8", true) || url.contains(".m3u8", true) || s.info?.linkType.equals("M3U8", true)) continue
             val host = LinkUrl.host(url) ?: continue
             if (host == "127.0.0.1" || host == "localhost" || host == "::1" || ServerState.isOwnUrl(url)) continue
             val key = keyOf(host, headers)
