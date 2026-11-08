@@ -716,7 +716,11 @@ object StreamCacheManager {
             // memory for a while (the rest of the list is cached as usual, so a reload does not search again), is never saved
             // to disk, and is dropped when it no longer answers (see LocalRelay.isDeadLink)
             // (3 minutes at most: ReAnime / GoTaku keep only their last 10-20 streams; a list served from the cache gets fresh ones)
-            if (StreamLinkClassifier.isLoopbackUrl(url)) { kept += stream; expiry += now + minOf(listTtlMs, 3 * 60_000L); continue }
+            if (StreamLinkClassifier.isLoopbackUrl(url)) {
+                // a link the media server already saved plays from that copy: it stays as long as the extension's token (10 minutes)
+                val saved = runCatching { com.cncverse.stremiobridge.server.MediaServer.hasLocalCopy(url.orEmpty(), stream.behaviorHints?.proxyHeaders?.request.orEmpty()) }.getOrDefault(false)
+                kept += stream; expiry += now + minOf(listTtlMs, if (saved) 10 * 60_000L else 3 * 60_000L); continue
+            }
             if (url.isNullOrBlank()) { // infoHash / YouTube id: no link to expire
                 kept += stream; expiry += now + listTtlMs; continue
             }

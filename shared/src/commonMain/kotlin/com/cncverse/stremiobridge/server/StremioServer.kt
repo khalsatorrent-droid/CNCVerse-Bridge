@@ -3564,6 +3564,7 @@ object StremioServer {
                                         if (fresh.isEmpty()) return
                                         pathCounts.merge(side, fresh.size) { x, y -> x + y }
                                         accumulated.addAll(fresh)
+                                        saveLocalLinks(fresh)
                                         status.counts[api.name] = got.addAndGet(fresh.size)
                                         if (answered.get()) publish()
                                     }
@@ -3728,6 +3729,15 @@ object StremioServer {
     }
 
     /** Extensions whose links point at their own local server (ReAnime, GoTaku...), as last seen. */
+    /** Extension-local HLS links are saved in the media server right when they are found (see [MediaServer.warmLocalNow]). */
+    private fun saveLocalLinks(list: List<StremioStream>) {
+        val local = list.filter { s -> s.url?.let { u -> com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(u) } == true }
+        if (local.isEmpty()) return
+        Thread({
+            for (s in local) runCatching { MediaServer.warmLocalNow(s.url ?: return@runCatching, s.behaviorHints?.proxyHeaders?.request.orEmpty()) }
+        }, "save-local-links").apply { isDaemon = true; start() }
+    }
+
     private val localLinkProviders: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private suspend fun withFreshLocalLinks(list: List<StremioStream>, type: String, id: String): List<StremioStream> {

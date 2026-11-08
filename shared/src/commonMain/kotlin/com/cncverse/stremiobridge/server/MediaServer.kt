@@ -554,7 +554,8 @@ object MediaServer {
         val needsCf = !loop && runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(host) }.getOrNull() != null
         if (!loop && !lanUpstream && !webHls && p.mode == "headers" && headers.isEmpty() && !needsCf) return s
         if (!loop && !lanUpstream && p.mode == "hls" && headers.isEmpty() && !hls && !needsCf) return s
-        if (hls && !p.cacheHls && !lanUpstream && !webHls) return s
+        // an extension's local link is always kept here (its server forgets links quickly), whatever the HLS-cache switch says
+        if (hls && !p.cacheHls && !lanUpstream && !webHls && !loop) return s
         if (!hls && !p.cacheFiles && !lanUpstream) return s
         if (!hls && SeekProbe.isArchiveUrl(url)) return s
         // The extension declares headers, but the host answered a plain request (see HeaderNeed): the link needs no help from this server
@@ -572,10 +573,21 @@ object MediaServer {
 
     /** True when the playlist of this extension-local link is already saved on this device (it plays without the extension). */
     fun hasLocalCopy(url: String, headers: Map<String, String>): Boolean {
-        if (!prefs.enabled || !prefs.cacheHls) return false
+        if (!prefs.enabled) return false
         val sorted = headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + ":" + it.value }
         val id = sha256(url + "\n" + sorted).take(20)
         return playlistCache.containsKey("$id|$url") || File(root ?: return false, "$id/playlist.m3u8").exists()
+    }
+
+    /**
+     * Saves an extension-local HLS link the moment a search finds it (not when a player first asks): the extension's server keeps
+     * only its last few streams and its token lives minutes, so the copy has to be made while the link is fresh. Safe to call
+     * again for the same link; runs on the caller's thread, so call it from a background one.
+     */
+    fun warmLocalNow(url: String, headers: Map<String, String>): Boolean {
+        if (!prefs.enabled || root == null) return false
+        if (!isLoopbackUrl(url) || LinkUrl.port(url) == ServerState.serverPort || !looksLikeHls(url, null)) return false
+        return warmLocal(register(url, headers), url)
     }
 
     internal fun isPrivateHostOf(url: String): Boolean = isPrivateHost(LinkUrl.host(url))

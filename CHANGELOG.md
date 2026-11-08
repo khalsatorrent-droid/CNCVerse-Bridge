@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Extension-local links (GoTaku, ReAnime…) are saved in the media server and stay in the list after the search ends.** A link like `http://127.0.0.1:37341/…/master.m3u8` is now copied (playlists and the first segments) the moment a search finds it, even when *Cache HLS* is off, and played from that copy; the link is kept in the cached list for 10 minutes (the extension's token) instead of 3, and a saved copy stops it being treated as dead when the extension's server forgets it. Later segments still need the extension's server and an unexpired token.
+
 ## 1.8.35
 
 - **Media server: a refusing host is probed again instead of being capped for 2 minutes.** One HTTP 200 answer to an extra connection (seen on pixeldrain mirrors) capped the whole host at 3 connections for 2 minutes, so raising the setting from 8 to 16 changed nothing. Now a refusal takes away one connection (never below 2), the allowance grows by one every 15 s while the host stays quiet until the setting is reached again, a 200 to a range that starts at the beginning of the file is used instead of counted as a refusal, and the log says `using N connections to it for now, trying more later`.
