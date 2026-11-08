@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.44
 
 - **Extension-local links (GoTaku, ReAnime…) are saved in the media server and stay in the list after the search ends.** A link like `http://127.0.0.1:37341/…/master.m3u8` is now copied (playlists and the first segments) the moment a search finds it, even when *Cache HLS* is off, and played from that copy; the link is kept in the cached list for 10 minutes (the extension's token) instead of 3, and a saved copy stops it being treated as dead when the extension's server forgets it. Later segments still need the extension's server and an unexpired token.
 
