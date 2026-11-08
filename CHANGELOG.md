@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Media server: a pause now banks much more video, so playback does not run dry soon after it carries on.**
+  - **Deeper read-ahead while paused.** When the player has not read for 15 s (you paused, or the player filled its own buffer - Nuvio's is small), the read-ahead window grows to 3 times the *Read-ahead* setting (always inside the cache limit, leaving room for the part kept behind the player), and all the connections keep filling it. It stays grown for 10 minutes after the last read, then goes back to the normal size. A player that is waiting for data is not treated as paused.
+  - **HLS the same way.** While no segment has been asked for for 15 s, up to 3 times the *Prefetch segments* setting (at most 120) are fetched ahead, for up to 10 minutes (it was 3).
+  - **Old data behind the player is deleted by the 2-second check too**, not only when the main download happens to write: a window filled by the extra connections could otherwise leave more and more behind the player.
+  - The 15-second health line in the log now also shows the size of the window (`window 1536 MB`).
+  - If the host is slower than the video for a long time, no read-ahead can stop the buffering for ever: it only delays it by the time banked. For a high-bitrate file, raise *Read-ahead* in the settings (the window counts bytes, not seconds).
+
 ## 1.8.44
 
 - **Extension-local links (GoTaku, ReAnime…) are saved in the media server and stay in the list after the search ends.** A link like `http://127.0.0.1:37341/…/master.m3u8` is now copied (playlists and the first segments) the moment a search finds it, even when *Cache HLS* is off, and played from that copy; the link is kept in the cached list for 10 minutes (the extension's token) instead of 3, and a saved copy stops it being treated as dead when the extension's server forgets it. Later segments still need the extension's server and an unexpired token.
