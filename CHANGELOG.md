@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.45
 
 - **Media server: a pause now banks much more video, so playback does not run dry soon after it carries on.**
   - **Deeper read-ahead while paused.** When the player has not read for 15 s (you paused, or the player filled its own buffer - Nuvio's is small), the read-ahead window grows to 3 times the *Read-ahead* setting (always inside the cache limit, leaving room for the part kept behind the player), and all the connections keep filling it. It stays grown for 10 minutes after the last read, then goes back to the normal size. A player that is waiting for data is not treated as paused.
