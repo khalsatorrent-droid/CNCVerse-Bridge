@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.50
 
 - **Third round of fixes.**
   - **The quality check could turn a signed HLS link into a dead one.** Reading a master playlist to label the resolution used the old way of combining addresses: on a signed address with unusual characters the top rendition stayed a bare relative name, and that name replaced the link's address.
