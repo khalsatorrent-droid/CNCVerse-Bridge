@@ -52,8 +52,9 @@ object CloudflaredManager {
         val v = runCatching {
             setFileExecutable(path)
             val p = ProcessBuilder(path, "--version").redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().readText()
-            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) p.destroy()
+            // wait first, with a limit: reading first waited for ever on a binary that hangs, and the limit below never ran
+            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
+            val out = p.inputStream.bufferedReader().use { it.readText() }
             Regex("(20\\d{2})\\.(\\d{1,2})\\.(\\d+)").find(out)?.value
         }.getOrNull()
         versionChecked = sig to v
@@ -343,6 +344,7 @@ object CloudflaredManager {
                     }
                     watchdog.cancel()
                     poller?.cancel()
+                    runCatching { reader.close() }
                     val exitCode = runCatching { process.waitFor() }.getOrDefault(-1)
                     ServerState.info("Cloudflared process exited with code $exitCode")
                     if (!isActive || registered.get()) break // stopped on purpose, or it ran and later ended

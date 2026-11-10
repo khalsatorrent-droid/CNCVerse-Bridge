@@ -73,9 +73,16 @@ object WebSite {
     private class Tries(var count: Int = 0, var until: Long = 0L)
     private val tries = ConcurrentHashMap<String, Tries>()
 
-    private fun ApplicationCall.who(): String =
-        request.headers["CF-Connecting-IP"] ?: request.headers["X-Forwarded-For"]?.substringBefore(',')?.trim()
-            ?: request.local.remoteHost
+    /**
+     * Who is asking, for the limit on wrong passwords. The forwarding headers were trusted from anybody, so a visitor could send
+     * a different "X-Forwarded-For" with every guess and never be locked out. Only the address Cloudflare's own tunnel reports
+     * (it arrives from this device) is believed now; everybody else is the address they really connect from.
+     */
+    private fun ApplicationCall.who(): String {
+        val remote = request.local.remoteHost
+        val viaTunnel = remote == "127.0.0.1" || remote == "localhost" || remote == "::1" || remote == "0:0:0:0:0:0:0:1"
+        return if (viaTunnel) request.headers["CF-Connecting-IP"] ?: remote else remote
+    }
 
     // ── TMDB shaping ──
     private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.contentOrNull

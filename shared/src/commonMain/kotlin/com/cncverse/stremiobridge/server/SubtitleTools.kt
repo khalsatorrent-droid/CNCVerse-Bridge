@@ -111,7 +111,12 @@ object SubtitleTools {
 
     /** Downloads and converts in the background so the player's request is answered from the cache. */
     private fun prefetch(url: String, ms: Int) {
-        val key = "$ms|$url"
+        // the same key fetchStyled stores under ("ssa|…"): without the prefix this check never matched, so every track of every
+        // list was queued again on each reload
+        val key = "ssa|$ms|$url"
+        // a list has hundreds of links with up to 10 English tracks each: only the first ones are fetched ahead, the rest are
+        // converted when a player asks (thousands of downloads per search is a lot to ask of the subtitle sites)
+        if (warming.size >= 60) return
         if (synchronized(styledCache) { styledCache.containsKey(key) } || !warming.add(key)) return
         runCatching { warm.execute { try { fetchStyled(url, ms) } finally { warming.remove(key) } } }.onFailure { warming.remove(key) }
     }

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Third round of fixes.**
+  - **The quality check could turn a signed HLS link into a dead one.** Reading a master playlist to label the resolution used the old way of combining addresses: on a signed address with unusual characters the top rendition stayed a bare relative name, and that name replaced the link's address.
+  - **DASH segments signed after a `?`.** For segment paths starting with `/` the `?` was encoded as `%3F`, so the token became part of the file name (404).
+  - **Cloudflare browser left in memory (Android).** The hidden browser that solves a check was only closed from the page's own answers; when the page stopped answering, it stayed for good. It is now always closed when its time is up.
+  - **Tunnel start could hang** on the cloudflared version check (its output was read before the 10-second limit applied); the process's output reader is closed when it restarts.
+  - **Styled subtitles:** the "already converted" check never matched, so every track was queued again on each reload; and only the first 60 tracks of a list are now fetched ahead (the rest when a player asks), instead of possibly thousands per search.
+  - **Website login:** the limit on wrong passwords used an address taken from a header any visitor can set, so it could be bypassed. The real connecting address is used; Cloudflare's header is only believed for requests that come in through the tunnel.
+
 ## 1.8.49
 
 - **More memory and stability fixes.**

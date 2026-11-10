@@ -312,6 +312,9 @@ class CloudflareKiller : Interceptor {
                 }
                 wv.loadUrl(url)
                 main.postDelayed({ poll() }, 1500)
+                // The checks above run from the page's own answers: when the page stops answering (its renderer crashed or was
+                // killed for memory) nothing ever closed the browser, and a whole WebView stayed in memory for good.
+                main.postDelayed({ if (webView != null) finish() }, maxMs + 2_000)
             } catch (e: Exception) {
                 ServerState.warn("WebView failed: ${e.message}")
                 finish()
