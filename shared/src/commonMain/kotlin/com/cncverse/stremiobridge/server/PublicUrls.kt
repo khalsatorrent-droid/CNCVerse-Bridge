@@ -48,6 +48,7 @@ object PublicUrls {
         if (pending.add(host)) {
             scope.launch {
                 val private = runCatching { InetAddress.getAllByName(host).any { isPrivate(it) } }.getOrDefault(false)
+                if (dnsVerdict.size > 5_000) dnsVerdict.clear()
                 dnsVerdict[host] = private
                 pending.remove(host)
             }

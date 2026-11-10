@@ -154,13 +154,18 @@ object CfSites {
      * Asks the site once without any cookie, like a first-time visitor with a browser's headers.
      * true = no challenge (marks the site CLEAR), false = challenged, null = no answer. Blocking.
      */
+    /** One client for every probe (a new one each time meant a new connection pool and new threads each time). */
+    private val probeClient by lazy {
+        val dns = runCatching { Class.forName("com.cncverse.stremiobridge.network.AdaptiveHostDns").getField("INSTANCE").get(null) as okhttp3.Dns }
+            .getOrDefault(okhttp3.Dns.SYSTEM)
+        okhttp3.OkHttpClient.Builder().dns(dns).followRedirects(true)
+            .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
+
     fun probe(host: String): Boolean? {
         update(host) { it.copy(lastProbe = System.currentTimeMillis()) }
         return try {
-            val dns = runCatching { Class.forName("com.cncverse.stremiobridge.network.AdaptiveHostDns").getField("INSTANCE").get(null) as okhttp3.Dns }
-                .getOrDefault(okhttp3.Dns.SYSTEM)
-            val client = okhttp3.OkHttpClient.Builder().dns(dns).followRedirects(true)
-                .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
+            val client = probeClient
             val req = okhttp3.Request.Builder().url("https://$host/")
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")

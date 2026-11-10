@@ -219,6 +219,9 @@ object WebSite {
         post("/web/login") {
             if (!prefs.enabled) return@post call.respond(HttpStatusCode.NotFound)
             val who = call.who()
+            // one entry per address that ever got the password wrong, for ever: bounded now
+            if (tries.size > 2_000) tries.entries.removeIf { System.currentTimeMillis() >= it.value.until }
+            if (tries.size > 10_000) tries.clear()
             val t = tries.getOrPut(who) { Tries() }
             if (System.currentTimeMillis() < t.until) return@post call.respond(HttpStatusCode.TooManyRequests)
             val pw = call.receiveParameters()["password"].orEmpty()

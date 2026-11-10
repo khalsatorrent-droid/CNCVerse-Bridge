@@ -234,7 +234,7 @@ object Relay {
             val ctText = resp.header("Content-Type")
             // a playlist under a name without ".m3u8" (a rendition or audio group): rewritten like any other
             if (!head && resp.isSuccessful && (ctText?.contains("mpegurl", true) == true || MediaServer.isPlaylistName(url))) {
-                val text = withContext(Dispatchers.IO) { body?.string().orEmpty() }
+                val text = withContext(Dispatchers.IO) { body?.let { String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES)) }.orEmpty() }
                 if (text.trimStart().startsWith("#EXTM3U")) return respondPlaylist(call, id, src, resp.request.url.toString(), text)
                 val textType = runCatching { ContentType.parse(ctText ?: "text/plain") }.getOrDefault(ContentType.Text.Plain)
                 return call.respondText(text, textType, HttpStatusCode.fromValue(resp.code))
@@ -418,7 +418,8 @@ object Relay {
             withContext(Dispatchers.IO) {
                 MediaServer.clientFor(id, src).newCall(MediaServer.requestFor(src, url)).execute().use { r ->
                     if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
-                    r.request.url.toString() to (r.body?.string().orEmpty())
+                    // capped: a link labelled HLS that is really a video file must not be read into memory
+                    r.request.url.toString() to (r.body?.let { String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES)) }.orEmpty())
                 }
             }
         } catch (t: Exception) {

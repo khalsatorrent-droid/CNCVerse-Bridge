@@ -110,9 +110,8 @@ object PluginRepository {
                     header(HttpHeaders.AcceptLanguage, "en-US,en;q=0.9")
                 }
             }
-            val response = tempClient.get(baseUrl)
-            val location = response.headers["Location"]
-            tempClient.close()
+            // closed whatever happens (it stayed open, with its threads, whenever the request failed)
+            val location = try { tempClient.get(baseUrl).headers["Location"] } finally { tempClient.close() }
             
             if (location != null) {
                 if (location.startsWith("https://cutt.ly/404") || location.removeSuffix("/") == "https://cutt.ly" ||

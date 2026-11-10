@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Memory leaks and crash risks fixed.**
+  - **Media server: every link ever listed stayed in memory.** Each link of each result list is registered (address + headers), hundreds per search, and nothing was ever dropped. The list is now emptied when it passes 3,000 entries (each one is also saved on disk and read back when needed).
+  - **Decrypted DASH segments stayed in RAM after playback stopped.** Cleaning only ran when the next segment was asked for, so the last minute of video (tens to hundreds of MB) stayed until something else was played. It is now cleaned on a timer, and limited to 96 MB in total instead of 150 segments of any size.
+  - **Old result lists were kept.** The "earlier bigger list" kept for 30 minutes per title was never removed after that, until 300 had piled up. Expired ones are removed on every write and at most 60 are kept.
+  - **A link labelled HLS that is really a video file was read into memory whole** (by the relay and by the media server), which can end in an out-of-memory crash. Playlists are now read up to 16 MB and segments up to 128 MB; a bigger "segment" is passed straight through.
+  - **Subtitle / manifest proxy** refuses an answer over 32 MB instead of reading it into memory.
+  - **Cloudflare probe** built a new network client (own threads and connections) on every probe; it now reuses one.
+  - **Short-link resolver** left its client open whenever the request failed.
+  - **Website login** kept one counter per visitor address for ever; **public-address check** kept every host name for ever. Both are bounded now.
+
 ## 1.8.47
 
 - **Relay and media server: fixes for HLS links with several audio / video tracks and for signed HLS links.**

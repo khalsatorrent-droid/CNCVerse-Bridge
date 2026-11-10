@@ -2,6 +2,7 @@ package com.cncverse.stremiobridge.server.hls
 
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 
 /**
  * Cache system for segments, init segments, and MPD manifests.
@@ -72,8 +73,36 @@ object SegmentCache {
         return if (now - cached.timestamp < SEGMENT_CACHE_TTL_MS) cached.data else null
     }
 
+    /** Decrypted segments are whole byte arrays in RAM: never more than this in total, however many entries that is. */
+    private const val MAX_SEGMENT_BYTES = 96L * 1024 * 1024
+    private val sweepPlanned = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun putSegment(cacheKey: String, data: ByteArray) {
         segmentCache[cacheKey] = SegmentCacheEntry(data, System.currentTimeMillis())
+        // by size, oldest first (the limit used to be 150 entries, checked only when the next segment was asked for)
+        var total = segmentCache.values.sumOf { it.data.size.toLong() }
+        if (total > MAX_SEGMENT_BYTES) {
+            for (e in segmentCache.entries.sortedBy { it.value.timestamp }) {
+                if (total <= MAX_SEGMENT_BYTES * 3 / 4 || e.key == cacheKey) break
+                if (segmentCache.remove(e.key) != null) total -= e.value.data.size
+            }
+        }
+        planSweep()
+    }
+
+    /**
+     * Cleaning ran only at the start of the next segment request, so when playback stopped the last minute of decrypted video
+     * (tens to hundreds of MB) stayed in memory until something was played again. Now a sweep follows every write once the
+     * entries have expired, and repeats while anything is left.
+     */
+    private fun planSweep() {
+        if (!sweepPlanned.compareAndSet(false, true)) return
+        flightScope.launch {
+            kotlinx.coroutines.delay(SEGMENT_CACHE_TTL_MS + 5_000L)
+            sweepPlanned.set(false)
+            runCatching { cleanup() }
+            if (segmentCache.isNotEmpty() || initSegmentCache.isNotEmpty()) planSweep()
+        }
     }
 
     fun hasSegment(cacheKey: String): Boolean {
@@ -171,6 +200,8 @@ object SegmentCache {
             oldest.forEach { initSegmentCache.remove(it.key) }
         }
 
+        // the cleaned copies belong to the raw ones: when those have all expired nothing is playing any more
+        if (initSegmentCache.isEmpty() && segmentCache.isEmpty()) cleanedInitCache.clear()
         // Clean cleaned init cache
         if (cleanedInitCache.size > MAX_CLEANED_INIT_CACHE_SIZE) {
             cleanedInitCache.keys.take(cleanedInitCache.size - MAX_CLEANED_INIT_CACHE_SIZE / 2)

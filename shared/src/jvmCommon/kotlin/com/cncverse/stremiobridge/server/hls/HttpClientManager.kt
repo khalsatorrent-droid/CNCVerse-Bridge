@@ -95,7 +95,10 @@ object HttpClientManager {
             if (!response.isSuccessful) {
                 throw httpError(response)
             }
-            response.body?.string() ?: throw Exception("Empty response body")
+            val body = response.body ?: throw Exception("Empty response body")
+            // text only (manifests, subtitles): a video file behind such a link must not be read into memory
+            if (body.contentLength() > 32L * 1024 * 1024) throw Exception("Response too big for text (${body.contentLength() / 1_048_576} MB)")
+            body.string()
         }
     }
 

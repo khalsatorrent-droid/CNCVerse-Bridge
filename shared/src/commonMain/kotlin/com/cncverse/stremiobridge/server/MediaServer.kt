@@ -628,7 +628,7 @@ object MediaServer {
         if (playlistCache.containsKey(key)) return true
         return try {
             val fin = arrayOfNulls<String>(1)
-            val raw = String(fetchRemote(id, src, url, finalUrl = fin).first)
+            val raw = String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
             if (!raw.trimStart().startsWith("#EXTM3U")) throw IOException("not a playlist")
             runCatching { File(root ?: return@runCatching, "$id/playlist.m3u8").writeText(raw) }
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
@@ -662,6 +662,9 @@ object MediaServer {
     internal fun register(url: String, headers: Map<String, String>): String {
         val sorted = headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + ":" + it.value }
         val id = sha256(url + "\n" + sorted).take(20)
+        // Every link of every result list is registered here (hundreds per search) and nothing ever left the map: it grew for as
+        // long as the app ran. Each source is also saved as source.json and read back by sourceFor, so the map can be emptied.
+        if (sources.size > (if (root != null) 3_000 else 30_000)) sources.clear()
         if (sources.putIfAbsent(id, MediaSource(url, headers)) == null) {
             val dir = File(root ?: return id, id).also { it.mkdirs() }
             runCatching { File(dir, "source.json").writeText(json.encodeToString(MediaSource(url, headers))) }
@@ -1618,7 +1621,7 @@ object MediaServer {
         File(File(root!!, "$id/hls").also { it.mkdirs() }, sha256(url).take(32))
 
     /** Downloads one playlist / segment, trying up to three times (hosts that hiccup must not stall the player). */
-    private fun fetchRemote(id: String, src: MediaSource, url: String, stallS: Int = 0, attempts: Int = 3, finalUrl: Array<String?>? = null): Pair<ByteArray, String?> {
+    private fun fetchRemote(id: String, src: MediaSource, url: String, stallS: Int = 0, attempts: Int = 3, finalUrl: Array<String?>? = null, maxBytes: Long = MAX_SEGMENT_BYTES): Pair<ByteArray, String?> {
         // stallS > 0: a connection that sends nothing for that long is dropped and retried on a new one (video segments)
         val client = clientFor(id, src).let { if (stallS > 0) it.newBuilder().readTimeout(stallS.toLong(), TimeUnit.SECONDS).build() else it }
         var last: Exception? = null
@@ -1631,10 +1634,10 @@ object MediaServer {
                     }
                     // where the answer really came from (after redirects): relative links inside a playlist start there
                     finalUrl?.set(0, r.request.url.toString())
-                    return (r.body?.bytes() ?: ByteArray(0)) to r.header("Content-Type")?.substringBefore(';')?.trim()
+                    return (r.body?.let { readCapped(it, maxBytes) } ?: ByteArray(0)) to r.header("Content-Type")?.substringBefore(';')?.trim()
                 }
             } catch (e: IOException) {
-                if (e.message?.startsWith("HTTP 4") == true) throw e
+                if (e.message?.startsWith("HTTP 4") == true || e.message?.startsWith("too big") == true) throw e
                 last = e
             } catch (e: IllegalStateException) {
                 last = IOException(e.message)
@@ -1643,6 +1646,22 @@ object MediaServer {
         }
         throw last ?: IOException("download failed")
     }
+
+    /**
+     * A whole answer in memory, but never more than [max] bytes of it. A link labelled HLS that is really a video file (or a
+     * "segment" that is the whole film) used to be read into memory completely - gigabytes - and the app died out of memory.
+     */
+    internal fun readCapped(body: okhttp3.ResponseBody, max: Long): ByteArray {
+        val len = body.contentLength()
+        if (len > max) throw IOException("too big (${len / 1_048_576} MB)")
+        val source = body.source()
+        source.request(max + 1)
+        if (source.buffer.size > max) throw IOException("too big (over ${max / 1_048_576} MB)")
+        return source.readByteArray()
+    }
+    /** A playlist is text: a few MB at the very most. */
+    internal const val MAX_PLAYLIST_BYTES = 16L * 1024 * 1024
+    private const val MAX_SEGMENT_BYTES = 128L * 1024 * 1024
 
     /** One byte range of a file (a segment of a playlist that cuts one big file into #EXT-X-BYTERANGE pieces). */
     private fun fetchRange(id: String, src: MediaSource, url: String, range: String, crFile: File): Pair<ByteArray, String?> {
@@ -1809,7 +1828,7 @@ object MediaServer {
         val text = if (cached != null && System.currentTimeMillis() - cached.at < ttl(cached.text)) cached.text else {
             val fin = arrayOfNulls<String>(1)
             val raw = try {
-                withContext(Dispatchers.IO) { String(fetchRemote(id, src, url, finalUrl = fin).first) }
+                withContext(Dispatchers.IO) { String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first) }
             } catch (t: Exception) {
                 // the extension's server is gone: the copy saved on disk still works
                 val saved = if (url == src.url) withContext(Dispatchers.IO) {
@@ -1858,7 +1877,7 @@ object MediaServer {
                 prefetchLimit.withPermit {
                     runCatching {
                         val fin = arrayOfNulls<String>(1)
-                        val text = String(fetchRemote(id, src, u, finalUrl = fin).first)
+                        val text = String(fetchRemote(id, src, u, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
                         if (text.trimStart().startsWith("#EXTM3U")) {
                             val rewritten = rewritePlaylist(id, fin[0] ?: u, text, key)
                             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
@@ -1938,7 +1957,7 @@ object MediaServer {
             refreshedAt[pk] = now
             val plUrl = pk.substringAfter('|')
             val fin = arrayOfNulls<String>(1)
-            val text = String(fetchRemote(id, src, plUrl, attempts = 1, finalUrl = fin).first)
+            val text = String(fetchRemote(id, src, plUrl, attempts = 1, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
             if (!text.trimStart().startsWith("#EXTM3U") || !text.contains("#EXT-X-ENDLIST") || !text.contains("#EXTINF")) return null
             val rewritten = rewritePlaylist(id, fin[0] ?: plUrl, text, pk)
             val fresh = playlistSegs[pk] ?: return null
@@ -1972,7 +1991,7 @@ object MediaServer {
             val again = if (alt != null) withContext(Dispatchers.IO) { runCatching { ensureSegment(id, src, alt) }.getOrNull() } else null
             if (again == null || alt == null) {
                 // a piece too big to keep, or a host that ignores the range: passed straight through instead
-                if (ranged && t.message?.startsWith("HTTP 4") != true) return Relay.serveStream(call, id, tok)
+                if ((ranged && t.message?.startsWith("HTTP 4") != true) || t.message?.startsWith("too big") == true) return Relay.serveStream(call, id, tok)
                 return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
             }
             ref = alt

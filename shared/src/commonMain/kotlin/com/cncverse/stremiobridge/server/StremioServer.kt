@@ -3797,7 +3797,10 @@ object StremioServer {
             }
         }
         if (out.size >= (prev?.streams?.size ?: 0)) {
-            if (lastGood.size > 300) lastGood.clear()
+            // Each entry is a whole result list (hundreds of links). Expired ones were never removed - only when 300 had piled
+            // up was the map emptied - so a day of browsing kept hundreds of dead lists in memory.
+            lastGood.entries.removeIf { t - it.value.at >= LAST_GOOD_MS }
+            if (lastGood.size > 60) lastGood.entries.sortedBy { it.value.at }.take(lastGood.size - 40).forEach { lastGood.remove(it.key) }
             lastGood[key] = GoodList(t, out)
         }
         return out
