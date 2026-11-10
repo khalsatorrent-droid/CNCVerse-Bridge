@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.49
 
 - **More memory and stability fixes.**
   - **Every search kept its full link list in memory for ever.** The live list a search fills while it runs (every link found, with subtitles: often 1-3 MB) was never removed afterwards - one per title and episode ever searched. Only running searches and the last few finished ones are kept now. This was the biggest leak.
