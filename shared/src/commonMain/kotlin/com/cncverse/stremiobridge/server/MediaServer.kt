@@ -1564,7 +1564,9 @@ object MediaServer {
                         if (System.currentTimeMillis() - lastProgress > 90_000) throw IOException("download stalled")
                         // Short poll: the download writes in 128 KB steps, and 15 ms of sleep per step capped what one response could
                         // hand a player at about 8 MB/s however fast the host and the disk were - a ceiling a direct link never has.
-                        delay(3)
+                        // ...but only while data is flowing: when nothing has arrived for a moment (the host is slow, the player is
+                        // buffering) checking 330 times a second per connection just burns CPU and battery
+                        delay(if (System.currentTimeMillis() - lastProgress > 300L) 25 else 3)
                         continue
                     }
                     val n = minOf(avail - pos, end - pos + 1, buf.size.toLong()).toInt()
@@ -1926,7 +1928,9 @@ object MediaServer {
                 val range = url.substringAfter(SEP, "")
                 val (bytes, mime) = if (range.isEmpty()) fetchRemote(id, src, url, stallS = SEG_STALL_S, attempts = 5)
                     else fetchRange(id, src, url.substringBefore(SEP), range, File(f.parentFile, f.name + ".cr"))
-                val tmp = File(f.parentFile, f.name + ".tmp")
+                // its own temporary file: after a failed download a waiting request and a new one could both be here at once
+                // (the lock is dropped on failure), and two writers on one ".tmp" left a mixed-up segment on disk
+                val tmp = File(f.parentFile, f.name + "." + System.nanoTime() + ".tmp")
                 tmp.writeBytes(bytes)
                 mime?.let { runCatching { File(f.parentFile, f.name + ".ct").writeText(it) } }
                 if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }

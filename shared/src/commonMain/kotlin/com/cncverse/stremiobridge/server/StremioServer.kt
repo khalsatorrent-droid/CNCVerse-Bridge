@@ -3222,6 +3222,7 @@ object StremioServer {
 
     /** Live state of one title's search: how many sources there are, how many finished, what each one found. */
     private class SearchStatus(val total: Int) {
+        val at = System.currentTimeMillis()
         val done = java.util.concurrent.atomic.AtomicInteger()
         val counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
         @Volatile var finished = false
@@ -3542,6 +3543,17 @@ object StremioServer {
                 }
                 val status = SearchStatus(activePlugins.size + UpstreamAddons.active().size)
                 if (searchStatus.size > 100) searchStatus.keys.take(50).forEach { searchStatus.remove(it) }
+                // The live list of a search (every link found, with its subtitles: often 1-3 MB) was never removed once the search
+                // was over - one per title and episode ever searched, for as long as the app ran. Only running searches and the
+                // last few finished ones (the website still reads those) are kept.
+                run {
+                    val nowMs = System.currentTimeMillis()
+                    searchPartial.keys.removeIf { k -> val s = searchStatus[k]; s == null || (s.finished && nowMs - s.at > 10 * 60_000L) }
+                    if (searchPartial.size > 12) searchPartial.keys
+                        .filter { searchStatus[it]?.finished != false }
+                        .sortedBy { searchStatus[it]?.at ?: 0L }
+                        .take(searchPartial.size - 12).forEach { searchPartial.remove(it) }
+                }
                 searchStatus["$type:$id"] = status
                 searchPartial["$type:$id"] = accumulated
                 // UNDISPATCHED: every extension queues for its turn (a first-come, first-served queue) right here, in the order above

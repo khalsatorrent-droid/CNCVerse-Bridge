@@ -145,6 +145,10 @@ object BridgeRuntime {
                         ServerState.warn("Watchdog: web server was down, starting it again")
                         StremioServer.start(port, cacheDir)
                         deadChecks = 0
+                    } else if (MediaServer.isStreaming()) {
+                        // a video is being served right now, so the web server works: a failed check here is only a busy
+                        // moment, and restarting would cut the video that is playing
+                        deadChecks = 0
                     } else if (!StremioServer.answers()) {
                         // "running" but not answering (frozen after the phone slept, or the socket was lost): twice in a row -> restart it
                         deadChecks++
@@ -421,7 +425,10 @@ object BridgeRuntime {
                     val toUpdate = RepoState.installedPlugins.value.filter {
                         RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
                     }
-                    if (toUpdate.isNotEmpty()) {
+                    if (toUpdate.isNotEmpty() && (MediaServer.isStreaming() || Relay.stats().second > 0)) {
+                        // reloading the extensions stops their own local servers, and with them a video that plays through one
+                        ServerState.info("Extension updates found (${toUpdate.size}) - installing them at the next check, a video is playing now")
+                    } else if (toUpdate.isNotEmpty()) {
                         ServerState.info("Auto-updating ${toUpdate.size} plugin(s)…")
                         PluginInstaller.autoUpdateInstalled(cacheDir)
                         forceReloadPlugins()

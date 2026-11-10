@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **More memory and stability fixes.**
+  - **Every search kept its full link list in memory for ever.** The live list a search fills while it runs (every link found, with subtitles: often 1-3 MB) was never removed afterwards - one per title and episode ever searched. Only running searches and the last few finished ones are kept now. This was the biggest leak.
+  - **Saved results are limited by size, not only by number.** 3,000 entries could be several hundred MB when many were big lists; the budget now follows the memory the app may use.
+  - **A segment could be saved damaged.** After a failed download, two requests for the same HLS segment could write the same temporary file at once.
+  - **Less CPU while buffering.** While a player waited for data the media server checked about 330 times a second per connection; it now slows down when nothing has arrived for a moment.
+  - **The watchdog no longer restarts the web server while a video is being served** (a failed health check then only means the server is busy).
+  - **Extension auto-updates wait while a video is playing** (reloading extensions stops their local servers, and the video with them); they are installed at the next 30-minute check.
+
 ## 1.8.48
 
 - **Memory leaks and crash risks fixed.**

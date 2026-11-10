@@ -595,8 +595,8 @@ object StreamCacheManager {
 
         val expiresAt = now + computedTtlMs
 
-        // Evict if exceeding max RAM capacity
-        if (memoryCache.size >= config.maxRamEntries) {
+        // Evict if exceeding max RAM capacity (by number of entries, or by how much they hold)
+        if (memoryCache.size >= config.maxRamEntries || totalWeight() > maxWeight) {
             evictExcessEntries()
         }
 
@@ -793,6 +793,15 @@ object StreamCacheManager {
         return Pair(validList, effectiveTtlMs)
     }
 
+    /**
+     * Rough size of an entry: its links, plus a quarter per subtitle track. The limit used to be a number of entries only, but
+     * an entry is anything from one link to a 500-link list with hundreds of subtitles, so 3,000 entries could be several
+     * hundred MB. The budget follows the memory the app may use (about an eighth of it, at ~2.5 KB a link).
+     */
+    private fun weightOf(e: CachedStreamEntry): Long = e.streams.sumOf { 1L + (it.subtitles?.size ?: 0) / 4 }
+    private fun totalWeight(): Long = memoryCache.values.sumOf { weightOf(it) }
+    private val maxWeight: Long by lazy { (Runtime.getRuntime().maxMemory() / 8 / 2_500).coerceIn(8_000L, 120_000L) }
+
     private fun evictExcessEntries() {
         val now = System.currentTimeMillis()
         var removed = 0
@@ -817,6 +826,15 @@ object StreamCacheManager {
                     memoryCache.remove(sorted[i].key)
                     removed++
                 }
+            }
+        }
+
+        // Pass 3: still holding too much: the oldest go until it is back at 80% of the budget
+        var weight = totalWeight()
+        if (weight > maxWeight) {
+            for (en in memoryCache.entries.sortedBy { it.value.cachedAt }) {
+                if (weight <= maxWeight * 8 / 10) break
+                if (memoryCache.remove(en.key) != null) { weight -= weightOf(en.value); removed++ }
             }
         }
 
