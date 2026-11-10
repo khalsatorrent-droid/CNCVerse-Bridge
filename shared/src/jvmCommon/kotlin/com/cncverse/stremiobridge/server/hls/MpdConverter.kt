@@ -831,12 +831,14 @@ class MpdConverter {
             relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://") -> relativeUrl
             relativeUrl.startsWith("//") -> "https:$relativeUrl"
             relativeUrl.startsWith("/") -> {
-                val uri = URI(baseUrl)
-                URI(uri.scheme, uri.authority, relativeUrl, null, null).toString()
+                // plain text join: URI(scheme, authority, path…) encoded the "?" of a signed "/seg.m4s?token=…" as %3F
+                // (the query became part of the file name: 404) and threw on addresses with unusual characters
+                val origin = Regex("^https?://[^/?#]+", RegexOption.IGNORE_CASE).find(baseUrl)?.value
+                if (origin != null) origin + relativeUrl else relativeUrl
             }
             else -> {
                 val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-                URI(base).resolve(relativeUrl).toString()
+                com.cncverse.stremiobridge.server.MediaServer.resolve(base, relativeUrl)
             }
         }
     }

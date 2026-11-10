@@ -88,8 +88,10 @@ object QualityProbe {
                 val tier = if (res != null && res.size == 2) tierOf(res[0].toIntOrNull() ?: 0, res[1].toIntOrNull() ?: 0) else 0
                 var j = i + 1
                 while (j < lines.size && (lines[j].isEmpty() || lines[j].startsWith("#"))) j++
-                if (j < lines.size) {
-                    val abs = runCatching { java.net.URI(baseUrl).resolve(lines[j]).toString() }.getOrDefault(lines[j])
+                if (j < lines.size && lines[j].isNotEmpty()) {
+                    // (java.net.URI refuses signed addresses with | { } ^ in them: the rendition then stayed a bare relative
+                    // name, and that name replaced the link's address - a link that could not play)
+                    val abs = MediaServer.resolve(baseUrl, lines[j])
                     raw += Triple(abs, tier, bw)
                 }
                 i = j
@@ -98,7 +100,8 @@ object QualityProbe {
         }
         if (raw.isEmpty()) return emptyList()
         val noRes = raw.all { it.second == 0 }
-        return raw.map { (u, t, bw) -> Variant(u, if (noRes) tierFromBandwidth(bw) else t, bw) }
+        // a rendition whose address could not be made absolute is useless (and must never become a link's address)
+        return raw.filter { it.first.startsWith("http", true) }.map { (u, t, bw) -> Variant(u, if (noRes) tierFromBandwidth(bw) else t, bw) }
     }
 
     private fun isHlsCandidate(s: StremioStream): Boolean {
