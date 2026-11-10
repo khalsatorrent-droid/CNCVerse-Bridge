@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.47
 
 - **Relay and media server: fixes for HLS links with several audio / video tracks and for signed HLS links.**
   - **Signed links with unusual characters.** A playlist address containing characters like `|`, `{`, `}`, `^` or a space could not be combined with the relative links inside it, so the player was sent to this bridge for a segment that did not exist (404). Links starting with `?` and hosts without a path were combined wrongly too. Both the relay and the media server now use the same resolver the download itself uses.
