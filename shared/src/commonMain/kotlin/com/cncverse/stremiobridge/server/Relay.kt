@@ -84,6 +84,8 @@ object Relay {
     /** variant playlist url -> BANDWIDTH of its master entry (bits/s) */
     private val variantBw = ConcurrentHashMap<String, Long>()
     private val logged = ConcurrentHashMap.newKeySet<String>()
+    /** audio / subtitle playlists of a master (#EXT-X-MEDIA): they say nothing about the video's bitrate, so they never decide */
+    private val sidePlaylists = ConcurrentHashMap.newKeySet<String>()
 
     private fun mediaCan(hls: Boolean): Boolean {
         val p = MediaServer.prefs
@@ -424,6 +426,12 @@ object Relay {
         }
         if (!text.trimStart().startsWith("#EXTM3U")) return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
         if (text.contains("#EXTINF")) {
+            // An audio or subtitle playlist is not what the link is judged by. The player opens it together with the video's
+            // playlist, and when it came first the whole link was decided on a few hundred kbit/s of audio (or a subtitle
+            // file): "fast enough", relay - however heavy the video was. The video's playlist decides; this one is just served.
+            if (decisions[id] == null && mediaCan(true) && sidePlaylists.contains("$id|$url")) {
+                return respondPlaylist(call, id, src, finalUrl, text)
+            }
             if (decisions[id] == null && mediaCan(true)) {
                 val choice = withContext(Dispatchers.IO) { decideHls(id, src, url, finalUrl, text, t0) }
                 if (choice == MEDIA) return MediaServer.servePlaylist(call, id, tok)
@@ -436,9 +444,17 @@ object Relay {
     private fun decideHls(id: String, src: MediaSource, url: String, finalUrl: String, text: String, t0: Long): Int {
         var dur = 0.0
         var seg: String? = null
+        // a playlist that cuts one big file into byte ranges: only the first piece is measured, never the whole file
+        var range: String? = null
         for (raw in text.lines()) {
             val l = raw.trim()
             if (l.startsWith("#EXTINF:")) dur = l.substringAfter(':').substringBefore(',').trim().toDoubleOrNull() ?: 0.0
+            else if (l.startsWith("#EXT-X-BYTERANGE:")) {
+                val spec = l.substringAfter(':').trim()
+                val n = spec.substringBefore('@').trim().toLongOrNull()
+                val o = spec.substringAfter('@', "").trim().toLongOrNull() ?: 0L
+                if (n != null && n > 0) range = "bytes=$o-${o + n - 1}"
+            }
             else if (l.isNotEmpty() && !l.startsWith("#") && dur > 0) { seg = MediaServer.resolve(finalUrl, l); break }
         }
         val segUrl = seg ?: return relayNow(id, url, "HLS, no segment to measure")
@@ -449,7 +465,7 @@ object Relay {
         val left = maxOf(500L, DECIDE_MS - (System.currentTimeMillis() - t0))
         val client = MediaServer.clientFor(id, src).newBuilder().callTimeout(left, TimeUnit.MILLISECONDS).build()
         val s0 = System.currentTimeMillis()
-        val bytes = runCatching { client.newCall(MediaServer.requestFor(src, segUrl)).execute().use { r -> if (r.isSuccessful) r.body?.bytes()?.size ?: 0 else -1 } }.getOrDefault(0)
+        val bytes = runCatching { client.newCall(MediaServer.requestFor(src, segUrl, range)).execute().use { r -> if (r.isSuccessful) r.body?.bytes()?.size ?: 0 else -1 } }.getOrDefault(0)
         val took = maxOf(50L, System.currentTimeMillis() - s0)
         if (bytes < 0) return relayNow(id, url, "HLS, the first segment was refused")
         val speed = if (bytes > 0) bytes * 8_000.0 / took else 0.0
@@ -503,9 +519,11 @@ object Relay {
                         pendingBw = BW.find(line)?.groupValues?.get(1)?.toLongOrNull()
                     }
                     val isPlTag = line.startsWith("#EXT-X-MEDIA") || line.startsWith("#EXT-X-I-FRAME-STREAM-INF")
+                    val isSide = line.startsWith("#EXT-X-MEDIA")
                     val isKey = line.startsWith("#EXT-X-KEY") || line.startsWith("#EXT-X-SESSION-KEY")
                     out.append(if (line.contains("URI=\"")) URI_ATTR.replace(line) { m ->
                         val abs = MediaServer.resolve(playlistUrl, m.groupValues[1])
+                        if (isSide) { if (sidePlaylists.size > 5_000) sidePlaylists.clear(); sidePlaylists.add("$id|$abs") }
                         "URI=\"" + target(abs, isPlTag || MediaServer.isPlaylistName(abs), isKey) + "\""
                     } else line)
                 }

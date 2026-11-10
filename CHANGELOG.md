@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Relay and media server: fixes for HLS links with several audio / video tracks and for signed HLS links.**
+  - **Signed links with unusual characters.** A playlist address containing characters like `|`, `{`, `}`, `^` or a space could not be combined with the relative links inside it, so the player was sent to this bridge for a segment that did not exist (404). Links starting with `?` and hosts without a path were combined wrongly too. Both the relay and the media server now use the same resolver the download itself uses.
+  - **Playlists that redirect.** The media server resolved relative links from the address it asked for, not the one the playlist really came from after a redirect (signed links often redirect). It now uses the final address, as the relay already did.
+  - **Expired segment links.** When a segment of a finished (VOD) playlist answers 403 / 404 / 410, the media server loads that playlist again and uses the new link of the same segment, for it and all later ones. The log says `the segment links had expired - the playlist was loaded again`. If the playlist's own link has expired too, this cannot help.
+  - **Audio and subtitle playlists.** `#EXT-X-MEDIA` and I-frame lists are now always treated as playlists by the media server, whatever their name ends in (before, one without `.m3u8` was saved on disk like a segment and never loaded again). Keys given as `data:` or `skd:` are left alone.
+  - **Separate audio and video.** Read-ahead while paused now works per playlist, so audio and video are both fetched ahead (it followed only whichever was asked for last). The default audio playlists are loaded ahead with the video's when the master is opened.
+  - **Smart switch.** An audio or subtitle playlist no longer decides relay / media server for the whole link: when the player opened it before the video's, the link was judged on the audio's bitrate and always went to the relay.
+  - **One file cut into byte ranges (`#EXT-X-BYTERANGE`).** The media server downloaded the whole file into memory for each piece; it now fetches and keeps only the pieces (with read-ahead), and passes through any piece over 64 MB. The smart switch measures only the first piece.
+  - **Best quality only.** When the same resolution is listed once per audio group (AAC, Dolby…), one entry per group is kept, so the player can still pick audio its device can decode.
+
 ## 1.8.45
 
 - **Media server: a pause now banks much more video, so playback does not run dry soon after it carries on.**

@@ -38,6 +38,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -216,12 +217,12 @@ object MediaServer {
                 e.focus = gap
             }
         }
-        for ((id, v) in hlsPlay) {
+        for ((pk, v) in hlsPlay) {
             val quiet = now - v.third
-            if (quiet > PAUSE_DEEP_MS) { hlsPlay.remove(id); continue }
-            val src = sourceFor(id) ?: continue
+            if (quiet > PAUSE_DEEP_MS) { hlsPlay.remove(pk); continue }
+            val src = sourceFor(v.first) ?: continue
             // paused (no segment asked for lately): fetch more segments ahead than while playing
-            prefetch(id, src, v.first, v.second + 1, deep = quiet >= PAUSE_QUIET_MS)
+            prefetch(v.first, src, pk, v.second + 1, deep = quiet >= PAUSE_QUIET_MS)
         }
     }
     @Volatile private var cleaner: kotlinx.coroutines.Job? = null
@@ -626,13 +627,15 @@ object MediaServer {
         val key = "$id|$url"
         if (playlistCache.containsKey(key)) return true
         return try {
-            val raw = String(fetchRemote(id, src, url).first)
+            val fin = arrayOfNulls<String>(1)
+            val raw = String(fetchRemote(id, src, url, finalUrl = fin).first)
             if (!raw.trimStart().startsWith("#EXTM3U")) throw IOException("not a playlist")
             runCatching { File(root ?: return@runCatching, "$id/playlist.m3u8").writeText(raw) }
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
-            playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, url, useRaw, key))
+            val base = fin[0] ?: url
+            playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, base, useRaw, key))
             if (raw.contains("#EXTINF")) prefetch(id, src, key, 0)
-            if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, url, useRaw)
+            if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, base, useRaw)
             true
         } catch (t: Exception) {
             // the extension's server is gone but an earlier run saved the playlist: that copy is used
@@ -1604,7 +1607,10 @@ object MediaServer {
     /** "id|segment url" -> (playlist key, index) */
     private val segPos = ConcurrentHashMap<String, Pair<String, Int>>()
     private val segLocks = ConcurrentHashMap<String, Any>()
-    /** source id -> (playlist key, index of the segment the player asked for last, when) */
+    /**
+     * playlist key -> (source id, index of the segment the player asked for last, when). Per playlist, not per link: a link with
+     * separate audio and video playlists plays both at once, and each needs its own read-ahead.
+     */
     private val hlsPlay = ConcurrentHashMap<String, Triple<String, Int, Long>>()
     private val segWrites = AtomicLong(0)
 
@@ -1612,7 +1618,7 @@ object MediaServer {
         File(File(root!!, "$id/hls").also { it.mkdirs() }, sha256(url).take(32))
 
     /** Downloads one playlist / segment, trying up to three times (hosts that hiccup must not stall the player). */
-    private fun fetchRemote(id: String, src: MediaSource, url: String, stallS: Int = 0, attempts: Int = 3): Pair<ByteArray, String?> {
+    private fun fetchRemote(id: String, src: MediaSource, url: String, stallS: Int = 0, attempts: Int = 3, finalUrl: Array<String?>? = null): Pair<ByteArray, String?> {
         // stallS > 0: a connection that sends nothing for that long is dropped and retried on a new one (video segments)
         val client = clientFor(id, src).let { if (stallS > 0) it.newBuilder().readTimeout(stallS.toLong(), TimeUnit.SECONDS).build() else it }
         var last: Exception? = null
@@ -1623,6 +1629,8 @@ object MediaServer {
                         if (r.code in 400..499 && r.code != 408 && r.code != 429) throw IOException("HTTP ${r.code}")
                         throw IllegalStateException("HTTP ${r.code}")
                     }
+                    // where the answer really came from (after redirects): relative links inside a playlist start there
+                    finalUrl?.set(0, r.request.url.toString())
                     return (r.body?.bytes() ?: ByteArray(0)) to r.header("Content-Type")?.substringBefore(';')?.trim()
                 }
             } catch (e: IOException) {
@@ -1636,24 +1644,75 @@ object MediaServer {
         throw last ?: IOException("download failed")
     }
 
+    /** One byte range of a file (a segment of a playlist that cuts one big file into #EXT-X-BYTERANGE pieces). */
+    private fun fetchRange(id: String, src: MediaSource, url: String, range: String, crFile: File): Pair<ByteArray, String?> {
+        val client = clientFor(id, src).newBuilder().readTimeout(SEG_STALL_S.toLong(), TimeUnit.SECONDS).build()
+        var last: IOException? = null
+        for (attempt in 1..3) {
+            var fatal = false
+            try {
+                client.newCall(requestFor(src, url, range)).execute().use { r ->
+                    if (r.code != 206) {
+                        // 200 = the host ignores ranges and would send the whole file: never read that into memory
+                        fatal = r.code == 200 || (r.code in 400..499 && r.code != 408 && r.code != 429)
+                        throw IOException(if (r.code == 200) "range ignored" else "HTTP ${r.code}")
+                    }
+                    if ((r.body?.contentLength() ?: -1L) > MAX_RANGE_BYTES) { fatal = true; throw IOException("range too big") }
+                    val bytes = r.body?.bytes() ?: ByteArray(0)
+                    r.header("Content-Range")?.let { cr -> runCatching { crFile.writeText(cr) } }
+                    return bytes to r.header("Content-Type")?.substringBefore(';')?.trim()
+                }
+            } catch (e: IOException) {
+                if (fatal) throw e
+                last = e
+            }
+            if (attempt < 3) Thread.sleep(250L * attempt)
+        }
+        throw last ?: IOException("download failed")
+    }
+
+    /** A byte-range piece bigger than this is passed through instead of being kept in memory and on disk. */
+    private const val MAX_RANGE_BYTES = 64L * 1024 * 1024
+    /** Separates a segment's url from its byte range in a segment reference ("url" or "url<SEP>bytes=a-b"). */
+    private const val SEP = '\u0000'
+    private val RANGE_EXACT = Regex("bytes=\\d+-\\d+")
+    /** "id|url" of files that playlists cut into byte ranges */
+    private val rangedUrls = ConcurrentHashMap.newKeySet<String>()
+    /** "id|segment reference" -> the reference that replaced it when its signed link expired and the playlist was loaded again */
+    private val segSwap = ConcurrentHashMap<String, String>()
+    private val refreshedAt = ConcurrentHashMap<String, Long>()
+
     private val URI_ATTR = Regex("URI=\"([^\"]*)\"")
 
     private fun isPlaylistUrl(u: String) = u.substringBefore('?').endsWith(".m3u8", true)
     internal fun isPlaylistName(u: String) = isPlaylistUrl(u)
 
-    internal fun resolve(base: String, ref: String): String =
-        runCatching { java.net.URI(base).resolve(ref.trim()).toString() }.getOrDefault(ref)
+    /**
+     * A link inside a playlist, made absolute. java.net.URI alone refused signed links with characters like | { } ^ or a space
+     * in them (the relative link was then left as it was and the player asked this bridge for it: 404), and it resolved "?token=…"
+     * and hosts without a path wrongly. OkHttp's resolver (the one the download uses anyway) takes all of those.
+     */
+    internal fun resolve(base: String, ref: String): String {
+        val r = ref.trim()
+        if (r.startsWith("http://", true) || r.startsWith("https://", true)) return r
+        runCatching { base.toHttpUrlOrNull()?.resolve(r)?.toString() }.getOrNull()?.let { return it }
+        return runCatching { java.net.URI(base).resolve(r).toString() }.getOrDefault(r)
+    }
 
     private fun relTarget(id: String, url: String, playlist: Boolean): String =
         if (playlist) "../pl/${token(id, url)}.m3u8" else "../seg/${token(id, url)}"
 
     private val ATTRS = Regex("([A-Z0-9-]+)=(\"[^\"]*\"|[^,]*)")
 
-    /** A master playlist cut down to its highest rendition (tallest, then highest bitrate); audio / subtitle groups stay. */
+    /**
+     * A master playlist cut down to its highest rendition (tallest, then highest bitrate); audio / subtitle groups stay.
+     * The same picture is often listed once per audio group (AAC stereo, Dolby 5.1…): one entry per group is kept, so the player
+     * can still take the audio its device can decode - keeping a single entry could leave only a group it cannot play.
+     */
     internal fun keepBestVariant(text: String): String {
         if (!text.contains("#EXT-X-STREAM-INF")) return text
         val lines = text.lines()
-        class V(val infoIdx: Int, val urlIdx: Int, val height: Int, val bw: Long)
+        class V(val infoIdx: Int, val urlIdx: Int, val height: Int, val bw: Long, val audio: String?)
         val vs = ArrayList<V>()
         var i = 0
         while (i < lines.size) {
@@ -1664,7 +1723,7 @@ object MediaServer {
                 val bw = a["AVERAGE-BANDWIDTH"]?.toLongOrNull() ?: a["BANDWIDTH"]?.toLongOrNull() ?: 0L
                 var j = i + 1
                 while (j < lines.size && (lines[j].isBlank() || lines[j].startsWith("#"))) j++
-                if (j < lines.size) vs += V(i, j, h, bw)
+                if (j < lines.size) vs += V(i, j, h, bw, a["AUDIO"])
                 i = j
             }
             i++
@@ -1672,33 +1731,60 @@ object MediaServer {
         if (vs.size < 2) return text
         val top = vs.maxWithOrNull(compareBy<V>({ it.height }, { it.bw })) ?: return text
         val drop = HashSet<Int>()
-        for (v in vs) if (v !== top) { drop += v.infoIdx; for (k in v.infoIdx..v.urlIdx) drop += k }
+        val keep = ArrayList<V>()
+        keep += top
+        if (top.height > 0) vs.filter { it.height == top.height && it.audio != top.audio }.groupBy { it.audio }.values
+            .forEach { g -> g.maxByOrNull { it.bw }?.let { keep += it } }
+        for (v in vs) if (keep.none { it === v }) { drop += v.infoIdx; for (k in v.infoIdx..v.urlIdx) drop += k }
         return lines.filterIndexed { idx, _ -> idx !in drop }.joinToString("\n")
     }
 
-    /** Rewrites every URI of a playlist to this server (relative links, so any host/port works). */
+    /**
+     * Rewrites every URI of a playlist to this server (relative links, so any host/port works).
+     * Audio / subtitle groups (#EXT-X-MEDIA) and I-frame lists are playlists whatever their name ends in; keys given as data: or
+     * skd: stay as they are; a file cut into #EXT-X-BYTERANGE pieces is fetched piece by piece, never as a whole.
+     */
     private fun rewritePlaylist(id: String, playlistUrl: String, text: String, playlistKey: String): String {
         val out = StringBuilder()
         val segments = ArrayList<String>()
         var nextIsVariant = false
+        var pendingRange: String? = null
+        val lastEnd = HashMap<String, Long>()
+        fun rangeOf(spec: String, abs: String): String? {
+            val n = spec.substringBefore('@').trim().toLongOrNull() ?: return null
+            val o = spec.substringAfter('@', "").trim().toLongOrNull() ?: lastEnd[abs] ?: 0L
+            lastEnd[abs] = o + n
+            return "bytes=$o-${o + n - 1}"
+        }
+        fun markRanged(abs: String) { if (rangedUrls.size > 20_000) rangedUrls.clear(); rangedUrls.add("$id|$abs") }
         for (raw in text.lines()) {
             val line = raw.trimEnd('\r')
             when {
                 line.isBlank() -> out.append(line).append('\n')
                 line.startsWith("#") -> {
                     if (line.startsWith("#EXT-X-STREAM-INF")) nextIsVariant = true
+                    if (line.startsWith("#EXT-X-BYTERANGE:")) pendingRange = line.substringAfter(':').trim()
+                    val isPlTag = line.startsWith("#EXT-X-MEDIA") || line.startsWith("#EXT-X-I-FRAME-STREAM-INF")
+                    val hasRange = line.contains("BYTERANGE=")
                     val fixed = if (line.contains("URI=\"")) URI_ATTR.replace(line) { m ->
                         val abs = resolve(playlistUrl, m.groupValues[1])
-                        "URI=\"" + relTarget(id, abs, isPlaylistUrl(abs)) + "\""
+                        if (!abs.startsWith("http", true)) m.value else {
+                            if (hasRange) markRanged(abs)
+                            "URI=\"" + relTarget(id, abs, isPlTag || isPlaylistUrl(abs)) + "\""
+                        }
                     } else line
                     out.append(fixed).append('\n')
                 }
                 else -> {
                     val abs = resolve(playlistUrl, line)
                     val isPl = nextIsVariant || isPlaylistUrl(abs)
-                    if (!isPl) segments += abs
+                    if (!isPl) {
+                        val range = pendingRange?.let { rangeOf(it, abs) }
+                        if (range != null) { markRanged(abs); segments += abs + SEP + range } else segments += abs
+                    }
+                    pendingRange = null
                     nextIsVariant = false
-                    out.append(relTarget(id, abs, isPl)).append('\n')
+                    out.append(if (abs.startsWith("http", true)) relTarget(id, abs, isPl) else line).append('\n')
                 }
             }
         }
@@ -1721,8 +1807,9 @@ object MediaServer {
         val local = isLoopbackUrl(url)
         val ttl = { t: String -> if (local && (t.contains("#EXT-X-ENDLIST") || t.contains("#EXT-X-STREAM-INF"))) 6 * 3_600_000L else playlistTtl(t) }
         val text = if (cached != null && System.currentTimeMillis() - cached.at < ttl(cached.text)) cached.text else {
+            val fin = arrayOfNulls<String>(1)
             val raw = try {
-                withContext(Dispatchers.IO) { String(fetchRemote(id, src, url).first) }
+                withContext(Dispatchers.IO) { String(fetchRemote(id, src, url, finalUrl = fin).first) }
             } catch (t: Exception) {
                 // the extension's server is gone: the copy saved on disk still works
                 val saved = if (url == src.url) withContext(Dispatchers.IO) {
@@ -1734,12 +1821,14 @@ object MediaServer {
                 return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
             }
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
-            val rewritten = rewritePlaylist(id, url, useRaw, key)
+            // relative links start at the address the playlist really came from (a signed link often redirects)
+            val base = fin[0] ?: url
+            val rewritten = rewritePlaylist(id, base, useRaw, key)
             if (playlistCache.size > 500) playlistCache.clear()
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
             // Start fetching the first segments right away
             if (raw.contains("#EXTINF")) prefetch(id, src, key, 0)
-            if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, url, useRaw)
+            if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, base, useRaw)
             rewritten
         }
         call.response.header(HttpHeaders.CacheControl, "no-store")
@@ -1750,22 +1839,28 @@ object MediaServer {
     private fun warmVariants(id: String, src: MediaSource, masterUrl: String, raw: String) {
         val lines = raw.lines().map { it.trim() }
         val urls = ArrayList<String>()
+        val audio = ArrayList<Pair<String, Boolean>>()
         for ((i, l) in lines.withIndex()) {
             if (l.startsWith("#EXT-X-STREAM-INF")) {
                 var j = i + 1
                 while (j < lines.size && (lines[j].isEmpty() || lines[j].startsWith("#"))) j++
                 if (j < lines.size) urls += resolve(masterUrl, lines[j])
+            } else if (l.startsWith("#EXT-X-MEDIA") && l.contains("TYPE=AUDIO")) {
+                // separate audio: the player opens it together with the video, so it is loaded ahead as well (default language first)
+                URI_ATTR.find(l)?.let { audio += resolve(masterUrl, it.groupValues[1]) to l.contains("DEFAULT=YES") }
             }
         }
-        for (u in urls.distinct().take(6)) {
+        val all = urls.distinct().take(6) + audio.sortedByDescending { it.second }.map { it.first }.distinct().take(3)
+        for (u in all.distinct().filter { it.startsWith("http", true) }) {
             val key = "$id|$u"
             if (playlistCache.containsKey(key)) continue
             scope.launch {
                 prefetchLimit.withPermit {
                     runCatching {
-                        val text = String(fetchRemote(id, src, u).first)
+                        val fin = arrayOfNulls<String>(1)
+                        val text = String(fetchRemote(id, src, u, finalUrl = fin).first)
                         if (text.trimStart().startsWith("#EXTM3U")) {
-                            val rewritten = rewritePlaylist(id, u, text, key)
+                            val rewritten = rewritePlaylist(id, fin[0] ?: u, text, key)
                             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
                             if (isLoopbackUrl(u) && text.contains("#EXTINF")) prefetch(id, src, key, 0)
                         }
@@ -1808,7 +1903,10 @@ object MediaServer {
         try {
             synchronized(lock) {
                 if (f.exists()) return f
-                val (bytes, mime) = fetchRemote(id, src, url, stallS = SEG_STALL_S, attempts = 5)
+                // "url<SEP>bytes=a-b": one piece of a file that the playlist cuts into byte ranges
+                val range = url.substringAfter(SEP, "")
+                val (bytes, mime) = if (range.isEmpty()) fetchRemote(id, src, url, stallS = SEG_STALL_S, attempts = 5)
+                    else fetchRange(id, src, url.substringBefore(SEP), range, File(f.parentFile, f.name + ".cr"))
                 val tmp = File(f.parentFile, f.name + ".tmp")
                 tmp.writeBytes(bytes)
                 mime?.let { runCatching { File(f.parentFile, f.name + ".ct").writeText(it) } }
@@ -1822,24 +1920,84 @@ object MediaServer {
         return f
     }
 
+    /**
+     * A segment answered 403 / 404 / 410: on a signed link that is what an expired signature looks like. The player keeps the
+     * playlist it got at the start (a finished video's playlist is never asked for again), so every later segment would fail the
+     * same way. The playlist is loaded again and the segment at the same place in it is used instead - for this one and, through
+     * [segSwap], for all that follow. Only for finished (VOD) playlists whose segment count did not change.
+     */
+    private fun refreshed(id: String, src: MediaSource, ref: String): String? {
+        val (pk, i) = segPos["$id|$ref"] ?: return null
+        return synchronized(refreshedAt) {
+            val old = playlistSegs[pk] ?: return null
+            // another request already loaded it again
+            if (old.getOrNull(i) != ref) return segSwap["$id|$ref"]
+            val now = System.currentTimeMillis()
+            if (now - (refreshedAt[pk] ?: 0L) < 10_000L) return null
+            if (refreshedAt.size > 2_000) refreshedAt.clear()
+            refreshedAt[pk] = now
+            val plUrl = pk.substringAfter('|')
+            val fin = arrayOfNulls<String>(1)
+            val text = String(fetchRemote(id, src, plUrl, attempts = 1, finalUrl = fin).first)
+            if (!text.trimStart().startsWith("#EXTM3U") || !text.contains("#EXT-X-ENDLIST") || !text.contains("#EXTINF")) return null
+            val rewritten = rewritePlaylist(id, fin[0] ?: plUrl, text, pk)
+            val fresh = playlistSegs[pk] ?: return null
+            if (fresh.size != old.size) return null
+            playlistCache[pk] = CachedPlaylist(now, rewritten)
+            if (segSwap.size > 60_000) segSwap.clear()
+            var changed = 0
+            old.forEachIndexed { k, o -> if (o != fresh[k]) { segSwap["$id|$o"] = fresh[k]; changed++ } }
+            if (changed > 0) ServerState.info("[MediaServer] ${LinkUrl.host(plUrl) ?: "?"}: the segment links had expired - the playlist was loaded again ($changed new links)")
+            fresh[i].takeIf { it != ref }
+        }
+    }
+
     suspend fun serveSegment(call: ApplicationCall, id: String, tok: String) {
         val src = sourceFor(id) ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
         val url = urlOfToken(id, tok) ?: return call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
         served.incrementAndGet()
         touchDir(id)
+        // a file the playlist cuts into byte ranges: only the piece asked for is fetched (the whole file could be gigabytes)
+        val reqRange = call.request.header("Range")?.replace(" ", "")
+        val ranged = reqRange != null && rangedUrls.contains("$id|$url") && RANGE_EXACT.matches(reqRange)
+        var ref = if (ranged) url + SEP + reqRange else url
+        // its signed link expired earlier and the playlist was loaded again: the new link for the same segment
+        var hops = 0
+        while (hops++ < 4 && !segFile(id, ref).exists()) ref = segSwap["$id|$ref"] ?: break
         val file = try {
-            withContext(Dispatchers.IO) { ensureSegment(id, src, url) }
+            withContext(Dispatchers.IO) { ensureSegment(id, src, ref) }
         } catch (t: Exception) {
-            return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
+            val first = ref
+            val alt = if (t.message?.startsWith("HTTP 4") == true) withContext(Dispatchers.IO) { runCatching { refreshed(id, src, first) }.getOrNull() } else null
+            val again = if (alt != null) withContext(Dispatchers.IO) { runCatching { ensureSegment(id, src, alt) }.getOrNull() } else null
+            if (again == null || alt == null) {
+                // a piece too big to keep, or a host that ignores the range: passed straight through instead
+                if (ranged && t.message?.startsWith("HTTP 4") != true) return Relay.serveStream(call, id, tok)
+                return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
+            }
+            ref = alt
+            again
         }
-        segPos["$id|$url"]?.let { (pk, i) ->
-            hlsPlay[id] = Triple(pk, i, System.currentTimeMillis())
+        segPos["$id|$ref"]?.let { (pk, i) ->
+            if (hlsPlay.size > 2_000) hlsPlay.clear()
+            hlsPlay[pk] = Triple(id, i, System.currentTimeMillis())
             prefetch(id, src, pk, i + 1)
+        }
+        if (ranged) {
+            val piece = withContext(Dispatchers.IO) { file.readBytes() }
+            val cr = runCatching { File(file.parentFile, file.name + ".cr").takeIf { it.exists() }?.readText()?.trim() }.getOrNull()
+                ?: ("bytes " + reqRange!!.removePrefix("bytes=") + "/*")
+            val pct = runCatching { ContentType.parse(guessSegmentType(url)) }.getOrDefault(ContentType.Application.OctetStream)
+            call.response.header(HttpHeaders.AcceptRanges, "bytes")
+            call.response.header("Content-Range", cr)
+            return call.respondBytes(piece, pct, HttpStatusCode.PartialContent)
         }
         val bytes = withContext(Dispatchers.IO) { file.readBytes() }
         // Some hosts hand out playlists under names without ".m3u8": recognise them by content and rewrite them too
         if (bytes.size in 8..2_000_000 && bytes[0] == '#'.code.toByte() && String(bytes, 0, 7) == "#EXTM3U") {
             val key = "$id|$url"
+            // a playlist must not stay on disk as if it were a segment: a live one would never move on, a signed one never renew
+            runCatching { file.delete() }
             val rewritten = rewritePlaylist(id, url, String(bytes).let { if (StremioServer.streamPrefs.bestHls) keepBestVariant(it) else it }, key)
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
             if (rewritten.contains("#EXTINF")) prefetch(id, src, key, 0)
