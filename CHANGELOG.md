@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.48
 
 - **Memory leaks and crash risks fixed.**
   - **Media server: every link ever listed stayed in memory.** Each link of each result list is registered (address + headers), hundreds per search, and nothing was ever dropped. The list is now emptied when it passes 3,000 entries (each one is also saved on disk and read back when needed).
