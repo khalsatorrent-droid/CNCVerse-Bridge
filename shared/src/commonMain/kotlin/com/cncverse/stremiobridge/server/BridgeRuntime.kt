@@ -111,7 +111,13 @@ object BridgeRuntime {
         initState()
         val installed = withContext(Dispatchers.IO) { PluginInstaller.loadInstalledPlugins(cacheDir) }
         RepoState.setInstalledPlugins(installed)
-        installed.forEach { RepoState.setInstallState(it.internalName, PluginInstallState.Installed) }
+        // (an "update available" mark is kept: every reload used to turn it back into "installed", so after installing or
+        // updating one extension the waiting updates of all the others - and the "Update all" button - were gone until the next
+        // repository check)
+        installed.forEach {
+            if (RepoState.getInstallState(it.internalName) !is PluginInstallState.UpdateAvailable)
+                RepoState.setInstallState(it.internalName, PluginInstallState.Installed)
+        }
         val cs3Files = PluginInstaller.getInstalledFiles(cacheDir)
         GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
         StremioServer.initFastCatalogs()

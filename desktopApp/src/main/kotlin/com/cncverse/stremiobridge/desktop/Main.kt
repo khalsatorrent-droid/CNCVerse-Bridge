@@ -68,6 +68,8 @@ private fun bridgeApp() = application {
 
     fun startServer() {
         if (ServerState.status.value is ServerStatus.Running) return
+        // a second click while the first start is still under way started the bridge twice, side by side
+        if (serverJob?.isActive == true) return
         serverJob = appScope.launch {
             runCatching { BridgeRuntime.startBridge(DEFAULT_PORT) }
                 .onFailure { e ->
@@ -231,11 +233,9 @@ private fun bridgeApp() = application {
                         pluginDisplayName = displayName,
                         onDismiss = {
                             settingsPluginId = null
-                            appScope.launch(Dispatchers.IO) {
-                                val installed = PluginInstaller.loadInstalledPlugins(CACHE_DIR)
-                                val cs3Files = PluginInstaller.getInstalledFiles(CACHE_DIR)
-                                GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
-                            }
+                            // Through the bridge's own reload, which waits its turn. The direct reload used here could run at the
+                            // same moment as an install, an automatic update or the watchdog's reload: every extension twice.
+                            appScope.launch(Dispatchers.IO) { runCatching { BridgeRuntime.reloadAllPluginsSafely() } }
                         },
                     )
                 }
@@ -245,9 +245,7 @@ private fun bridgeApp() = application {
                     ShadowUi.endSession()
                     settingsPluginId = null
                     // Apply changed settings without restart, like the fallback path.
-                    val installed = withContext(Dispatchers.IO) { PluginInstaller.loadInstalledPlugins(CACHE_DIR) }
-                    val cs3Files = withContext(Dispatchers.IO) { PluginInstaller.getInstalledFiles(CACHE_DIR) }
-                    GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
+                    withContext(Dispatchers.IO) { runCatching { BridgeRuntime.reloadAllPluginsSafely() } }
                 }
             }
         }

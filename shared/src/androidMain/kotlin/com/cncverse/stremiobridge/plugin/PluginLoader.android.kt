@@ -419,8 +419,37 @@ actual class PluginLoader(private val context: Context) {
         }.onFailure { ServerState.warn("Could not clear the old extractors: ${it.message}") }
     }
 
+    /**
+     * CloudStream's shared JSON reader remembers every data class of every extension it has read. Those notes hold on to the
+     * extension's code, so the code of each earlier load stayed in memory. They are dropped here and built again as needed
+     * (the desktop loader has always done this). Everything goes through reflection and is allowed to fail.
+     */
+    private fun flushJsonCaches() {
+        runCatching {
+            val holder = Class.forName("com.lagradost.cloudstream3.MainAPIKt")
+            val mapper = runCatching { holder.getMethod("getMapper").invoke(null) }.getOrNull() ?: return@runCatching
+            runCatching { mapper.javaClass.getMethod("getTypeFactory").invoke(mapper)?.let { tf -> tf.javaClass.getMethod("clearCache").invoke(tf) } }
+            runCatching {
+                mapper.javaClass.getMethod("getSerializerProviderInstance").invoke(mapper)
+                    ?.let { sp -> sp.javaClass.getMethod("flushCachedSerializers").invoke(sp) }
+            }
+            runCatching {
+                val f = Class.forName("com.fasterxml.jackson.databind.ObjectMapper").getDeclaredField("_rootDeserializers")
+                f.isAccessible = true
+                (f.get(mapper) as? MutableMap<*, *>)?.clear()
+            }
+            runCatching {
+                val dc = mapper.javaClass.getMethod("getDeserializationContext").invoke(mapper) ?: return@runCatching
+                val f = Class.forName("com.fasterxml.jackson.databind.DeserializationContext").getDeclaredField("_cache")
+                f.isAccessible = true
+                f.get(dc)?.let { cache -> cache.javaClass.getMethod("flushCachedDeserializers").invoke(cache) }
+            }
+        }
+    }
+
     actual fun unloadAll() {
         runCatching { resetCloudstreamRegistries() }
+        flushJsonCaches()
         StremioServer.loadedApis.clear()
         registeredApis.clear()
         loadedPlugins.clear()
