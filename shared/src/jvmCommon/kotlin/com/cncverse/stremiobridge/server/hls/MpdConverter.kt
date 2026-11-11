@@ -398,6 +398,8 @@ class MpdConverter {
                     }
                 }
             }
+            // one entry per stream address ever played (a live channel's address carries a session token): bounded
+            if (sequenceState.size > 400) sequenceState.clear()
             sequenceState[stateKey] = Pair(currentTimes, newSeq)
             newSeq
         } else {
@@ -708,8 +710,32 @@ class MpdConverter {
                     }
                 }
 
-                var cumulativeTime = 0L
-                for (i in 0 until numSegments) {
+                // A live stream that only gives a segment length (no timeline): which segments exist right now follows from the
+                // clock - (now - availabilityStartTime - period start) / length. This used to list segments 1..5000 from the
+                // stream's very beginning whatever the time was, and the player was then given the last few of THOSE: numbers
+                // that were hours old or not made yet, so such a channel answered 404 on every segment.
+                var firstIndex = 0
+                var lastIndexExclusive = numSegments
+                if (isLive && segmentDuration > 0) runCatching {
+                    val mpd = rep.ownerDocument.documentElement
+                    val startMs = parseIso8601ToEpochMs(mpd.getAttribute("availabilityStartTime"))
+                    if (startMs != null) {
+                        var node: org.w3c.dom.Node? = rep.parentNode
+                        while (node != null && (node as? Element)?.tagName?.substringAfter(':') != "Period") node = node.parentNode
+                        val periodStart = parseDuration((node as? Element)?.getAttribute("start")) ?: 0.0
+                        // a little behind the clock: the newest segment is still being written (and clocks differ)
+                        val delay = parseDuration(mpd.getAttribute("suggestedPresentationDelay"))?.coerceIn(4.0, 60.0) ?: 10.0
+                        val elapsed = (System.currentTimeMillis() - startMs) / 1000.0 - periodStart - delay
+                        if (elapsed > 0) {
+                            val newest = Math.floor(elapsed / segmentDuration).toInt()
+                            val keep = ceil(MAX_LIVE_PLAYLIST_SECONDS / segmentDuration).toInt() + 2
+                            lastIndexExclusive = newest + 1
+                            firstIndex = (lastIndexExclusive - keep).coerceAtLeast(0)
+                        }
+                    }
+                }
+                var cumulativeTime = firstIndex.toLong() * duration
+                for (i in firstIndex until lastIndexExclusive) {
                     val segmentNumber = startNumber + i
                     var segmentUrl = mediaTemplate
                         .replace("\$RepresentationID\$", repId)
@@ -787,6 +813,11 @@ class MpdConverter {
     private fun parseXml(xml: String): Document {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
+        // a manifest comes from a site: it must not be able to make this device read its own files or call other addresses
+        // (XML "external entities"); a parser that does not know one of these switches is left as it is
+        for (f in listOf("http://xml.org/sax/features/external-general-entities", "http://xml.org/sax/features/external-parameter-entities",
+            "http://apache.org/xml/features/nonvalidating/load-external-dtd")) runCatching { factory.setFeature(f, false) }
+        runCatching { factory.isExpandEntityReferences = false }
         val builder = factory.newDocumentBuilder()
         return builder.parse(ByteArrayInputStream(xml.toByteArray(Charsets.UTF_8)))
     }

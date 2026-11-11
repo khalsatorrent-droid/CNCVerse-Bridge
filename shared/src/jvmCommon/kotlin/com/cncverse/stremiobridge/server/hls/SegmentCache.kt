@@ -45,6 +45,7 @@ object SegmentCache {
 
     fun putInitSegment(cacheKey: String, data: ByteArray) {
         initSegmentCache[cacheKey] = InitCacheEntry(data, System.currentTimeMillis())
+        planSweep()
     }
 
     fun hasInitSegment(cacheKey: String): Boolean {
@@ -101,7 +102,7 @@ object SegmentCache {
             kotlinx.coroutines.delay(SEGMENT_CACHE_TTL_MS + 5_000L)
             sweepPlanned.set(false)
             runCatching { cleanup() }
-            if (segmentCache.isNotEmpty() || initSegmentCache.isNotEmpty()) planSweep()
+            if (segmentCache.isNotEmpty() || initSegmentCache.isNotEmpty() || nextSegments.isNotEmpty() || mpdCache.isNotEmpty()) planSweep()
         }
     }
 
@@ -149,6 +150,8 @@ object SegmentCache {
         for (i in 0 until tail.size - 1) {
             nextSegments[tail[i].substringBefore("?")] = NextSegs(now, tail.subList(i + 1, minOf(tail.size, i + 1 + ahead)).toList())
         }
+        // a clear (not encrypted) live channel never writes a segment here, so nothing else would start the sweep
+        planSweep()
     }
 
     fun nextSegments(url: String): List<String>? = nextSegments[url.substringBefore("?")]?.urls

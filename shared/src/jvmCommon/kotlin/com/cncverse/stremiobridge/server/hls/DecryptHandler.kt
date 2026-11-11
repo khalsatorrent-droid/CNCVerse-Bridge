@@ -271,6 +271,10 @@ object DecryptHandler {
 
             val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = true
+            // same guard as MpdConverter.parseXml: a manifest must not pull in local files or other addresses
+            for (f in listOf("http://xml.org/sax/features/external-general-entities", "http://xml.org/sax/features/external-parameter-entities",
+                "http://apache.org/xml/features/nonvalidating/load-external-dtd")) runCatching { factory.setFeature(f, false) }
+            runCatching { factory.isExpandEntityReferences = false }
             val builder = factory.newDocumentBuilder()
             val doc = builder.parse(java.io.ByteArrayInputStream(mpdContent.toByteArray(Charsets.UTF_8)))
             val mpd = doc.documentElement

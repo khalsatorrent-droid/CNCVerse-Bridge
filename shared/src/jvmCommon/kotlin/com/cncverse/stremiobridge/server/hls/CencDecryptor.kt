@@ -52,6 +52,7 @@ object CencDecryptor {
 
     private fun hexStringToByteArray(s: String): ByteArray {
         val len = s.length
+        require(len % 2 == 0 && s.all { Character.digit(it, 16) >= 0 }) { "key is not hex" }
         val data = ByteArray(len / 2)
         var i = 0
         while (i < len) {
@@ -71,6 +72,8 @@ private class MP4Decrypter(
     private var currentSampleInfo: List<CencSampleInfo> = emptyList()
     private var encryptionOverhead = 0
     private var defaultIvSize = 8
+    /** tfhd default_sample_size of the fragment being processed, used when trun carries no sizes. */
+    private var fragmentDefaultSampleSize = 0
 
     // Atoms that are part of init segment (excluded when excludeInit=true)
     private val initAtoms = setOf("ftyp", "moov", "free", "skip")
@@ -201,6 +204,7 @@ private class MP4Decrypter(
             when (atom.typeString) {
                 "tfhd" -> {
                     tfhd = atom
+                    fragmentDefaultSampleSize = tfhdDefaultSampleSize(atom)
                     newTrafData.put(atom.pack())
                 }
                 "trun" -> {
@@ -231,6 +235,20 @@ private class MP4Decrypter(
         return MP4Atom("traf", Arrays.copyOf(newTrafData.array(), newTrafData.position()))
     }
 
+    /** default_sample_size from a tfhd box, or 0 when it is not present. */
+    private fun tfhdDefaultSampleSize(tfhd: MP4Atom): Int {
+        val d = tfhd.data
+        if (d.size < 8) return 0
+        val flags = ByteBuffer.wrap(d).getInt(0) and 0xFFFFFF
+        if ((flags and 0x000010) == 0) return 0
+        var pos = 8 // version/flags + track id
+        if ((flags and 0x000001) != 0) pos += 8 // base-data-offset
+        if ((flags and 0x000002) != 0) pos += 4 // sample-description-index
+        if ((flags and 0x000008) != 0) pos += 4 // default-sample-duration
+        if (pos + 4 > d.size) return 0
+        return ByteBuffer.wrap(d).getInt(pos).coerceAtLeast(0)
+    }
+
     private fun decryptMdat(mdat: MP4Atom): MP4Atom {
         if (currentKey == null || currentSampleInfo.isEmpty()) {
             return mdat
@@ -242,7 +260,9 @@ private class MP4Decrypter(
         for ((i, info) in currentSampleInfo.withIndex()) {
             if (!mdatData.hasRemaining()) break // Should not happen
 
-            val sampleSize = if (i < trunSampleSizes.size) trunSampleSizes[i] else mdatData.remaining()
+            val listed = if (i < trunSampleSizes.size) trunSampleSizes[i] else 0
+            // No usable size: the rest of the box is one sample (the old 0 left it encrypted).
+            val sampleSize = if (listed > 0) listed else mdatData.remaining()
             if (sampleSize > mdatData.remaining()) break // Error case
 
             val sample = ByteArray(sampleSize)
@@ -356,6 +376,8 @@ private class MP4Decrypter(
         if ((trunFlags and 0x000004) != 0) offset += 4 // first-sample-flags-present
 
         val sampleCount = data.getInt(4)
+        // A corrupt count must not allocate gigabytes: every sample needs at least a byte of box.
+        require(sampleCount in 0..trun.data.size) { "bad trun sample count $sampleCount" }
         trunSampleSizes = IntArray(sampleCount)
         
         // Skip to sample loop
@@ -374,7 +396,7 @@ private class MP4Decrypter(
                  trunSampleSizes[i] = data.getInt(currentPos)
                  currentPos += 4
              } else {
-                 trunSampleSizes[i] = 0 // Or default size
+                 trunSampleSizes[i] = fragmentDefaultSampleSize
              }
              if ((trunFlags and 0x000400) != 0) currentPos += 4
              if ((trunFlags and 0x000800) != 0) currentPos += 4
@@ -399,13 +421,17 @@ private class MP4Decrypter(
          // referenced_size is at offset 32 (version 0? Python code assumes offset 32)
          // Python code: unpacking >I at 32. 
          // Assuming this matches Python logic logic exactly without deep format validation
-         val currentSize = data.getInt(32)
+         // First reference sits after a 24-byte (version 0) or 32-byte (version 1) header.
+         val version = if (sidx.data.isNotEmpty()) sidx.data[0].toInt() and 0xFF else 0
+         val refAt = if (version == 0) 24 else 32
+         if (sidx.data.size < refAt + 4) return sidx
+         val currentSize = data.getInt(refAt)
          val referenceType = currentSize ushr 31
          val referencedSize = currentSize and 0x7FFFFFFF
          
          val newReferencedSize = referencedSize - encryptionOverhead
          val newSize = (referenceType shl 31) or (newReferencedSize and 0x7FFFFFFF)
-         data.putInt(32, newSize)
+         data.putInt(refAt, newSize)
          
          return MP4Atom("sidx", data.array())
     }
@@ -488,9 +514,14 @@ private class MP4Decrypter(
     private fun processSampleEntry(entry: MP4Atom): MP4Atom {
         val type = entry.typeString
         val fixedSize = when (type) {
-            "mp4a", "enca" -> 28
-            "mp4v", "encv", "avc1", "hev1", "hvc1" -> 78
-            else -> 16
+            "mp4a", "enca", "ac-3", "ec-3", "Opus", "fLaC" -> {
+                // AudioSampleEntry version 1 (QuickTime style) carries 16 more bytes.
+                val v = if (entry.data.size >= 10) ((entry.data[8].toInt() and 0xFF) shl 8) or (entry.data[9].toInt() and 0xFF) else 0
+                if (v == 1) 44 else 28
+            }
+            "mp4v", "encv", "avc1", "avc3", "hev1", "hvc1", "vp08", "vp09", "av01", "dvhe", "dvh1" -> 78
+            // Unknown layout: guessing the header size threw away the codec boxes.
+            else -> return entry
         }
         
         val newData = ByteBuffer.allocate(entry.data.size)
@@ -564,6 +595,8 @@ private class MP4Parser(private val data: ByteArray) {
              headerSize = 16
         }
 
+        // Size 0 means "to the end of the file" (a trailing mdat is often written that way).
+        if (size == 0L) size = (data.size - position).toLong()
         if (size < headerSize || position + size > data.size) return null
 
         val atomData = Arrays.copyOfRange(data, position + headerSize, (position + size).toInt())
