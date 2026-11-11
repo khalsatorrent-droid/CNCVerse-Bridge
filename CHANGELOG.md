@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Live channels through the media server started slowly and fetched what nobody watched.** When a live playlist was opened, fetching ahead began at its top - the oldest part of the broadcast, up to 30 segments - in front of the segments the player actually asked for, and on a channel with a long rewind window one more old segment was downloaded for every new one. It starts at the live edge now.
+- **Stream lists with many subtitles are built faster:** the subtitle list, the same for every link of a title, was converted again for each link.
+
 ## 1.9.1
 
 - **Media server: connections no longer wasted after a jump.** An extra connection kept fetching the part the player had left behind (to the end of its 64 MB request, up to sixteen at once) while the new position waited; it now lets go and takes a piece ahead. Bytes written into a part already deleted behind the player are no longer counted as stored (a later jump back there cut the stream). A paused player's open connection is what marks the playing position, not the last short read elsewhere in the file.

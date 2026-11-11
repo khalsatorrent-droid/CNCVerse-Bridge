@@ -1317,7 +1317,13 @@ object StremioServer {
                     // "Refresh results" button first (it is not a video: it opens a page in the browser)
                     if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size, base)) + withSupport else withSupport
                 }
-                .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, base, isAnime(type, id))) } ?: s }
+                .let { list ->
+                    // Every link of a title carries the same subtitle list: it is worked out once, not again for each link
+                    // (a hundred tracks on a hundred links was ten thousand conversions for one answer)
+                    val anime = isAnime(type, id)
+                    val memo = HashMap<List<com.cncverse.stremiobridge.model.StremioSubtitle>, List<com.cncverse.stremiobridge.model.StremioSubtitle>>()
+                    list.map { s -> s.subtitles?.let { subs -> s.copy(subtitles = memo.getOrPut(subs) { SubtitleTools.process(subs, p, base, anime) }) } ?: s }
+                }
 
             out
         } catch (e: Throwable) {

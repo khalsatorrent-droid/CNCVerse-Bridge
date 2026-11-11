@@ -641,7 +641,7 @@ object MediaServer {
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
             val base = fin[0] ?: url
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, base, useRaw, key))
-            if (raw.contains("#EXTINF")) prefetch(id, src, key, 0)
+            if (raw.contains("#EXTINF")) prefetch(id, src, key, firstWanted(key, raw))
             if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, base, useRaw)
             true
         } catch (t: Exception) {
@@ -1913,7 +1913,7 @@ object MediaServer {
             if (playlistCache.size > 500) playlistCache.clear()
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
             // Start fetching the first segments right away
-            if (raw.contains("#EXTINF")) prefetch(id, src, key, 0)
+            if (raw.contains("#EXTINF")) prefetch(id, src, key, firstWanted(key, raw))
             if (useRaw.contains("#EXT-X-STREAM-INF")) warmVariants(id, src, base, useRaw)
             rewritten
         }
@@ -1955,6 +1955,15 @@ object MediaServer {
             }
         }
     }
+
+    /**
+     * Where fetching ahead starts when a playlist is opened: the first segment of a finished video, the live edge of a live one.
+     * A live playlist lists what was already broadcast, oldest first, and a player starts three segments from its end. Fetching
+     * from the top downloaded up to 30 old segments nobody would ask for - at the moment the channel was starting, in front of
+     * the segments the player wanted - and on a channel with a long rewind window one more old segment for every new one.
+     */
+    private fun firstWanted(key: String, text: String): Int =
+        if (text.contains("#EXT-X-ENDLIST")) 0 else maxOf(0, (playlistSegs[key]?.size ?: 0) - 4)
 
     /** Finished (VOD) playlists keep for ten minutes, live ones for two seconds. */
     private fun playlistTtl(text: String): Long = if (text.contains("#EXT-X-ENDLIST") || text.contains("#EXT-X-STREAM-INF")) 600_000L else 2_000L
@@ -2094,7 +2103,7 @@ object MediaServer {
             runCatching { file.delete() }
             val rewritten = rewritePlaylist(id, url, String(bytes).let { if (StremioServer.streamPrefs.bestHls) keepBestVariant(it) else it }, key)
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
-            if (rewritten.contains("#EXTINF")) prefetch(id, src, key, 0)
+            if (rewritten.contains("#EXTINF")) prefetch(id, src, key, firstWanted(key, rewritten))
             call.response.header(HttpHeaders.CacheControl, "no-store")
             return call.respondText(rewritten, ContentType.parse("application/vnd.apple.mpegurl"))
         }
