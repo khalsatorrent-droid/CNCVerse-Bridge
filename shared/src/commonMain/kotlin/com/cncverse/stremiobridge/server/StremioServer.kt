@@ -1178,7 +1178,9 @@ object StremioServer {
         var foundTotal = 0
         private val rejected = java.util.LinkedHashMap<String, java.util.LinkedHashMap<String, Int>>()
         private val merged = java.util.LinkedHashMap<String, Int>()
-        private fun nameOf(st: StremioStream): String = st.info?.addonName ?: st.name ?: "?"
+        // The extension's own name ("Vedu", "Cwunchyroll"): the name the "Refresh" entry counts by. The report used the
+        // plugin file's name ("StreamHubOne"), so an extension counted there could not be found here.
+        private fun nameOf(st: StremioStream): String = st.info?.providerName ?: st.info?.addonName ?: st.name ?: "?"
         private fun counts(l: List<StremioStream>): Map<String, Int> = l.groupingBy { nameOf(it) }.eachCount()
         fun start(built: List<StremioStream>) { foundTotal = built.size; foundBy.putAll(counts(built)) }
         /** Records what a step removed: links of each extension that were in [before] but not in [after]. */
@@ -1215,7 +1217,18 @@ object StremioServer {
     private suspend fun prepareStreams(type: String, id: String, built: List<StremioStream>?, requestStart: Long, fast: Boolean = false, forWeb: Boolean = false, base: String = mediaBase()): Prepared {
         val tBuilt = System.currentTimeMillis()
         val trace = SearchTrace()
-        trace.start(built ?: emptyList())
+        // Links the search found that the saved list no longer has (a site link that ran out): counted as found and shown as
+        // dropped with the reason, instead of silently missing from the list and from the report
+        val lost = run {
+            val have = (built ?: emptyList()).mapNotNullTo(HashSet()) { it.url ?: it.infoHash }
+            val cache = com.cncverse.stremiobridge.cache.StreamCacheManager
+            (cache.droppedFor("stream:generic:k2:$type:$id:") +
+                (StremioIds.decode(id)?.let { (k, d) -> cache.droppedFor("stream:direct:$k:$d") } ?: emptyList()))
+                .filter { (st, _) -> (st.url ?: st.infoHash) !in have }
+                .distinctBy { (st, _) -> st.url ?: st.infoHash }
+        }
+        trace.start((built ?: emptyList()) + lost.map { it.first })
+        lost.groupBy({ it.second }, { it.first }).forEach { (why, links) -> trace.step(why, links, emptyList()) }
         // Archive downloads (".zip" season packs) can never play in any player
         val streams = (built ?: emptyList()).filter { !SeekProbe.isArchiveUrl(it.url) }
         trace.step("Archive file (.zip), cannot be played", built ?: emptyList(), streams)

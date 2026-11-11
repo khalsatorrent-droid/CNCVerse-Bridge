@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Links found by the search went missing from lists read from the cache, with no reason given.** A site link that runs out within a few minutes (Vedu, Netflix and others hand out such links) was never kept in the saved list, so the "Refresh" entry counted it ("Vedu: 6") but the list - answered from the cache - had none of them and the search report said nothing. Such links are kept now until their own end time, and links a saved list has lost are shown in the search report as found and dropped, with the reason ("the site's link expired after it was found").
+- **The search report names extensions the way the "Refresh" entry does** ("Vedu", "Cwunchyroll"), not by their plugin file ("StreamHubOne"), so the two can be compared.
+
 ## 1.9.2
 
 - **Live channels through the media server started slowly and fetched what nobody watched.** When a live playlist was opened, fetching ahead began at its top - the oldest part of the broadcast, up to 30 segments - in front of the segments the player actually asked for, and on a channel with a long rewind window one more old segment was downloaded for every new one. It starts at the live edge now.

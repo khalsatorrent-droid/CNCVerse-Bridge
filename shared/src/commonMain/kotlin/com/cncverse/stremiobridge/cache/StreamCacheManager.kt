@@ -599,9 +599,11 @@ object StreamCacheManager {
             return null
         }
 
-        // Signed links carry their own expiry: drop only those that have died
+        // Signed links carry their own expiry: drop only those that have died (noted for the search report)
         val live = if (entry.streamExpiresAt.size != entry.streams.size) entry.streams
-        else entry.streams.filterIndexed { i, _ -> entry.streamExpiresAt[i] > now }
+        else entry.streams.filterIndexed { i, st ->
+            (entry.streamExpiresAt[i] > now).also { ok -> if (!ok) noteDropped(key, st, EXPIRED_SINCE, replace = false) }
+        }
         if (live.isEmpty()) {
             memoryCache.remove(key)
             totalEvicted.incrementAndGet()
@@ -618,7 +620,11 @@ object StreamCacheManager {
         if (!config.enabled || streams.isEmpty()) return
 
         val now = System.currentTimeMillis()
-        val (validStreams, computedTtlMs, linkExpiry) = classifyForCache(streams, providerKey, now)
+        val drops = ArrayList<Pair<StremioStream, String>>()
+        val (validStreams, computedTtlMs, linkExpiry) = classifyForCache(streams, providerKey, now, drops)
+        // (each put holds the whole list again: what it left out replaces what the last one left out)
+        droppedLinks.remove(key)
+        drops.forEach { (st, why) -> noteDropped(key, st, why, replace = false) }
         if (validStreams.isEmpty() || computedTtlMs <= 0L) return
 
         val expiresAt = now + computedTtlMs
@@ -741,6 +747,7 @@ object StreamCacheManager {
         streams: List<StremioStream>,
         providerKey: String?,
         now: Long,
+        dropped: MutableList<Pair<StremioStream, String>>? = null,
     ): Triple<List<StremioStream>, Long, List<Long>> {
         val override = providerKey?.let { config.providerOverrides[it] }
         if (override != null && !override.enabled) return Triple(emptyList(), 0L, emptyList())
@@ -769,7 +776,12 @@ object StreamCacheManager {
                 signedSafetyBufferSeconds = config.signedSafetyBufferSeconds,
                 minCacheableTtlMinutes = config.minCacheableTtlMinutes
             )
-            if (!c.isCacheable || c.computedTtlMs <= 0L) continue
+            // A signed link that runs out soon is still kept - with its own end time, and get() drops it once that has passed.
+            // It used to be left out of the saved list altogether: the search had found it (the "Refresh" entry counted it),
+            // but every list read from the cache came without it and no report said why.
+            if (c.category == "EXPIRED_SIGNED" || c.computedTtlMs <= 0L) {
+                dropped?.add(stream to (if (c.category == "EXPIRED_SIGNED") EXPIRED_AT_FIND else EXPIRED_SINCE)); continue
+            }
             kept += stream
             expiry += now + minOf(c.computedTtlMs, listTtlMs)
         }
@@ -911,7 +923,27 @@ object StreamCacheManager {
     }
 
     /** Removes the saved lists whose key starts with [prefix] (and stops a search that is still filling them). Returns how many were removed. */
+    // ── Links a saved list lost, per cache key: shown in the search report (History) with the reason ──
+    const val EXPIRED_AT_FIND = "The site's link had already expired when it was found"
+    const val EXPIRED_SINCE = "The site's link expired after it was found (use Refresh to search again)"
+    private val droppedLinks = ConcurrentHashMap<String, java.util.LinkedHashMap<String, Pair<StremioStream, String>>>()
+
+    private fun noteDropped(key: String, st: StremioStream, why: String, replace: Boolean) {
+        if (droppedLinks.size > 300) droppedLinks.clear()
+        val m = droppedLinks.getOrPut(key) { java.util.LinkedHashMap() }
+        synchronized(m) {
+            if (m.size >= 500) return
+            val k = st.url ?: st.infoHash ?: st.hashCode().toString()
+            if (replace || !m.containsKey(k)) m[k] = st to why
+        }
+    }
+
+    /** Links that saved lists under [keyPrefix] left out, with the reason. */
+    fun droppedFor(keyPrefix: String): List<Pair<StremioStream, String>> =
+        droppedLinks.entries.filter { it.key.startsWith(keyPrefix) }.flatMap { e -> synchronized(e.value) { e.value.values.toList() } }
+
     fun invalidatePrefix(prefix: String): Int {
+        droppedLinks.keys.removeIf { it.startsWith(prefix) }
         var n = 0
         for (k in memoryCache.keys.toList()) if (k.startsWith(prefix) && memoryCache.remove(k) != null) n++
         for (k in inFlight.keys.toList()) if (k.startsWith(prefix)) inFlight.remove(k)
@@ -920,6 +952,7 @@ object StreamCacheManager {
     }
 
     fun clearAll() {
+        droppedLinks.clear()
         memoryCache.clear()
         inFlight.clear()
         dataFile?.delete()
