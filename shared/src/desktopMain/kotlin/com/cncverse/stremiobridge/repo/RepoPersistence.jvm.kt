@@ -1,6 +1,7 @@
 package com.cncverse.stremiobridge.repo
 
 import com.cncverse.stremiobridge.server.PlatformPaths
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -16,7 +17,8 @@ actual fun loadRepoUrls(): List<String> {
 }
 
 actual fun saveRepoUrls(urls: List<String>) {
-    repoUrlsFile.writeText(urls.joinToString("\n"))
+    // (written to the side and swapped in: a crash in the middle of a plain write left the list of repositories empty)
+    repoUrlsFile.writeTextAtomic(urls.joinToString("\n"))
 }
 
 private val extSettingsFile: File

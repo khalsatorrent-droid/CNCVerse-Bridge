@@ -102,12 +102,7 @@ fun ExtensionsScreen(
                 if (updatable.isNotEmpty()) {
                     OutlinedButton(
                         onClick = {
-                            launchBackground {
-                                updatable.forEach { inst ->
-                                    availablePlugins.find { it.plugin.internalName == inst.internalName && it.repoEntry.url == inst.repoUrl }
-                                        ?.let { com.cncverse.stremiobridge.server.BridgeRuntime.installPlugin(it) }
-                                }
-                            }
+                            launchBackground { com.cncverse.stremiobridge.server.BridgeRuntime.updateAllPlugins() }
                         },
                         modifier = Modifier.height(36.dp),
                         shape = RoundedCornerShape(18.dp),

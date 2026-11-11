@@ -190,6 +190,16 @@ object BridgeRuntime {
         return success
     }
 
+    /**
+     * "Update all": every waiting update is downloaded, then the extensions are loaded once. The button used to install them
+     * one by one, each followed by a reload of every extension - ten updates meant ten full reloads in a row.
+     */
+    suspend fun updateAllPlugins() = pluginMutationMutex.withLock {
+        PluginInstaller.autoUpdateInstalled(cacheDir)
+        ServerState.info("Loading the updated extensions…")
+        forceReloadPlugins()
+    }
+
     /** Full plugin reload that waits for any install/uninstall in progress (nightly maintenance). */
     suspend fun reloadAllPluginsSafely() = pluginMutationMutex.withLock {
         ServerState.info("Reloading all plugins…")

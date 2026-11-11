@@ -522,17 +522,24 @@ actual class PluginLoader {
 
             // Step 2: convert .dex → .jar using dex2jar (output captured so
             // failures aren't silent — dex2jar swallows exceptions to std err)
-            val dex2jarOutput = runDex2jarCaptured(dexFile, jarFile)
+            // Converted under another name and renamed when complete: the app closed (or killed) in the middle left half a jar
+            // under the final name, newer than the extension - taken for a finished one on every later start, so that
+            // extension stayed broken until it was reinstalled.
+            val partJar = File(cs3File.parentFile, jarFile.name + ".part")
+            partJar.delete()
+            val dex2jarOutput = runDex2jarCaptured(dexFile, partJar)
             if (dex2jarOutput.isNotBlank() && (dex2jarOutput.contains("Exception") || dex2jarOutput.contains("Error"))) {
                 ServerState.error("dex2jar reported for ${cs3File.name}: ${dex2jarOutput.take(600).replace("\n", " | ")}")
             }
 
             dexFile.delete() // clean up temp file
 
-            if (jarFile.exists() && jarFile.length() > 0L) {
+            if (partJar.exists() && partJar.length() > 0L) {
                 // Neuter Android UI calls / fix inline-class names so the JVM accepts it
-                runCatching { PluginBytecodeTransformer.transform(jarFile) }
+                runCatching { PluginBytecodeTransformer.transform(partJar) }
                     .onFailure { ServerState.warn("Bytecode transform failed for ${cs3File.name}: ${it.message}") }
+                jarFile.delete()
+                if (!partJar.renameTo(jarFile)) { partJar.copyTo(jarFile, overwrite = true); partJar.delete() }
                 ServerState.info("✓ dex2jar done: ${jarFile.name} (${jarFile.length() / 1024} KB)")
                 jarFile
             } else {

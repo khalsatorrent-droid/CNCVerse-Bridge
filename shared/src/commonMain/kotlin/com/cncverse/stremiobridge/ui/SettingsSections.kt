@@ -1068,7 +1068,9 @@ fun BackupCard() {
             )
             Spacer(Modifier.height(6.dp))
             ActionButton("Import pasted backup", primary = true, enabled = pasted.isNotBlank()) {
-                runImport(pasted); pasted = ""
+                // (off the screen's thread: an import rewrites the settings files and reloads them)
+                val text = pasted; pasted = ""
+                launchBackground { runImport(text) }
             }
         }
         message?.let { Text(it, color = Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
