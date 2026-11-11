@@ -39,6 +39,8 @@ object LocalRelay {
             .build()
     }
 
+    private val ROOT_URI = Regex("URI=\"(/[^/\"][^\"]*)\"")
+
     private fun base(): String = ServerState.streamBaseUrl ?: ServerState.publicBaseUrl.ifBlank { "http://127.0.0.1:${ServerState.serverPort}" }
 
     private fun relayUrl(port: Int, pathAndQuery: String?, from: String? = null): String {
@@ -157,15 +159,19 @@ object LocalRelay {
             val isPlaylist = path.endsWith(".m3u8", true) || type.contains("mpegurl", true)
             if (isPlaylist) {
                 val text = withContext(Dispatchers.IO) { body.string() }
-                // Absolute loopback entries -> relay; root-relative entries ("/x/y.ts") stay on this port
+                // root-relative entries ("/x/y.ts") stay on this port
+                // Absolute loopback entries become root-relative relay paths: they then resolve against whatever address the player
+                // reached this bridge on. (They used to be built on the configured address - 127.0.0.1 when none is set - so a TV
+                // on the network was sent to "itself" for every segment.)
                 val fixed = text.lines().joinToString("\n") { line ->
-                    val l = LOOPBACK_IN_TEXT.replace(line) { m ->
+                    if (line.startsWith("/") && !line.startsWith("//")) return@joinToString "/proxy/local/$port$line"
+                    val l = line.replace(ROOT_URI) { "URI=\"/proxy/local/$port${it.groupValues[1]}\"" }
+                    LOOPBACK_IN_TEXT.replace(l) { m ->
                         val p = m.groupValues[2].toIntOrNull()
-                        if (p == null) m.value else relayUrl(p, m.groupValues[3])
-                    }
-                    when {
-                        l.startsWith("/") && !l.startsWith("//") -> "/proxy/local/$port$l"
-                        else -> l.replace(Regex("URI=\"(/[^/\"][^\"]*)\"")) { "URI=\"/proxy/local/$port${it.groupValues[1]}\"" }
+                        if (p == null || p == ServerState.serverPort) m.value else {
+                            allowed[p] = System.currentTimeMillis()
+                            "/proxy/local/$p" + m.groupValues[3].ifEmpty { "/" }
+                        }
                     }
                 }
                 call.respondText(fixed, ContentType.parse("application/vnd.apple.mpegurl"), HttpStatusCode.fromValue(r.code))

@@ -2,6 +2,7 @@ package com.cncverse.stremiobridge.server
 
 import com.cncverse.stremiobridge.format.SubtitleLangs
 import com.cncverse.stremiobridge.model.StremioSubtitle
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -33,7 +34,9 @@ object SubtitleTools {
     private fun rawName(s: StremioSubtitle): String {
         val u = s.url.substringBefore('#')
         val inner = Regex("[?&]url=([^&]+)").find(u)?.groupValues?.get(1)?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() } ?: u
-        return java.net.URLDecoder.decode(inner.substringBefore('?').substringAfterLast('/'), "UTF-8")
+        val name = inner.substringBefore('?').substringAfterLast('/')
+        // a name like "100%.srt" is not valid percent-encoding: that threw and took the whole stream list with it
+        return runCatching { java.net.URLDecoder.decode(name, "UTF-8") }.getOrDefault(name)
     }
 
     private fun isCc(orig: String, s: StremioSubtitle): Boolean = CC_WORDS.containsMatchIn(orig + " " + s.id + " " + rawName(s))
@@ -140,7 +143,7 @@ object SubtitleTools {
         val text = decode(bytes).removePrefix("\uFEFF")
         val out = (if (srt) toBoldSrt(text, ms) else toStyledSsa(text, ms)) ?: return null
         synchronized(styledCache) { styledCache[key] = out }
-        if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeText(out); trimDisk() }
+        if (file != null) runCatching { file.parentFile?.mkdirs(); file.writeTextAtomic(out); trimDisk() }
         return out
     }
 
@@ -296,6 +299,12 @@ object SubtitleTools {
     }
 
     internal fun decode(b: ByteArray): String {
+        // UTF-16 files (common from Windows tools) start with a byte-order mark; read as Latin they came out as gibberish
+        if (b.size >= 2) {
+            val b0 = b[0].toInt() and 0xFF; val b1 = b[1].toInt() and 0xFF
+            if (b0 == 0xFF && b1 == 0xFE) return String(b, 2, b.size - 2, Charsets.UTF_16LE)
+            if (b0 == 0xFE && b1 == 0xFF) return String(b, 2, b.size - 2, Charsets.UTF_16BE)
+        }
         val dec = Charsets.UTF_8.newDecoder()
             .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
             .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)

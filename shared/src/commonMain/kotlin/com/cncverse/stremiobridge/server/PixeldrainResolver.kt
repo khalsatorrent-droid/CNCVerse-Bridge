@@ -20,6 +20,10 @@ object PixeldrainResolver {
     private class Entry(val url: String, val at: Long)
     private val cache = ConcurrentHashMap<String, Entry>()
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlight = ConcurrentHashMap<String, Deferred<Unit>>()
+    private val gate = kotlinx.coroutines.sync.Semaphore(8)
+
     private val client by lazy {
         val dns = runCatching { Class.forName("com.cncverse.stremiobridge.network.AdaptiveHostDns").getField("INSTANCE").get(null) as okhttp3.Dns }
             .getOrDefault(okhttp3.Dns.SYSTEM)
@@ -56,16 +60,20 @@ object PixeldrainResolver {
         // Two things were wrong here. Every link was asked for at the same moment - thirty or more requests to one host at
         // once, which is how a host starts refusing - so at most 8 run together now. And when the 5 seconds ran out, the
         // answers that had already arrived were thrown away with the rest; they are kept.
+        // The requests run in a scope of their own: a blocking request cannot be cut short, so inside the request the 5 seconds
+        // could become 9, and the ones still waiting their turn were dropped instead of being ready for the next list.
         val resolved = ConcurrentHashMap<String, String>()
-        val gate = kotlinx.coroutines.sync.Semaphore(8)
-        withTimeoutOrNull(5_000L) {
-            coroutineScope {
-                ids.map { id -> async(Dispatchers.IO) {
-                    gate.acquire()
-                    try { resolve(id, "https://cdn.pixeldrain.eu.cc/$id")?.let { resolved[id] = it } } finally { gate.release() }
-                } }.awaitAll()
+        val jobs = ids.map { id ->
+            inFlight.computeIfAbsent(id) {
+                scope.async {
+                    try { gate.acquire(); try { resolve(id, "https://cdn.pixeldrain.eu.cc/$id") } finally { gate.release() }; Unit }
+                    finally { inFlight.remove(id) }
+                }
             }
         }
+        withTimeoutOrNull(5_000L) { jobs.awaitAll() }
+        val now = System.currentTimeMillis()
+        for (id in ids) cache[id]?.takeIf { now - it.at < TTL_MS }?.let { resolved[id] = it.url }
         if (resolved.isEmpty()) return streams
         val ok = resolved.size
         ServerState.debug("[Pixeldrain] resolved $ok of ${ids.size} mirror link(s) to their final address")

@@ -4,7 +4,6 @@ import com.cncverse.stremiobridge.model.StremioStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -20,6 +19,10 @@ import java.util.concurrent.TimeUnit
 object SizeProbe {
     private val sizes = ConcurrentHashMap<String, Long>()
     private val limit = Semaphore(8)
+    // Lookups run here, not inside the request: a blocking read cannot be cut short, so the request waited past its budget,
+    // and the lookups still queued were dropped instead of finishing for the next request.
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val inFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Unit>>()
     private val SIZE_IN_TEXT = Regex("\\d\\s?(?:GB|MB|GiB|MiB)\\b", RegexOption.IGNORE_CASE)
 
     private val client by lazy {
@@ -46,8 +49,11 @@ object SizeProbe {
             sizes[url] == null && SeekProbe.isDirectFile(s) && !SeekProbe.isDownloadOnlyUrl(url) &&
                 !SIZE_IN_TEXT.containsMatchIn(listOf(s.name, s.description, s.info?.linkName).joinToString(" "))
         }.distinctBy { it.url }.take(60)
-        if (wanted.isNotEmpty()) withTimeoutOrNull(budgetMs) {
-            coroutineScope { wanted.map { s -> async { probe(s) } }.awaitAll() }
+        if (wanted.isNotEmpty()) {
+            val jobs = wanted.map { s ->
+                inFlight.computeIfAbsent(s.url!!) { u -> scope.async { try { probe(s); Unit } finally { inFlight.remove(u) } } }
+            }
+            withTimeoutOrNull(budgetMs) { jobs.awaitAll() }
         }
         return streams.mapNotNull { s -> s.url?.let { u -> sizes[u]?.let { u to it } } }.toMap()
     }

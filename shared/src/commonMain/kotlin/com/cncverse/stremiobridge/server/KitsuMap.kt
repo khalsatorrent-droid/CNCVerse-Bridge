@@ -139,10 +139,14 @@ object KitsuMap {
     suspend fun kitsuIdsForImdb(imdb: String): List<String> = withContext(Dispatchers.IO) {
         byImdb[imdb]?.takeIf { fresh(it.first) }?.let { return@withContext it.second }
         val out = LinkedHashSet<String>()
-        entries(fetch("$ARM/imdb?id=$imdb")).forEach { o -> o.str("kitsu")?.let { out.add(it) } }
-        if (out.isEmpty()) entries(fetch("$ARM/ids?source=imdb&id=$imdb")).forEach { o -> o.str("kitsu")?.let { out.add(it) } }
-        if (out.isEmpty()) fetch("https://api.ani.zip/mappings?imdb_id=$imdb").obj()?.get("mappings").obj()?.str("kitsu_id")?.let { out.add(it) }
+        var reached = false
+        fun get(url: String): JsonElement? = fetch(url).also { if (it != null) reached = true }
+        entries(get("$ARM/imdb?id=$imdb")).forEach { o -> o.str("kitsu")?.let { out.add(it) } }
+        if (out.isEmpty()) entries(get("$ARM/ids?source=imdb&id=$imdb")).forEach { o -> o.str("kitsu")?.let { out.add(it) } }
+        if (out.isEmpty()) get("https://api.ani.zip/mappings?imdb_id=$imdb").obj()?.get("mappings").obj()?.str("kitsu_id")?.let { out.add(it) }
         val list = out.filter { it.all(Char::isDigit) }.take(12)
+        // no service answered at all (offline, a blip): that is not "this series has no Kitsu entry", and must not be kept for 12 hours
+        if (list.isEmpty() && !reached) return@withContext list
         if (byImdb.size > 2_000) byImdb.clear()
         byImdb[imdb] = System.currentTimeMillis() to list
         list

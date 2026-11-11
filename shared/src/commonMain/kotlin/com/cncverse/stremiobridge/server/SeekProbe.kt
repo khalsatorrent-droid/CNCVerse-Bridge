@@ -195,7 +195,8 @@ object SeekProbe {
                 val job = probeScope.async(start = CoroutineStart.LAZY) {
                     probe(s)?.let { verdicts[key] = it to System.currentTimeMillis() }; Unit
                 }
-                inFlight.putIfAbsent(key, job) ?: job.also {
+                // (the spare job is cancelled: created but never started, it stayed attached to the scope for good)
+                inFlight.putIfAbsent(key, job)?.also { job.cancel() } ?: job.also {
                     it.invokeOnCompletion { inFlight.remove(key, job) }
                     it.start()
                 }

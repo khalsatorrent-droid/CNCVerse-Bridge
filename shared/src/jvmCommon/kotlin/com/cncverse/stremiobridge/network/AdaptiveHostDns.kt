@@ -82,6 +82,7 @@ object AdaptiveHostDns : Dns {
             }
 
             // Cache result for fast future lookups
+            trimHostCache()
             hostCache[hostname] = CachedHostProtocol(result)
             return result
         }
@@ -105,6 +106,13 @@ object AdaptiveHostDns : Dns {
         }
         // let the caller see the system error
         return Dns.SYSTEM.lookup(hostname)
+    }
+
+    /** One entry per host name ever looked up (CDNs hand out thousands of them): the expired ones go, and past 4000 all of them. */
+    private fun trimHostCache() {
+        if (hostCache.size < 2_000) return
+        hostCache.entries.removeIf { it.value.isExpired() }
+        if (hostCache.size > 4_000) hostCache.clear()
     }
 
     private val failedHosts = ConcurrentHashMap<String, Long>()

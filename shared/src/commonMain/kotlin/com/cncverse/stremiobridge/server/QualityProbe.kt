@@ -6,7 +6,6 @@ import com.cncverse.stremiobridge.state.ServerState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -29,12 +28,18 @@ object QualityProbe {
     /** What a master playlist lists; [externalAudio] = the sound lives in separate playlists (the master must stay). */
     class Probe(val variants: List<Variant>, val externalAudio: Boolean, val languages: List<String> = emptyList())
 
-    private class Cached(val at: Long, val probe: Probe)
+    private class Cached(val at: Long, val probe: Probe, val ttl: Long = TTL_MS)
 
     private const val TTL_MS = 30 * 60_000L
     private val cache = ConcurrentHashMap<String, Cached>()
     // Playlist reads are tiny: with 8 at a time 40+ HLS links needed several waves and the request waited for the last one
     private val limit = Semaphore(16)
+    /** A playlist that could not be read is tried again after this long (it used to be remembered as "no renditions" for 30 minutes). */
+    private const val FAIL_TTL_MS = 2 * 60_000L
+    // Reads run here, not inside the request: a blocking read cannot be cut short, so the request used to wait for it well past
+    // its budget, and the reads still queued were dropped instead of being finished for the next request.
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val inFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Unit>>()
 
     private val client by lazy {
         okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
@@ -147,21 +152,23 @@ object QualityProbe {
 
     private fun fetchVariants(s: StremioStream): Probe {
         val url = s.url ?: return Probe(emptyList(), false)
-        cache[url]?.let { if (System.currentTimeMillis() - it.at < TTL_MS) return it.probe }
+        cache[url]?.let { if (System.currentTimeMillis() - it.at < it.ttl) return it.probe }
+        var failed = false
         val probe = try {
             val b = okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36")
             s.behaviorHints?.proxyHeaders?.request?.forEach { (k, v) -> runCatching { b.header(k, v) } }
             client.newCall(b.build()).execute().use { r ->
-                if (!r.isSuccessful) Probe(emptyList(), false) else {
+                if (!r.isSuccessful) { failed = true; Probe(emptyList(), false) } else {
                     val text = readLimited(r.body?.byteStream(), 512 * 1024)
                     Probe(parseMaster(text, r.request.url.toString()), AUDIO_GROUP.containsMatchIn(text), audioLanguagesOf(text))
                 }
             }
         } catch (e: Exception) {
+            failed = true
             Probe(emptyList(), false)
         }
         if (cache.size > 3_000) cache.clear()
-        cache[url] = Cached(System.currentTimeMillis(), probe)
+        cache[url] = Cached(System.currentTimeMillis(), probe, if (failed) FAIL_TTL_MS else TTL_MS)
         return probe
     }
 
@@ -173,13 +180,14 @@ object QualityProbe {
         val todo = streams.filter { isHlsCandidate(it) && StreamVariables.resolutionOf(it) == null }
         if (todo.isEmpty()) return streams
         val found = ConcurrentHashMap<StremioStream, Probe>()
-        withTimeoutOrNull(budgetMs) {
-            coroutineScope {
-                todo.map { s ->
-                    async(Dispatchers.IO) { limit.withPermit { found[s] = fetchVariants(s) } }
-                }.awaitAll()
+        val jobs = todo.map { s ->
+            inFlight.computeIfAbsent(s.url!!) { u ->
+                scope.async { try { limit.withPermit { fetchVariants(s) }; Unit } finally { inFlight.remove(u) } }
             }
         }
+        withTimeoutOrNull(budgetMs) { jobs.awaitAll() }
+        val now = System.currentTimeMillis()
+        for (s in todo) cache[s.url!!]?.takeIf { now - it.at < it.ttl }?.let { found[s] = it.probe }
         // Playlists that were still loading when the budget ran out are used from the cache next time
         if (found.isEmpty()) return streams
         val out = ArrayList<StremioStream>(streams.size + 4)

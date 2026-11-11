@@ -15,6 +15,9 @@ object AudioLangs {
         "Odia", "Assamese", "Bhojpuri", "Nepali", "Sinhala", "Malay",
     )
 
+    // built once: this used to compile 42 patterns for every audio track of every link in a list
+    private val KNOWN_RX = KNOWN.map { k -> k to Regex("(?<![A-Za-z])${k}(?![A-Za-z])", RegexOption.IGNORE_CASE) }
+
     private val BIBLIOGRAPHIC = mapOf(
         "ger" to "de", "fre" to "fr", "chi" to "zh", "dut" to "nl", "per" to "fa", "gre" to "el", "cze" to "cs",
         "rum" to "ro", "slo" to "sk", "ice" to "is", "mac" to "mk", "may" to "ms", "bur" to "my", "arm" to "hy",
@@ -23,7 +26,7 @@ object AudioLangs {
 
     /** "Hindi" from a track NAME that says so, else from its LANGUAGE code ("hi", "tam"); null for "und", "Track 1"… */
     internal fun languageOf(name: String?, code: String?): String? {
-        name?.let { n -> KNOWN.firstOrNull { k -> Regex("(?<![A-Za-z])${k}(?![A-Za-z])", RegexOption.IGNORE_CASE).containsMatchIn(n) }?.let { return it } }
+        name?.let { n -> KNOWN_RX.firstOrNull { (_, rx) -> rx.containsMatchIn(n) }?.let { return it.first } }
         val raw = code?.lowercase()?.substringBefore('-')?.takeIf { it.length in 2..3 && it !in setOf("und", "mul", "mis", "zxx", "qaa") } ?: return null
         // MKV files often use the bibliographic ISO 639-2 codes, which Locale doesn't know
         val c = BIBLIOGRAPHIC[raw] ?: raw
