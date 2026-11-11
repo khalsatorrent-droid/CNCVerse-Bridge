@@ -4,6 +4,7 @@ import com.cncverse.stremiobridge.model.SitePlugin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 // ─── Server Status ────────────────────────────────────────────────────────────
 
@@ -118,10 +119,14 @@ object ServerState {
         _status.value = newStatus
     }
 
+    /** Lines kept for the Logs screen (the file keeps everything). */
+    private const val LOG_LINES = 300
+
     fun log(level: LogLevel, message: String) {
         val entry = LogEntry(currentTimeMillis(), level, message)
-        val current = _logs.value.takeLast(99)
-        _logs.value = current + entry
+        // one step: read-then-write let two threads logging at the same moment (a search has dozens) overwrite each other's
+        // line, so the Logs screen lost lines exactly when most was happening (the log file was never affected)
+        _logs.update { it.takeLast(LOG_LINES - 1) + entry }
         // Also emit to platform logger (adb logcat on Android)
         platformLog(level, message)
         // ...and to the log file (queued; written by a background thread), which survives a crash

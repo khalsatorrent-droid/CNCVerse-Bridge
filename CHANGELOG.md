@@ -7,6 +7,7 @@
   - **Decrypt cache could hand out the wrong segment** for hosts that number their segments in the query (`/segment?n=5`): all of them shared one cache entry. The query is only left out of the cache key when the path names a file.
   - **DASH look-ahead asked for files that do not exist**: the next segment's name was made by replacing text, which also changed the `4` of `.m4s` and dropped leading zeros.
   - **Start-up crash from an oversized saved-results file.** The file is read into memory whole; one written by an older version could be bigger than the app's memory, so the app died at every start. Such a file is dropped, and what is loaded respects the memory budget.
+  - **Logs screen lost lines** when several things logged at the same moment (two writers overwrote each other); adding a line is now one atomic step, and the screen keeps 300 lines instead of 100. The log file was never affected.
   - **A site that no longer exists was looked up over and over** (system DNS, then five resolvers, up to 8 s each, for every request). "No such host" is remembered for 60 seconds - only when a resolver really answered, never while the device is offline.
 
 ## 1.8.51
