@@ -198,7 +198,10 @@ object SystemBrowserCdpBypass {
             "--disable-background-networking",
             "--disable-default-apps",
             "--disable-component-update",
-        )).start()
+        ))
+            // nothing reads the browser's own log output: left connected, the pipe fills up and the browser blocks on it
+            .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start()
 
         val session = ProxySession(
             apexDomain = apex,

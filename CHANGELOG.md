@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Links from extensions were collected in lists that are not safe for several threads.** Extensions hand over their links and subtitles from many threads at once; the bridge put them into ordinary lists and sets. Links could be lost without any message, an extension's whole answer could be thrown away by an error, and a set could be damaged so that a thread kept spinning on it. The collections are thread-safe now and are copied before they are read (an extension that ran out of time may still be adding).
+- **A failed download can no longer replace a working extension.** The answer's status was not checked, and for repositories without a file hash whatever came back was saved as the extension - an error or rate-limit page, or a Wi-Fi login page. An error status is refused now, and anything that is not an extension file (a zip archive) is dropped and the installed one kept.
+- **Website player:** a subtitle made in the page (an uploaded file, or after changing the subtitle delay) left its copy in the browser's memory each time; it is released when the track is removed.
+- **Desktop:** the browser opened to solve a Cloudflare check could freeze, because nothing read its log output and the pipe filled up. Its output is discarded now.
+
 ## 1.8.53
 
 - **App screens.**

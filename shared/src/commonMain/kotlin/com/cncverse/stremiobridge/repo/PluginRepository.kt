@@ -213,7 +213,19 @@ object PluginRepository {
                     ServerState.info("Downloading '${plugin.name}' from $candidate")
                     val bytes = if (com.cncverse.stremiobridge.network.DohConfig.enabled) dohBytes(candidate) else httpClient.get(candidate) {
                         applyGitHubBrowserHeaders(candidate)
-                    }.readRawBytes()
+                    }.let { resp ->
+                        // an error answer is not the extension: its page must never be saved as the file
+                        if (resp.status.value !in 200..299) throw Exception("HTTP ${resp.status.value}")
+                        resp.readRawBytes()
+                    }
+                    // An extension file is a zip archive ("PK"). Whatever else came back (an error or "rate limit" page, a
+                    // captive portal's login page) used to be written over the working extension when the repository lists no
+                    // hash for it - the extension was then gone until a later download happened to succeed.
+                    if (bytes.size < 4 || bytes[0] != 'P'.code.toByte() || bytes[1] != 'K'.code.toByte()) {
+                        ServerState.warn("'${plugin.name}': what $candidate sent is not an extension file (${bytes.size} bytes) - keeping the installed one")
+                        if (candidate != urls.last()) continue
+                        return@withContext null
+                    }
 
                     if (plugin.fileHash != null) {
                         val downloadedHash = sha256Bytes(bytes)

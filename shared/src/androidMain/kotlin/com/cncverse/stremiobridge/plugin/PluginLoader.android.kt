@@ -431,10 +431,11 @@ private class ReflectionMainApiWrapper(
     }
 
     override suspend fun loadLinks(dataUrl: String): List<StremioStream> = withContext(com.cncverse.stremiobridge.server.PluginThreads.io) {
-        val streams = mutableListOf<StremioStream>()
-        val subtitles = mutableListOf<StremioSubtitle>()
-        val seenSubtitleUrls = mutableSetOf<String>()
-        val seenStreamUrls = mutableSetOf<String>()
+        // filled by the extension from several threads at once: plain lists and sets lost links, threw, or broke for good
+        val streams: MutableList<StremioStream> = java.util.Collections.synchronizedList(ArrayList<StremioStream>())
+        val subtitles: MutableList<StremioSubtitle> = java.util.Collections.synchronizedList(ArrayList<StremioSubtitle>())
+        val seenSubtitleUrls: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val seenStreamUrls: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         try {
             val method = apiClass.methods.firstOrNull { it.name == "loadLinks" } ?: return@withContext emptyList()
             when (method.parameterCount) {
@@ -476,10 +477,10 @@ private class ReflectionMainApiWrapper(
             ServerState.warn("LoadLinks error (${plugin.name}): ${e.message}")
         }
         
-        val uniqueSubtitles = subtitles.distinctBy { it.url }
-        val uniqueStreams = streams.distinctBy { it.url ?: it.hashCode().toString() }
+        val uniqueSubtitles = synchronized(subtitles) { subtitles.toList() }.distinctBy { it.url }
+        val uniqueStreams = synchronized(streams) { streams.toList() }.distinctBy { it.url ?: it.hashCode().toString() }
         if (uniqueSubtitles.isNotEmpty()) {
-            uniqueStreams.map { it.copy(subtitles = uniqueSubtitles.toList()) }
+            uniqueStreams.map { it.copy(subtitles = uniqueSubtitles) }
         } else {
             uniqueStreams
         }
@@ -1072,12 +1073,13 @@ private class DirectMainApiWrapper(
     }
 
     override suspend fun loadLinks(dataUrl: String): List<StremioStream> = withContext(com.cncverse.stremiobridge.server.PluginThreads.io) {
-        val streams = mutableListOf<StremioStream>()
-        val subtitles = mutableListOf<StremioSubtitle>()
+        // filled by the extension from several threads at once: plain lists and sets lost links, threw, or broke for good
+        val streams: MutableList<StremioStream> = java.util.Collections.synchronizedList(ArrayList<StremioStream>())
+        val subtitles: MutableList<StremioSubtitle> = java.util.Collections.synchronizedList(ArrayList<StremioSubtitle>())
         ServerState.debug("loadLinks called: plugin=${plugin.name} dataUrl=$dataUrl")
         var callbackCount = 0
-        val seenSubtitleUrls = mutableSetOf<String>()
-        val seenStreamUrls = mutableSetOf<String>()
+        val seenSubtitleUrls: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val seenStreamUrls: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         try {
             kotlinx.coroutines.withTimeoutOrNull(20_000) {
                 api.loadLinks(dataUrl, false, { sub ->
@@ -1103,10 +1105,10 @@ private class DirectMainApiWrapper(
             ServerState.warn("LoadLinks error (${plugin.name}): $cause | dataUrl=$dataUrl")
         }
         
-        val uniqueSubtitles = subtitles.distinctBy { it.url }
-        val uniqueStreams = streams.distinctBy { it.url ?: it.hashCode().toString() }
+        val uniqueSubtitles = synchronized(subtitles) { subtitles.toList() }.distinctBy { it.url }
+        val uniqueStreams = synchronized(streams) { streams.toList() }.distinctBy { it.url ?: it.hashCode().toString() }
         val finalStreams = if (uniqueSubtitles.isNotEmpty()) {
-            uniqueStreams.map { it.copy(subtitles = uniqueSubtitles.toList()) }
+            uniqueStreams.map { it.copy(subtitles = uniqueSubtitles) }
         } else {
             uniqueStreams
         }
