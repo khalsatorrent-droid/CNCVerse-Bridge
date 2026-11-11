@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.53
 
 - **App screens.**
   - **Settings froze when opened.** The Media server card counted the whole cache folder (thousands of files once a few GB are cached) on the thread that draws the screen; "Clear cache" deleted gigabytes on it too. Both run in the background now.
