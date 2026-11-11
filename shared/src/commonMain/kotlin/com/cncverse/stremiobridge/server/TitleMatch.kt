@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -305,6 +306,6 @@ object MatchMemory {
 
     private fun save() {
         val f = file ?: return
-        runCatching { synchronized(lock) { f.writeText(json.encodeToString(map.toMap())) } }
+        runCatching { synchronized(lock) { f.writeTextAtomic(json.encodeToString(map.toMap())) } }
     }
 }

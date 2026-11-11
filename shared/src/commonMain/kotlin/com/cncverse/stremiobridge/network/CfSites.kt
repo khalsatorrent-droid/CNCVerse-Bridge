@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.network
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -81,7 +82,7 @@ object CfSites {
 
     private fun save() {
         publish()
-        runCatching { file?.writeText(json.encodeToString(map.values.toList())) }
+        runCatching { file?.writeTextAtomic(json.encodeToString(map.values.toList())) }
     }
 
     private fun publish() { sites.value = map.values.sortedByDescending { maxOf(it.lastChallenge, it.solvedAt, it.firstSeen) } }

@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.cache
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.model.StreamInfo
 import com.cncverse.stremiobridge.state.ServerState
@@ -477,7 +478,7 @@ object StreamCacheManager {
         config = newConfig
         val file = configFile ?: return
         try {
-            file.writeText(cacheJson.encodeToString(newConfig))
+            file.writeTextAtomic(cacheJson.encodeToString(newConfig))
             ServerState.info("Updated and saved StreamCacheConfig.")
         } catch (e: Throwable) {
             ServerState.warn("Failed to save StreamCacheConfig: ${e.message}")

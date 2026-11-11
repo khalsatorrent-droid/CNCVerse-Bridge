@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.network.DohHttp
 import com.cncverse.stremiobridge.state.ServerState
 import io.ktor.http.*
@@ -56,7 +57,7 @@ object WebSimkl {
         if (s.token != saved.token || s.clientId != saved.clientId) { seen = Seen(); runCatching { seenFile?.delete() } }
         saved = s
         libCache.clear()
-        runCatching { file?.writeText(json.encodeToString(s)) }.onFailure { ServerState.warn("Failed to save simkl.json: ${it.message}") }
+        runCatching { file?.writeTextAtomic(json.encodeToString(s)) }.onFailure { ServerState.warn("Failed to save simkl.json: ${it.message}") }
     }
 
     private fun headers(withToken: Boolean): Map<String, String> {
@@ -225,7 +226,7 @@ object WebSimkl {
             else watchedOf(o, "show", "tv", items)
         } }
         seen = Seen(all, startedAt, items)
-        runCatching { seenFile?.writeText(json.encodeToString(seen)) }
+        runCatching { seenFile?.writeTextAtomic(json.encodeToString(seen)) }
         ServerState.info("[Simkl] watched history ${if (since == null) "read" else "updated"}: ${items.count { it.key.startsWith("movie:") }} movie(s), " +
             "${items.values.sumOf { it.size }} episode(s)")
     }

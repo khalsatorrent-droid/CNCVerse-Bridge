@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.model.*
 import com.cncverse.stremiobridge.state.RepoState
 import com.cncverse.stremiobridge.state.ServerState
@@ -322,7 +323,7 @@ object StremioServer {
         )
         streamPrefs = cleaned
         val file = streamPrefsFile ?: return
-        runCatching { file.writeText(serverJson.encodeToString(cleaned)) }
+        runCatching { file.writeTextAtomic(serverJson.encodeToString(cleaned)) }
             .onFailure { ServerState.warn("Failed to save stream_prefs.json: ${it.message}") }
     }
 
@@ -358,8 +359,8 @@ object StremioServer {
         val file = disabledPluginsFile ?: return
         try {
             val json = serverJson.encodeToString(disabledPlugins)
-            file.writeText(json)
-            enabledSourcesFile?.writeText(serverJson.encodeToString(enabledSources.toSet()))
+            file.writeTextAtomic(json)
+            enabledSourcesFile?.writeTextAtomic(serverJson.encodeToString(enabledSources.toSet()))
         } catch (e: Exception) {
             ServerState.warn("Failed to save disabled plugins: ${e.message}")
         }

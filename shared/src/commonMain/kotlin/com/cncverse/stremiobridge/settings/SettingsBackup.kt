@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.settings
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.repo.RepoManager
 import com.cncverse.stremiobridge.repo.loadExtensionSettings
 import com.cncverse.stremiobridge.repo.loadRepoUrls
@@ -107,7 +108,7 @@ object SettingsBackup {
             // Only well-formed JSON replaces a setting file
             val valid = runCatching { Json.parseToJsonElement(content) }.isSuccess
             if (!valid) continue
-            runCatching { File(d, name).writeText(content); applied++ }
+            runCatching { File(d, name).writeTextAtomic(content); applied++ }
         }
         // Files the backup does not have go back to their defaults
         for (name in CONFIG_FILES) if (name !in backup.files) runCatching { File(d, name).delete() }

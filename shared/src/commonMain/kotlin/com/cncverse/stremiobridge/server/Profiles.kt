@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.state.ServerState
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
@@ -80,7 +81,7 @@ object Profiles {
 
     private fun save() {
         val f = file ?: return
-        runCatching { f.writeText(json.encodeToString(ProfilesFile(enabled, list.toList(), showNsfw, nsfwAddon))) }
+        runCatching { f.writeTextAtomic(json.encodeToString(ProfilesFile(enabled, list.toList(), showNsfw, nsfwAddon))) }
             .onFailure { ServerState.warn("Could not save profiles.json: ${it.message}") }
     }
 

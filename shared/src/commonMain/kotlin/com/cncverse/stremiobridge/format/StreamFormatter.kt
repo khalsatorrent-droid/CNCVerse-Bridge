@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.format
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.model.StreamInfo
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.state.ServerState
@@ -876,7 +877,7 @@ object StreamFormatter {
     /** Validates, activates and persists [cfg]. Throws [TemplateException] when a template is invalid. */
     fun save(cfg: StreamFormatterConfig) {
         install(cfg)
-        file?.let { f -> runCatching { f.writeText(json.encodeToString(StreamFormatterConfig.serializer(), cfg)) } }
+        file?.let { f -> runCatching { f.writeTextAtomic(json.encodeToString(StreamFormatterConfig.serializer(), cfg)) } }
     }
 
     /** Renders [stream] with the given templates (null template → keep original). */

@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.repo
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.model.SitePlugin
 import com.cncverse.stremiobridge.state.*
 import kotlinx.coroutines.*
@@ -32,7 +33,7 @@ object PluginInstaller {
     /** Persist the current installed plugin list to disk. */
     private fun saveInstalledPlugins(cacheDir: String) {
         try {
-            installedFile(cacheDir).writeText(
+            installedFile(cacheDir).writeTextAtomic(
                 installedJson.encodeToString(RepoState.installedPlugins.value)
             )
         } catch (_: Exception) {}
@@ -228,7 +229,7 @@ object PluginInstaller {
 
     private fun writeInstalled(cacheDir: String, plugins: List<InstalledPlugin>) {
         try {
-            installedFile(cacheDir).writeText(installedJson.encodeToString(plugins))
+            installedFile(cacheDir).writeTextAtomic(installedJson.encodeToString(plugins))
         } catch (_: Exception) {}
     }
 

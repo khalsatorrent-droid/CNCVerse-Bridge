@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.state.ServerState
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -46,7 +47,7 @@ object WebSite {
         val pw = p.password.take(100)
         if (p.enabled && pw.trim().length < 4) return "Set a password of at least 4 characters first"
         prefs = Prefs(p.enabled, pw)
-        runCatching { file?.writeText(json.encodeToString(prefs)) }
+        runCatching { file?.writeTextAtomic(json.encodeToString(prefs)) }
             .onFailure { ServerState.warn("Failed to save web_prefs.json: ${it.message}") }
         return null
     }

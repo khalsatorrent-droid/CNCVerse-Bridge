@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -29,7 +30,7 @@ object NameStore {
         if (map.size > 3_000) map.keys.take(1_000).forEach { map.remove(it) }
         map[key] = value
         val f = file ?: return
-        runCatching { synchronized(lock) { f.writeText(json.encodeToString(map.toMap())) } }
+        runCatching { synchronized(lock) { f.writeTextAtomic(json.encodeToString(map.toMap())) } }
     }
 
     /** An [AnimeInfo] as a list of strings (and back): the few numbers first, then the names. */

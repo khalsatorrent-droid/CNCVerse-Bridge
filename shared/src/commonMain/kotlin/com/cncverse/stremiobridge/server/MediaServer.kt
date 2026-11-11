@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.state.ServerState
 import io.ktor.http.ContentType
@@ -260,7 +261,7 @@ object MediaServer {
         )
         prefs = clean
         prefetchLimit = segmentLimit(clean.connections)
-        runCatching { prefsFile?.writeText(json.encodeToString(clean)) }
+        runCatching { prefsFile?.writeTextAtomic(json.encodeToString(clean)) }
             .onFailure { ServerState.warn("Failed to save media_server.json: ${it.message}") }
     }
 

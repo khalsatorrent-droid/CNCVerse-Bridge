@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.server
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.model.StreamInfo
 import com.cncverse.stremiobridge.model.StremioStreamResponse
@@ -51,7 +52,7 @@ object UpstreamAddons {
     fun active(): List<UpstreamAddon> = list.filter { it.enabled }
 
     private fun save() {
-        runCatching { file?.writeText(json.encodeToString(list.toList())) }
+        runCatching { file?.writeTextAtomic(json.encodeToString(list.toList())) }
     }
 
     fun base(url: String): String =

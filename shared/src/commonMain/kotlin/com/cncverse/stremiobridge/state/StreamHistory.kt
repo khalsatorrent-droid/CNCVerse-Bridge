@@ -97,7 +97,7 @@ object StreamHistory {
                 Thread.sleep(500)
                 writePending.set(false)
                 val text = json.encodeToString(_entries.value)
-                file?.writeText(text)
+                file?.writeTextAtomic(text)
             } catch (_: Throwable) { writePending.set(false) }
         }
     }

@@ -1,5 +1,6 @@
 package com.cncverse.stremiobridge.network
 
+import com.cncverse.stremiobridge.state.writeTextAtomic
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -75,6 +76,6 @@ object CfCookieStore {
     fun count(): Int = map.values.count { System.currentTimeMillis() - it.savedAt < TTL_MS }
 
     private fun persist() {
-        runCatching { file?.writeText(json.encodeToString(map.values.toList())) }
+        runCatching { file?.writeTextAtomic(json.encodeToString(map.values.toList())) }
     }
 }
