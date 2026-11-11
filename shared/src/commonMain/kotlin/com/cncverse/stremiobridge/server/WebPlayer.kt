@@ -190,7 +190,7 @@ function burnDraw(){var cv=g('psubcv'),v=g('v'),w=cv.clientWidth,h=cv.clientHeig
   if(bg==='box'||bg==='solid'){var tw=x.measureText(L).width;x.fillStyle=bg==='box'?'rgba(0,0,0,.7)':'#000';x.fillRect(cx-tw/2-fs*.3,yy-fs*.95,tw+fs*.6,fs*1.2)}
   else{x.strokeStyle='#000';x.lineWidth=Math.max(2,fs*.16);x.strokeText(L,cx,yy)}
   x.fillStyle=col;x.fillText(L,cx,yy)})}
-function burnLoop(){burnRaf=0;if(!burnOn())return;burnDraw();burnRaf=requestAnimationFrame(burnLoop)}
+function burnLoop(){burnRaf=0;if(!burnOn()||g('player').classList.contains('hide'))return;burnDraw();burnRaf=requestAnimationFrame(burnLoop)}
 function burnApply(){var cv=g('psubcv');if(burnOn()){cv.style.display='block';burnKey='';burnTracks(true);if(!burnRaf)burnRaf=requestAnimationFrame(burnLoop)}
  else{cv.style.display='none';burnKey='';try{cv.getContext('2d').clearRect(0,0,cv.width,cv.height)}catch(e){}burnTracks(false);if(burnRaf){cancelAnimationFrame(burnRaf);burnRaf=0}}}
 function burnToggle(){Sset('subburn',!burnOn());burnApply();toast(burnOn()?'Subtitles are now drawn onto the picture.':'Subtitles are back to the normal layer.')}
