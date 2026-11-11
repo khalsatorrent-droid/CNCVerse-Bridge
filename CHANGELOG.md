@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.3
 
 - **Links found by the search went missing from lists read from the cache, with no reason given.** A site link that runs out within a few minutes (Vedu, Netflix and others hand out such links) was never kept in the saved list, so the "Refresh" entry counted it ("Vedu: 6") but the list - answered from the cache - had none of them and the search report said nothing. Such links are kept now until their own end time, and links a saved list has lost are shown in the search report as found and dropped, with the reason ("the site's link expired after it was found").
 - **The search report names extensions the way the "Refresh" entry does** ("Vedu", "Cwunchyroll"), not by their plugin file ("StreamHubOne"), so the two can be compared.
