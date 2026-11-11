@@ -32,6 +32,18 @@ object DecryptHandler {
      * VLC FIX: Uses excludeInit=true so segments don't include init atoms.
      * Init is served separately via /init_decrypt and referenced by EXT-X-MAP.
      */
+    private val FILE_NAME_END = Regex("\\.[A-Za-z0-9]{2,5}$")
+
+    /**
+     * What a segment is cached under: its address without the query (the query is usually a token that changes) - but only
+     * when the path names a file. Hosts that number their segments in the query ("/segment?n=5") have the same path for every
+     * segment; cut there, they all shared one cache entry and the player was handed the wrong piece of video.
+     */
+    private fun keyOf(url: String): String {
+        val path = url.substringBefore("?")
+        return if (FILE_NAME_END.containsMatchIn(path)) path else url
+    }
+
     suspend fun handleDecryptSegment(call: ApplicationCall) {
         val reqPath = call.request.path()
         ServerState.debug("DECRYPT_REQ [$reqPath] starting...")
@@ -49,15 +61,15 @@ object DecryptHandler {
                 ?: return call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'key' parameter"))
 
             // Parameters for URL refresh if 403 (expired token)
-            val mpdUrl = call.request.queryParameters["mpd_url"]?.let { URLDecoder.decode(it, "UTF-8") }
+            val mpdUrl = call.request.queryParameters["mpd_url"]?.let { HttpClientManager.urlParam(it) }
             val repId = call.request.queryParameters["rep_id"]
             val segNum = call.request.queryParameters["seg_num"]?.toIntOrNull()
 
-            var decodedSegmentUrl = URLDecoder.decode(segmentUrl, "UTF-8")
-            var decodedInitUrl = initUrl?.let { URLDecoder.decode(it, "UTF-8") }
+            var decodedSegmentUrl = HttpClientManager.urlParam(segmentUrl)
+            var decodedInitUrl = initUrl?.let { HttpClientManager.urlParam(it) }
 
             // Check cache first
-            val segmentCacheKey = "${decodedSegmentUrl.substringBefore("?")}_${keyId}"
+            val segmentCacheKey = "${keyOf(decodedSegmentUrl)}_${keyId}"
             val cached = SegmentCache.getSegment(segmentCacheKey)
             // Extract custom headers
             val queryParams = call.request.queryParameters.entries()
@@ -170,10 +182,10 @@ object DecryptHandler {
             val initUrl = call.request.queryParameters["url"]
                 ?: return call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'url' parameter"))
 
-            val decodedInitUrl = URLDecoder.decode(initUrl, "UTF-8")
+            val decodedInitUrl = HttpClientManager.urlParam(initUrl)
 
             // Check cleaned init cache
-            val cacheKey = "cleaned_${decodedInitUrl.substringBefore("?")}"
+            val cacheKey = "cleaned_${keyOf(decodedInitUrl)}"
             val cachedCleanedInit = SegmentCache.getCleanedInit(cacheKey)
             if (cachedCleanedInit != null) {
                 respondBytesOrHead(call, cachedCleanedInit, ContentType.parse("video/mp4"), true)
@@ -186,7 +198,7 @@ object DecryptHandler {
             val proxyUrl: String? = null
 
             withContext(Dispatchers.IO) {
-                val initCacheKey = decodedInitUrl.substringBefore("?")
+                val initCacheKey = keyOf(decodedInitUrl)
 
                 // Try cache first
                 val initContent = SegmentCache.getInitSegment(initCacheKey) ?: run {
@@ -232,7 +244,7 @@ object DecryptHandler {
         return coroutineScope {
             val initDeferred = async {
                 initUrl?.let { url ->
-                    val cacheKey = url.substringBefore("?")
+                    val cacheKey = keyOf(url)
                     SegmentCache.getInitSegment(cacheKey) ?: run {
                         val fetched = HttpClientManager.getBytes(url = url, headers = headers, proxyUrl = proxyUrl)
                         SegmentCache.putInitSegment(cacheKey, fetched)
@@ -321,14 +333,17 @@ object DecryptHandler {
             val regex = Regex("""[_-](\d+)\.m4[sv]""")
             val match = regex.find(currentSegmentUrl) ?: return
             val currentNum = match.groupValues[1].toIntOrNull() ?: return
+            // only the number itself is replaced, at its own width: the old text replace also changed the "4" of ".m4s"
+            // (segment 4 -> "_5.m5s") and dropped a leading zero ("_0009" -> "_00010"), so those look-ahead requests were 404s
+            val digits = match.groups[1] ?: return
             (1..count).map { i ->
-                currentSegmentUrl.replace(regex, match.value.replace(currentNum.toString(), (currentNum + i).toString()))
+                currentSegmentUrl.replaceRange(digits.range, (currentNum + i).toString().padStart(digits.value.length, '0'))
             }
         }
 
         for (nextUrl in nextUrls.take(count)) {
 
-            val segmentCacheKey = "${nextUrl.substringBefore("?")}_$keyId"
+            val segmentCacheKey = "${keyOf(nextUrl)}_$keyId"
 
             if (SegmentCache.hasSegment(segmentCacheKey) || !SegmentCache.markPrefetching(segmentCacheKey)) {
                 continue

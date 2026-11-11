@@ -40,7 +40,7 @@ private suspend fun handleMpdProxy(call: ApplicationCall, converter: MpdConverte
         // Strip trailing '?' or '&' — Jio/Akamai stream URLs sometimes end with a bare '?'
         // which gets URL-decoded and included in the __hdnea__ HMAC query value, corrupting
         // the signature and causing an immediate HTTP 403 from the CDN.
-        val (decodedUrl, pipeHeaders) = splitPipeHeaders(URLDecoder.decode(destinationUrl, "UTF-8"))
+        val (decodedUrl, pipeHeaders) = splitPipeHeaders(HttpClientManager.urlParam(destinationUrl))
         mpdUrl = decodedUrl
         val repId = call.request.queryParameters["rep_id"]
         val clearKey = call.request.queryParameters["clearkey"]
@@ -131,7 +131,7 @@ private suspend fun handleSubtitleProxy(call: ApplicationCall) {
         val destinationUrl = call.request.queryParameters["url"]
             ?: return call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'url' parameter"))
             
-        val decodedUrl = URLDecoder.decode(destinationUrl, "UTF-8")
+        val decodedUrl = HttpClientManager.urlParam(destinationUrl)
         val queryParams = call.request.queryParameters.entries().associate { it.key to it.value.firstOrNull().orEmpty() }
         val customHeaders = HttpClientManager.extractHeadersFromParams(queryParams)
 

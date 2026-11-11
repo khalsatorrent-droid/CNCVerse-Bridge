@@ -347,6 +347,14 @@ object HttpClientManager {
      * Estrae headers h_* da query parameters
      * Esempio: h_referer=xxx → Referer: xxx
      */
+    /**
+     * An address handed over in a query parameter. The server has already decoded it once; decoding it a second time (as every
+     * route here did) turned the "%2B" / "%2F" / "%3D" of a signed address into "+", "/", "=" and a real "+" into a space - the
+     * signature no longer matched and the host answered 403. Only a value that is visibly still encoded is decoded again.
+     */
+    fun urlParam(v: String): String =
+        if (v.startsWith("http%3A", true) || v.startsWith("https%3A", true)) runCatching { java.net.URLDecoder.decode(v, "UTF-8") }.getOrDefault(v) else v
+
     fun extractHeadersFromParams(params: Map<String, String>): Map<String, String> {
         return params
             .filterKeys { it.startsWith("h_") }

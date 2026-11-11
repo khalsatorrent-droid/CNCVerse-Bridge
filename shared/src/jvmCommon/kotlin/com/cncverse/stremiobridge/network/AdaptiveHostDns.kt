@@ -48,6 +48,14 @@ object AdaptiveHostDns : Dns {
      */
     private fun resolveFresh(hostname: String): List<InetAddress> {
         if (hostname.equals("localhost", true)) return Dns.SYSTEM.lookup(hostname)
+        // A name that did not exist a moment ago (a site that is gone): every request for it used to go through the system
+        // lookup and then five resolvers, two questions each, up to 8 seconds apiece - again and again, for each of an
+        // extension's requests. The answer "no such host" is now remembered for a short while.
+        val startedAt = System.currentTimeMillis()
+        failedHosts[hostname]?.let { at ->
+            if (startedAt - at < NEGATIVE_TTL_MS) throw java.net.UnknownHostException("$hostname (not found a moment ago)")
+            failedHosts.remove(hostname)
+        }
         // 2. Perform Direct Parallel Interleaved Lookup (System)
         val directAddresses = try {
             // A blocking DNS often answers 0.0.0.0 / 127.0.0.1 instead of failing: that counts as failed too
@@ -89,9 +97,19 @@ object AdaptiveHostDns : Dns {
             }
         }
 
-        // Nothing resolved: let the caller see the system error
+        // Nothing resolved. Remembered only when a resolver was really reached (it answered "no such name"): when the device is
+        // simply offline nothing is remembered, so everything works again the moment the network is back.
+        if (lastDohAnswerAt >= startedAt) {
+            if (failedHosts.size > 2_000) failedHosts.clear()
+            failedHosts[hostname] = System.currentTimeMillis()
+        }
+        // let the caller see the system error
         return Dns.SYSTEM.lookup(hostname)
     }
+
+    private val failedHosts = ConcurrentHashMap<String, Long>()
+    private const val NEGATIVE_TTL_MS = 60_000L
+    @Volatile private var lastDohAnswerAt = 0L
 
     private val DOH_ENDPOINTS = listOf(
         "Cloudflare" to "https://1.1.1.1/dns-query",
@@ -123,6 +141,7 @@ object AdaptiveHostDns : Dns {
                 val req = okhttp3.Request.Builder().url(url).header("Accept", "application/dns-json").build()
                 dohClient.newCall(req).execute().use { r ->
                     if (!r.isSuccessful) return@use
+                    lastDohAnswerAt = System.currentTimeMillis()
                     val answers = dohJson.parseToJsonElement(r.body?.string().orEmpty())
                         .let { it as? kotlinx.serialization.json.JsonObject }?.get("Answer") as? kotlinx.serialization.json.JsonArray
                         ?: return@use

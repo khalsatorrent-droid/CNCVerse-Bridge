@@ -488,6 +488,14 @@ object StreamCacheManager {
         if (!config.diskPersistenceEnabled) return
         val file = dataFile ?: return
         if (!file.exists()) return
+        // The file is read into memory as one list. One written by an older version (no size limit then) can be far bigger than
+        // the app's memory: the app then died while starting, and again at every start. Such a file is dropped instead.
+        val maxFile = (Runtime.getRuntime().maxMemory() / 6).coerceIn(16L * 1024 * 1024, 96L * 1024 * 1024)
+        if (file.length() > maxFile) {
+            ServerState.warn("StreamCacheManager: saved results are too big to load (${file.length() / 1_048_576} MB) - starting empty")
+            runCatching { file.delete() }
+            return
+        }
 
         try {
             // Streamed decode: never materialise the whole file as one String
@@ -505,6 +513,8 @@ object StreamCacheManager {
                 // the other links of those lists stay
                 .map { e -> withoutLoopback(e) }
                 .sortedByDescending { it.cachedAt }.take(config.maxRamEntries)
+                // newest first, until the memory budget is used up (the count alone let a few thousand big lists back in)
+                .let { seq -> var w = 0L; seq.takeWhile { e -> w += weightOf(e); w <= maxWeight || loaded == 0 } }
                 .forEach { entry ->
                     // Re-attach each stream's info (saved alongside, same order)
                     val restored = if (entry.infos.size == entry.streams.size)

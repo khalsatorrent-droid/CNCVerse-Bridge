@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Fifth round of fixes.**
+  - **Signed DASH and subtitle links: the address was decoded twice.** `/decrypt`, `/init_decrypt`, `/proxy/mpd` and `/proxy/subtitle` URL-decoded the address again after the server had already done it, turning the `%2B` / `%2F` / `%3D` of a signature into `+`, `/`, `=` and a real `+` into a space - the host then answered 403.
+  - **Decrypt cache could hand out the wrong segment** for hosts that number their segments in the query (`/segment?n=5`): all of them shared one cache entry. The query is only left out of the cache key when the path names a file.
+  - **DASH look-ahead asked for files that do not exist**: the next segment's name was made by replacing text, which also changed the `4` of `.m4s` and dropped leading zeros.
+  - **Start-up crash from an oversized saved-results file.** The file is read into memory whole; one written by an older version could be bigger than the app's memory, so the app died at every start. Such a file is dropped, and what is loaded respects the memory budget.
+  - **A site that no longer exists was looked up over and over** (system DNS, then five resolvers, up to 8 s each, for every request). "No such host" is remembered for 60 seconds - only when a resolver really answered, never while the device is offline.
+
 ## 1.8.51
 
 - **Fourth round of fixes.**
