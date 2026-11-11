@@ -271,7 +271,7 @@ object MediaServer {
     fun stats(): MediaServerStats {
         val dir = root
         val size = dir?.let { dirSize(it) } ?: 0L
-        val entries = dir?.listFiles()?.count { it.isDirectory } ?: 0
+        val entries = dir?.listFiles()?.count { it.isDirectory && it.name != SOURCES_DIR } ?: 0
         return MediaServerStats(entries, size, files.values.count { it.worker != null }, served.get())
     }
 
@@ -307,10 +307,11 @@ object MediaServer {
         val dir = root ?: return false
         val cap = capBytes()
         val nowMs = System.currentTimeMillis()
-        var total = if (extra <= 0 && nowMs - sizeAt < 1_000L) sizeCache else dirSize(dir).also { sizeCache = it; sizeAt = nowMs }
+        // (walking the whole folder is not free: the answer is reused for a few seconds, not one)
+        var total = if (extra <= 0 && nowMs - sizeAt < 4_000L) sizeCache else dirSize(dir).also { sizeCache = it; sizeAt = nowMs }
         if (extra > 0 && keepId != null) total -= dirSize(File(dir, keepId))
         if (total + extra <= cap) return true
-        val victims = dir.listFiles()?.filter { it.isDirectory && it.name != keepId }?.sortedBy { lastUsed(it) } ?: emptyList()
+        val victims = dir.listFiles()?.filter { it.isDirectory && it.name != keepId && it.name != SOURCES_DIR }?.sortedBy { lastUsed(it) } ?: emptyList()
         for (d in victims) {
             if (total + extra <= cap) break
             val sz = dirSize(d)
@@ -334,7 +335,12 @@ object MediaServer {
         val now = System.currentTimeMillis()
         val ttl = prefs.keepHours * 3_600_000L
         val busyMs = 3 * 60_000L
-        val entries = dir.listFiles()?.filter { it.isDirectory } ?: return
+        val entries = dir.listFiles()?.filter { it.isDirectory && it.name != SOURCES_DIR } ?: return
+        // link records nobody asked for in two days (or the keep time, when that is longer)
+        runCatching {
+            val old = now - maxOf(ttl, 48 * 3_600_000L)
+            File(dir, SOURCES_DIR).listFiles()?.forEach { if (it.isFile && it.lastModified() < old) it.delete() }
+        }
         entries.filter { now - lastUsed(it) > busyMs && now - lastUsed(it) > ttl }
             .forEach { files.remove(it.name)?.stop = true; it.deleteRecursively() }
         makeRoom(0, null)
@@ -630,7 +636,7 @@ object MediaServer {
             val fin = arrayOfNulls<String>(1)
             val raw = String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
             if (!raw.trimStart().startsWith("#EXTM3U")) throw IOException("not a playlist")
-            runCatching { File(root ?: return@runCatching, "$id/playlist.m3u8").writeText(raw) }
+            runCatching { File(File(root ?: return@runCatching, id).also { it.mkdirs() }, "playlist.m3u8").writeText(raw) }
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
             val base = fin[0] ?: url
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, base, useRaw, key))
@@ -664,19 +670,42 @@ object MediaServer {
         val id = sha256(url + "\n" + sorted).take(20)
         // Every link of every result list is registered here (hundreds per search) and nothing ever left the map: it grew for as
         // long as the app ran. Each source is also saved as source.json and read back by sourceFor, so the map can be emptied.
-        if (sources.size > (if (root != null) 3_000 else 30_000)) sources.clear()
-        if (sources.putIfAbsent(id, MediaSource(url, headers)) == null) {
-            val dir = File(root ?: return id, id).also { it.mkdirs() }
-            runCatching { File(dir, "source.json").writeText(json.encodeToString(MediaSource(url, headers))) }
-        }
+        // (not while a record is still waiting to be written: it could not be read back yet)
+        if (sources.size > (if (root != null) 3_000 else 30_000) && pendingSourceWrites.get() == 0) sources.clear()
+        pendingSourceWrites.incrementAndGet()
+        if (sources.putIfAbsent(id, MediaSource(url, headers)) != null) { pendingSourceWrites.decrementAndGet(); return id }
+        val dir = root ?: run { pendingSourceWrites.decrementAndGet(); return id }
+        // One small file per link in one folder, written in the background. It used to be a folder per link, made and written
+        // while the list was being answered: a 500-link list meant 500 folders and 500 file writes before the player got its
+        // answer, and every one of those folders was then walked again and again by the cache-size check during playback.
+        val src = MediaSource(url, headers)
+        runCatching {
+            sourceWriter.execute {
+                try {
+                    val f = File(File(dir, SOURCES_DIR).also { it.mkdirs() }, "$id.json")
+                    if (!f.exists()) f.writeText(json.encodeToString(src))
+                } catch (_: Exception) {
+                } finally { pendingSourceWrites.decrementAndGet() }
+            }
+        }.onFailure { pendingSourceWrites.decrementAndGet() }
         return id
+    }
+
+    private const val SOURCES_DIR = "sources"
+    private val pendingSourceWrites = java.util.concurrent.atomic.AtomicInteger(0)
+    private val sourceWriter by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "media-sources").apply { isDaemon = true } }
     }
 
     internal fun sourceFor(id: String): MediaSource? {
         if (!id.matches(Regex("[0-9a-f]{20}"))) return null
         sources[id]?.let { return it }
-        val f = File(root ?: return null, "$id/source.json")
+        val dir = root ?: return null
+        // the shared folder first, then the place older versions used (a folder per link)
+        val f = File(dir, "$SOURCES_DIR/$id.json").takeIf { it.exists() } ?: File(dir, "$id/source.json")
         val loaded = runCatching { if (f.exists()) json.decodeFromString<MediaSource>(f.readText()) else null }.getOrNull() ?: return null
+        // in use: it stays (records nobody asked for in two days are removed)
+        runCatching { f.setLastModified(System.currentTimeMillis()) }
         sources[id] = loaded
         return loaded
     }
@@ -736,11 +765,20 @@ object MediaServer {
     }
 
     private val clients = ConcurrentHashMap<String, okhttp3.OkHttpClient>()
+    private val clientUsed = ConcurrentHashMap<String, Long>()
 
     internal fun clientFor(id: String, src: MediaSource): okhttp3.OkHttpClient {
         val hasCookie = src.headers.keys.any { it.equals("cookie", true) }
         if (hasCookie) return baseClient // the extension's own Cookie header must not be replaced
-        if (clients.size > 200) clients.clear()
+        // Each client carries the cookies its host set for this link. Emptying the whole map when it filled up also threw away
+        // the cookies of the video that was playing (its next request then went out without them: refused by hosts that
+        // hand out a session cookie). Only the ones unused for longest go.
+        val now = System.currentTimeMillis()
+        if (clients.size > 200) {
+            clientUsed.entries.sortedBy { it.value }.take(100).forEach { clients.remove(it.key); clientUsed.remove(it.key) }
+            clients.keys.filter { !clientUsed.containsKey(it) }.forEach { clients.remove(it) }
+        }
+        clientUsed[id] = now
         return clients.getOrPut(id) { baseClient.newBuilder().cookieJar(SessionCookies()).build() }
     }
 

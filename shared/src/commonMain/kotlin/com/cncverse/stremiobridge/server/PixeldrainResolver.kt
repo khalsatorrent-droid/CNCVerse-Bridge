@@ -53,13 +53,21 @@ object PixeldrainResolver {
     suspend fun resolveAll(streams: List<StremioStream>): List<StremioStream> {
         val ids = streams.mapNotNull { s -> s.url?.let { MIRROR.matchEntire(it)?.groupValues?.get(1) } }.distinct()
         if (ids.isEmpty()) return streams
-        val resolved = withTimeoutOrNull(5_000L) {
+        // Two things were wrong here. Every link was asked for at the same moment - thirty or more requests to one host at
+        // once, which is how a host starts refusing - so at most 8 run together now. And when the 5 seconds ran out, the
+        // answers that had already arrived were thrown away with the rest; they are kept.
+        val resolved = ConcurrentHashMap<String, String>()
+        val gate = kotlinx.coroutines.sync.Semaphore(8)
+        withTimeoutOrNull(5_000L) {
             coroutineScope {
-                ids.map { id -> async(Dispatchers.IO) { id to resolve(id, "https://cdn.pixeldrain.eu.cc/$id") } }.awaitAll().toMap()
+                ids.map { id -> async(Dispatchers.IO) {
+                    gate.acquire()
+                    try { resolve(id, "https://cdn.pixeldrain.eu.cc/$id")?.let { resolved[id] = it } } finally { gate.release() }
+                } }.awaitAll()
             }
-        } ?: emptyMap()
+        }
         if (resolved.isEmpty()) return streams
-        val ok = resolved.values.count { it != null }
+        val ok = resolved.size
         ServerState.debug("[Pixeldrain] resolved $ok of ${ids.size} mirror link(s) to their final address")
         return streams.map { s ->
             val id = s.url?.let { MIRROR.matchEntire(it)?.groupValues?.get(1) } ?: return@map s

@@ -842,6 +842,16 @@ object StreamCacheManager {
         isDirty.set(true)
     }
 
+    /** The device is short of memory: expired entries go, and when it is critical the older half of the rest as well. */
+    fun trimMemory(critical: Boolean) {
+        purgeExpired()
+        if (critical) {
+            val byAge = memoryCache.entries.sortedBy { it.value.cachedAt }
+            byAge.take(byAge.size / 2).forEach { memoryCache.remove(it.key) }
+            isDirty.set(true)
+        }
+    }
+
     fun purgeExpired(): Int {
         val now = System.currentTimeMillis()
         var purged = 0

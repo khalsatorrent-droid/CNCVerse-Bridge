@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Fourth round of fixes.**
+  - **A folder and a file per link, written while the list was answered.** Every link of every list got its own folder in the media cache (500 links = 500 folders and file writes before the player had its answer), and the cache-size check then walked all of them about once a second during playback. Now it is one small file per link in one folder, written in the background; folders are only made for links that are played, and the size check reuses its answer for 4 seconds.
+  - **The playing video's session cookies were thrown away** when 200 per-link connection settings had built up (all were wiped at once). Only the ones unused for longest go now.
+  - **Pixeldrain links:** all of a list's links were resolved at the same instant (30+ requests to one host at once), and when the 5-second limit ran out the answers that had arrived were discarded too. At most 8 at a time now, and finished answers are kept.
+  - **Extension-local links** (media server off, no fixed address) were built on the bridge's default address instead of the one the player used, so a TV could get a link to 127.0.0.1.
+  - **Low memory:** the big caches (kept result lists, live lists of finished searches, saved results) are now freed too when the system reports low memory.
+  - **Next-episode preparing** no longer searches every extension for an episode after the season's last one (when the episode count is known).
+  - **Search cache:** expired entries are removed instead of staying until the same search is made again.
+
 ## 1.8.50
 
 - **Third round of fixes.**

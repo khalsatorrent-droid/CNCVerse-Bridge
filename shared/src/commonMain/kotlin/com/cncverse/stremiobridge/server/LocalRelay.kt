@@ -41,23 +41,27 @@ object LocalRelay {
 
     private fun base(): String = ServerState.streamBaseUrl ?: ServerState.publicBaseUrl.ifBlank { "http://127.0.0.1:${ServerState.serverPort}" }
 
-    private fun relayUrl(port: Int, pathAndQuery: String?): String {
+    private fun relayUrl(port: Int, pathAndQuery: String?, from: String? = null): String {
         allowed[port] = System.currentTimeMillis()
         val p = pathAndQuery?.takeIf { it.isNotEmpty() } ?: "/"
-        return base() + "/proxy/local/" + port + p
+        return (from?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: base()) + "/proxy/local/" + port + p
     }
 
     /** Rewrites a loopback link to the relay; any other link is returned unchanged. */
-    fun rewrite(url: String?): String? {
+    /**
+     * [from]: the address the asking player reached this bridge on. Without it the link was built on the configured address -
+     * or on 127.0.0.1 when none is set - so a TV on the network was handed a link to "itself" that could never play.
+     */
+    fun rewrite(url: String?, from: String? = null): String? {
         val m = url?.let { LOOPBACK.matchEntire(it.trim()) } ?: return url
         val port = m.groupValues[2].toIntOrNull() ?: return url
         if (port == ServerState.serverPort) return url // the bridge itself
-        return relayUrl(port, m.groupValues[3])
+        return relayUrl(port, m.groupValues[3], from)
     }
 
-    fun rewriteStream(s: StremioStream): StremioStream {
-        val u = rewrite(s.url)
-        val subs = s.subtitles?.map { sub -> rewrite(sub.url)?.let { sub.copy(url = it) } ?: sub }
+    fun rewriteStream(s: StremioStream, from: String? = null): StremioStream {
+        val u = rewrite(s.url, from)
+        val subs = s.subtitles?.map { sub -> rewrite(sub.url, from)?.let { sub.copy(url = it) } ?: sub }
         return if (u == s.url && subs == s.subtitles) s else s.copy(url = u, subtitles = subs)
     }
 

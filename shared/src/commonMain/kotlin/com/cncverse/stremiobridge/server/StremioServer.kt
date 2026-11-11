@@ -1289,7 +1289,7 @@ object StremioServer {
                 .map { st ->
                     try {
                         // Media server: links that need a Referer / Cookie are fetched by this bridge and cached here
-                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, forWeb, runtimeGuess))
+                        LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, forWeb, runtimeGuess), base)
                     } catch (e: Throwable) {
                         ServerState.warn("[Request] could not prepare a link (${st.info?.addonName}): ${e.javaClass.simpleName}: ${e.message}")
                         st
@@ -1531,6 +1531,16 @@ object StremioServer {
             delay(1_500)
             var waited = 0L
             while (waited < 240_000L && searchStatus["$type:$id"]?.finished == false) { delay(2_000); waited += 2_000 }
+            // After a season's last episode there is no "next": searching every extension for an episode that does not exist
+            // is load on the sites for nothing. (Only when the episode count is known; otherwise it is searched as before.)
+            val beyond = runCatching {
+                val e = ExternalIds.parse(next)
+                val sn = e?.season
+                val en = e?.episode
+                if (e == null || sn == null || en == null || e.scheme !in setOf("imdb", "tmdb", "tvdb")) false
+                else withTimeoutOrNull(4_000L) { tmdbSeasonEpisodeCount(e, sn) }?.let { en > it } ?: false
+            }.getOrDefault(false)
+            if (beyond) { ServerState.info("[Streams] No next episode to prepare: $id is the last one of its season"); return@launch }
             runCatching {
                 ServerState.info("[Streams] Preparing the next episode in the background: $next" + if (waited > 0) " (after the current episode's search finished)" else "")
                 withContext(pluginDispatcher) { buildStreams(type, next) }
@@ -3246,6 +3256,14 @@ object StremioServer {
         runCatching { KitsuMap.trim() }
         runCatching { com.cncverse.stremiobridge.network.TmdbGateway.trim() }
         runCatching { com.cncverse.stremiobridge.network.ResponseCache.trim() }
+        // the big ones were left out: whole result lists kept "in case", the live lists of finished searches, saved results
+        runCatching {
+            val now = System.currentTimeMillis()
+            lastGood.entries.removeIf { critical || now - it.value.at >= LAST_GOOD_MS }
+            searchPartial.keys.removeIf { searchStatus[it]?.finished != false }
+            if (critical) webSearches.entries.removeIf { it.value.isCompleted }
+            com.cncverse.stremiobridge.cache.StreamCacheManager.trimMemory(critical)
+        }
         ServerState.debug("[Memory] Low memory: cached pages" + (if (critical) ", searches" else "") + " cleared")
     }
 
@@ -3281,6 +3299,11 @@ object StremioServer {
 
         /** Only call with the result of a search that completed (errors are never cached). */
         fun putSearch(apiKey: String, query: String, value: List<SearchResult>) {
+            // expired entries first (they were only ever removed when the same search was asked for again)
+            if (searchCache.size >= 800) {
+                val now = System.currentTimeMillis()
+                searchCache.entries.removeIf { now - it.value.timestamp > (if (it.value.value.isEmpty()) EMPTY_SEARCH_TTL_MS else SEARCH_TTL_MS) }
+            }
             if (searchCache.size >= MAX_SEARCH_ENTRIES) {
                 // Drop the oldest tenth
                 searchCache.entries.sortedBy { it.value.timestamp }.take(MAX_SEARCH_ENTRIES / 10)
