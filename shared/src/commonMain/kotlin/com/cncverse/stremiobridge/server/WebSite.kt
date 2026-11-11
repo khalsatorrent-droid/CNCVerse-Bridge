@@ -231,13 +231,22 @@ object WebSite {
             if (tries.size > 2_000) tries.entries.removeIf { System.currentTimeMillis() >= it.value.until }
             if (tries.size > 10_000) tries.clear()
             val t = tries.getOrPut(who) { Tries() }
-            if (System.currentTimeMillis() < t.until) return@post call.respond(HttpStatusCode.TooManyRequests)
+            // The guess is counted BEFORE the password is looked at. It used to be counted after the 800 ms pause, so any number of
+            // guesses sent at the same moment all passed the check together: the limit of 5 a minute did not hold.
+            val allowed = synchronized(t) {
+                val now = System.currentTimeMillis()
+                when {
+                    now < t.until -> false
+                    ++t.count > 5 -> { t.count = 0; t.until = now + 60_000; false }
+                    else -> true
+                }
+            }
+            if (!allowed) return@post call.respond(HttpStatusCode.TooManyRequests)
             val pw = call.receiveParameters()["password"].orEmpty()
             val ok = prefs.password.length >= 4 &&
                 MessageDigest.isEqual(pw.toByteArray(), prefs.password.toByteArray())
             if (!ok) {
                 delay(800)
-                if (++t.count >= 5) { t.count = 0; t.until = System.currentTimeMillis() + 60_000 }
                 return@post call.respond(HttpStatusCode.Unauthorized)
             }
             tries.remove(who)

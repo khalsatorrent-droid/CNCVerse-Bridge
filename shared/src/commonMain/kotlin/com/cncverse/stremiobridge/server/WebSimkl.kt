@@ -10,6 +10,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -107,7 +108,8 @@ object WebSimkl {
         val parts = coroutineScope {
             listOf("movies", "shows", "anime").map { t ->
                 async {
-                    val (code, body) = sk("GET", "/sync/all-items/$t/$status?extended=full")
+                    // (a network error here used to end the whole page request with an error instead of counting as "failed")
+                    val (code, body) = runCatching { sk("GET", "/sync/all-items/$t/$status?extended=full") }.getOrNull() ?: return@async null
                     if (code == 401) { save(saved.copy(token = "")); return@async null }
                     if (code != 200) return@async null
                     t to parse(body)
@@ -178,6 +180,8 @@ object WebSimkl {
     @Volatile private var seenCheckedAt = 0L
     private val seenLock = kotlinx.coroutines.sync.Mutex()
     private const val SEEN_EVERY_MS = 5 * 60_000L
+    private val seenScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    @Volatile private var seenJob: kotlinx.coroutines.Job? = null
 
     private fun watchedOf(o: JsonObject, inner: String, type: String, out: MutableMap<String, List<String>>) {
         val m = o.obj(inner) ?: return
@@ -246,7 +250,12 @@ object WebSimkl {
             if (!call.guard()) return@get
             if (saved.token.isEmpty()) return@get call.respondText("""{"linked":false,"keys":[]}""", ContentType.Application.Json)
             // a slow Simkl answer must not hold the page: what is known so far goes out, the rest comes next time
-            kotlinx.coroutines.withTimeoutOrNull(8_000) { runCatching { syncSeen() } }
+            // The read runs on its own: cut off inside the request, a large library (more than 8 seconds to download) was thrown
+            // away every time and never arrived - and the next try only came 5 minutes later.
+            val job = synchronized(seenLock) {
+                seenJob?.takeIf { it.isActive } ?: seenScope.launch { runCatching { syncSeen() } }.also { seenJob = it }
+            }
+            kotlinx.coroutines.withTimeoutOrNull(8_000) { job.join() }
             call.respondText(buildJsonObject {
                 put("linked", saved.token.isNotEmpty())
                 put("at", seen.syncedAt)

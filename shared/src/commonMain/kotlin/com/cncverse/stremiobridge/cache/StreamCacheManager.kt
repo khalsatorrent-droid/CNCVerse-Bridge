@@ -117,7 +117,9 @@ object StreamLinkClassifier {
         "pixeldrain.com", "gofile.io", "archive.org", "1fichier.com",
         "mediafire.com", "mega.nz", "dropbox.com", "github.com",
         "raw.githubusercontent.com", "fastly.net", "jsdelivr.net",
-        "r2.dev", "googleusercontent.com", "workers.dev"
+        "r2.dev"
+        // (googleusercontent.com and workers.dev were listed here: Google's download links and the throwaway workers.dev
+        // hosts of HubCloud expire within the hour, and as "static" they were kept for 12 hours)
     )
 
     /**
@@ -307,7 +309,8 @@ object StreamLinkClassifier {
         }
 
         // Host-based heuristic classification
-        if (STATIC_HOST_KEYWORDS.any { host.contains(it) }) {
+        // (a link that carries a token is not a permanent one, whatever its host)
+        if (!hasAuthToken && STATIC_HOST_KEYWORDS.any { host.contains(it) }) {
             val ttl = (customProviderTtlMinutes ?: (defaultTtlMinutes * 2).coerceAtLeast(720L)) * 60_000L
             return LinkClassificationResult(
                 url = trimmed,
@@ -677,37 +680,47 @@ object StreamCacheManager {
         //    when the last waiting request goes away. The stream aggregation keeps
         //    its providers waiting until its own hard deadline (45 s), so slow
         //    providers still finish into the cache, and nothing outlives it.
-        var isLeader = false
-        val flight = inFlight.compute(key) { _, existing ->
-            if (existing != null && existing.deferred.isActive) {
-                existing
-            } else {
-                isLeader = true
-                lateinit var self: Flight
-                val deferred = fetchScope.async(start = CoroutineStart.LAZY) {
-                    try {
-                        val result = withTimeout(MAX_FETCH_MS) { fetcher() }
-                        if (result.cacheable) put(key, result.streams, providerKey)
-                        result.streams
-                    } finally {
-                        inFlight.remove(key, self) // only our own entry, never a newer leader's
+        var retried = false
+        while (true) {
+            var isLeader = false
+            val flight = inFlight.compute(key) { _, existing ->
+                if (existing != null && existing.deferred.isActive) {
+                    existing
+                } else {
+                    isLeader = true
+                    lateinit var self: Flight
+                    val deferred = fetchScope.async(start = CoroutineStart.LAZY) {
+                        try {
+                            val result = withTimeout(MAX_FETCH_MS) { fetcher() }
+                            if (result.cacheable) put(key, result.streams, providerKey)
+                            result.streams
+                        } finally {
+                            inFlight.remove(key, self) // only our own entry, never a newer leader's
+                        }
                     }
+                    self = Flight(deferred)
+                    self
                 }
-                self = Flight(deferred)
-                self
-            }
-        }!!
-        flight.waiters.incrementAndGet()
-        flight.deferred.start()
+            }!!
+            flight.waiters.incrementAndGet()
+            flight.deferred.start()
 
-        if (!isLeader) requestsSaved.incrementAndGet() else misses.incrementAndGet()
+            if (!isLeader) requestsSaved.incrementAndGet() else misses.incrementAndGet()
 
-        return try {
-            flight.deferred.await()
-        } finally {
-            if (flight.waiters.decrementAndGet() == 0 && flight.deferred.isActive) {
-                flight.deferred.cancel()
-                inFlight.remove(key, flight)
+            try {
+                return flight.deferred.await()
+            } catch (e: CancellationException) {
+                // Our own request was cancelled: nothing to do. Otherwise the shared search was stopped under us - the last other
+                // request left in the instant between finding the search and joining it - and this request, which is still
+                // waiting for an answer, used to end with that cancellation and no list. It searches once more instead.
+                currentCoroutineContext().ensureActive()
+                if (retried || isLeader || e is TimeoutCancellationException) throw e
+                retried = true
+            } finally {
+                if (flight.waiters.decrementAndGet() == 0 && flight.deferred.isActive) {
+                    flight.deferred.cancel()
+                    inFlight.remove(key, flight)
+                }
             }
         }
     }
