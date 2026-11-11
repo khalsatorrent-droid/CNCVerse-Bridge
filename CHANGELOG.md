@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.1
 
 - **Media server: connections no longer wasted after a jump.** An extra connection kept fetching the part the player had left behind (to the end of its 64 MB request, up to sixteen at once) while the new position waited; it now lets go and takes a piece ahead. Bytes written into a part already deleted behind the player are no longer counted as stored (a later jump back there cut the stream). A paused player's open connection is what marks the playing position, not the last short read elsewhere in the file.
 - **Media server: one connection per piece when the buffer was thin.** Connections sitting side by side asked for a long span, used 512 KB of it and dropped the answer - a new connection and handshake for every piece. A connection that cannot go past its piece asks for exactly that piece now, and is reused.
