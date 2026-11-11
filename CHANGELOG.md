@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **App screens.**
+  - **Settings froze when opened.** The Media server card counted the whole cache folder (thousands of files once a few GB are cached) on the thread that draws the screen; "Clear cache" deleted gigabytes on it too. Both run in the background now.
+  - **The closed screen stayed in memory while the server ran (Android).** Two app-wide hooks (save / open a backup file) pointed back into the main screen and were never cleared, so the whole closed interface stayed in memory for as long as the server kept the app alive.
+
 ## 1.8.52
 
 - **Fifth round of fixes.**

@@ -811,7 +811,12 @@ private fun fmtBytes(b: Long): String = when {
 fun MediaServerCard() {
     var p by remember { mutableStateOf(MediaServer.prefs) }
     var tick by remember { mutableStateOf(0) }
-    val stats = remember(tick) { MediaServer.stats() }
+    // Counted in the background: it walks the whole cache folder (thousands of files once a few GB are cached), and doing that
+    // while the screen is being drawn froze Settings every time it was opened.
+    val stats by produceState(com.cncverse.stremiobridge.server.MediaServerStats(0, 0L, 0, 0L), tick) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { MediaServer.stats() }
+    }
+    val cardScope = rememberCoroutineScope()
     var readAhead by remember { mutableStateOf(p.readAheadMb.toString()) }
     var connections by remember { mutableStateOf(p.connections.toString()) }
     var prefetch by remember { mutableStateOf(p.prefetchSegments.toString()) }
@@ -913,7 +918,14 @@ fun MediaServerCard() {
                 message = "Saved - applies to the next stream request"; tick++
             }
             ActionButton("Refresh") { tick++ }
-            ActionButton("Clear cache", danger = true) { message = "Deleted ${MediaServer.clearCache()} cached item(s)"; tick++ }
+            ActionButton("Clear cache", danger = true) {
+                // deleting gigabytes takes a while: not on the thread that draws the screen
+                message = "Clearing..."
+                cardScope.launch {
+                    val n = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { MediaServer.clearCache() }
+                    message = "Deleted $n cached item(s)"; tick++
+                }
+            }
         }
         message?.let { Text(it, color = Green400, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
     }

@@ -117,14 +117,17 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        com.cncverse.stremiobridge.settings.FileTransferHost.saveText = { name, content, done ->
+        val save: (String, String, (String?) -> Unit) -> Unit = { name, content, done ->
             pendingSave = content to done
             createDocLauncher.launch(name)
         }
-        com.cncverse.stremiobridge.settings.FileTransferHost.openText = { done ->
+        val open: ((String?) -> Unit) -> Unit = { done ->
             pendingOpen = done
             openDocLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
         }
+        mySave = save; myOpen = open
+        com.cncverse.stremiobridge.settings.FileTransferHost.saveText = save
+        com.cncverse.stremiobridge.settings.FileTransferHost.openText = open
 
         // Edge-to-edge display for true AMOLED experience
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -254,8 +257,21 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         super.onStop()
     }
 
+    private var mySave: ((String, String, (String?) -> Unit) -> Unit)? = null
+    private var myOpen: (((String?) -> Unit) -> Unit)? = null
+
     override fun onDestroy() {
         super.onDestroy()
+        // These app-wide hooks point back into this screen. The server keeps the app's process alive for days after the screen
+        // is closed, and through them the closed screen (its whole interface) stayed in memory all that time.
+        com.cncverse.stremiobridge.settings.FileTransferHost.let { h ->
+            if (h.saveText === mySave) h.saveText = null
+            if (h.openText === myOpen) h.openText = null
+        }
+        mySave = null; myOpen = null
+        if (com.cncverse.stremiobridge.plugin.PluginUIContext.currentActivity == this) {
+            com.cncverse.stremiobridge.plugin.PluginUIContext.currentActivity = null
+        }
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
