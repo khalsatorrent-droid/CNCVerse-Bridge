@@ -209,7 +209,8 @@ private fun applyMod(m: Mod, v: Any?): Any? = when (m) {
         }
         "join" -> if (v is Collection<*>) v.joinToString(m.args.firstOrNull() ?: ", ") { asText(it) } else v
         "default" -> if (isEmptyValue(v)) (m.args.firstOrNull() ?: "") else v
-        "replace" -> if (v == null) null else asText(v).replace(m.args.getOrNull(0) ?: "", m.args.getOrNull(1) ?: "")
+        // (replacing "" would put the second text between every two characters)
+        "replace" -> if (v == null) null else (m.args.getOrNull(0) ?: "").let { from -> if (from.isEmpty()) asText(v) else asText(v).replace(from, m.args.getOrNull(1) ?: "") }
         "upper" -> v?.let { asText(it).uppercase() }
         "lower" -> v?.let { asText(it).lowercase() }
         "title" -> v?.let { asText(it).split(" ").joinToString(" ") { w -> w.lowercase().replaceFirstChar { c -> c.titlecase() } } }
@@ -639,11 +640,14 @@ object StreamVariables {
         )
     }
 
+    // (built once: it used to be compiled again for every subtitle track of every link of every list)
+    private val PAREN_RX = Regex("""\s*\(.*?\)\s*""")
+
     private fun cleanSubtitles(subs: List<com.cncverse.stremiobridge.model.StremioSubtitle>?): List<String> {
         if (subs.isNullOrEmpty()) return emptyList()
         // Strip parenthetical audio suffixes like " (Original Audio)", " (Tamil Audio)", " (Hindi Audio)"
         val cleaned = subs.mapNotNull { sub ->
-            val lang = sub.lang.replace(Regex("""\s*\(.*?\)\s*"""), "").trim()
+            val lang = sub.lang.replace(PAREN_RX, "").trim()
             lang.takeIf { it.isNotBlank() }
         }.distinct()
 
@@ -1016,7 +1020,7 @@ object StreamFormatter {
     }
 
     private val ANIME_ADDON = Regex("anime|allwish|gogo|wish|kitsu|hianime|zoro|kai|gotaku|animepahe", RegexOption.IGNORE_CASE)
-    private val BRIDGE_AUDIO_TAG = Regex("\\[(?:sub|dub)(?:bbed)?\\]", RegexOption.IGNORE_CASE)
+    private val BRIDGE_AUDIO_TAG = Regex("\\[(?:sub|dub)(?:bed)?\\]", RegexOption.IGNORE_CASE)
 
     /** True when Sub / Dub / Hardsub labels make sense for [stream]: an anime request, an anime-only extension, or a variant the bridge itself tagged. */
     fun showsAudioLabels(stream: StremioStream, ctx: StreamRequestContext): Boolean =

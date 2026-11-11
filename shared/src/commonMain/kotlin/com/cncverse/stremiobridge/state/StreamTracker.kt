@@ -424,6 +424,9 @@ object StreamTracker {
                 tmp.toPath(), f.toPath(),
                 java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
             )
-        }.onFailure { ServerState.warn("Could not save stream_health.json: ${it.message}") }
+        }.onFailure {
+            dirty = true // not written: the next round tries again (it used to be given up until something else changed)
+            ServerState.warn("Could not save stream_health.json: ${it.message}")
+        }
     }
 }

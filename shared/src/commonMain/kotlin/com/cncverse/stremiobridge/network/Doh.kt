@@ -102,7 +102,16 @@ object DohResolver {
     private val logged: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var lastError: String? = null
 
-    fun reset() { cache.clear(); logged.clear() }
+    fun reset() { cache.clear(); logged.clear(); downUntil = 0L }
+
+    /**
+     * The resolver did not answer at all (blocked, offline): it is left alone until this time. Without it every lookup of every
+     * request first waited for two questions to time out (up to 18 seconds) before the normal DNS was asked - with the resolver
+     * down, the whole app crawled.
+     */
+    @Volatile private var downUntil = 0L
+    /** Set by [query]: both questions failed to get any answer from the resolver (not "no such name"). */
+    private val unreachable = ThreadLocal<Boolean>()
 
     /** For the settings card's Test button: asks [s]'s resolver for [host] directly (no cache, no fallback). */
     fun test(s: DohSettings, host: String = "example.com"): String {
@@ -139,15 +148,27 @@ object DohResolver {
         cache[key]?.takeIf { it.until > System.currentTimeMillis() }?.let { return it.addrs }
         val s = DohConfig.settings
         val p = s.provider()
-        if (p != null) {
+        val canFallBack = s.fallbackToSystem || p == null
+        if (p != null && !(canFallBack && System.currentTimeMillis() < downUntil)) {
+            unreachable.set(false)
             val found = runCatching { query(p, host) }.getOrDefault(emptyList())
             if (found.isNotEmpty()) {
                 if (logged.add(key) && logged.size < 2_000) com.cncverse.stremiobridge.state.ServerState.info("DoH (${p.name}) resolved $host -> ${found.first().hostAddress}")
                 return found
             }
-            com.cncverse.stremiobridge.state.ServerState.warn("DoH (${p.name}) gave no answer for $host")
+            if (unreachable.get() == true && canFallBack) {
+                downUntil = System.currentTimeMillis() + 30_000L
+                com.cncverse.stremiobridge.state.ServerState.warn("DoH (${p.name}) cannot be reached - using the normal DNS for the next 30 seconds")
+            } else if (logged.size < 2_000 && logged.add("!$key")) {
+                com.cncverse.stremiobridge.state.ServerState.warn("DoH (${p.name}) gave no answer for $host")
+            }
         }
-        if (s.fallbackToSystem || p == null) return Dns.SYSTEM.lookup(host)
+        if (canFallBack) {
+            val sys = Dns.SYSTEM.lookup(host)
+            // kept for a minute, so the next requests to this host do not ask the resolver again first
+            if (p != null && sys.isNotEmpty()) remember(key, Entry(sys, System.currentTimeMillis() + 60_000L))
+            return sys
+        }
         throw java.net.UnknownHostException("DNS over HTTPS (${p.name}) could not resolve $host")
     }
 
@@ -155,6 +176,7 @@ object DohResolver {
         val key = host.lowercase()
         val out = LinkedHashSet<InetAddress>()
         var ttl = 300L
+        var failures = 0
         for (type in intArrayOf(1, 28)) { // A, AAAA
             val body = DohWire.buildQuery(host, type)
             val req = okhttp3.Request.Builder().url(p.url)
@@ -162,16 +184,24 @@ object DohResolver {
                 .post(body.toRequestBody("application/dns-message".toMediaType())).build()
             runCatching {
                 clientFor(p).newCall(req).execute().use { r ->
-                    if (!r.isSuccessful) { lastError = "HTTP ${r.code}"; return@use }
+                    if (!r.isSuccessful) { lastError = "HTTP ${r.code}"; failures++; return@use }
                     val bytes = r.body?.bytes() ?: return@use
                     val ans = DohWire.parseAnswers(bytes)
                     ans.forEach { out.add(it.first); ttl = minOf(ttl, it.second.coerceAtLeast(30L)) }
                 }
-            }.onFailure { lastError = it.message ?: it.javaClass.simpleName }
+            }.onFailure { lastError = it.message ?: it.javaClass.simpleName; failures++ }
         }
         val list = out.filter { !it.isAnyLocalAddress && !it.isLoopbackAddress }.sortedByDescending { it is java.net.Inet4Address }
-        if (remember && list.isNotEmpty()) cache[key] = Entry(list, System.currentTimeMillis() + minOf(ttl, 900L) * 1000)
+        if (remember && list.isNotEmpty()) remember(key, Entry(list, System.currentTimeMillis() + minOf(ttl, 900L) * 1000))
+        if (failures == 2) unreachable.set(true)
         return list
+    }
+
+    /** One entry per host name ever looked up: the expired ones go once there are many, and past 4000 all of them. */
+    private fun remember(key: String, e: Entry) {
+        if (cache.size > 2_000) { val now = System.currentTimeMillis(); cache.entries.removeIf { it.value.until <= now } }
+        if (cache.size > 4_000) cache.clear()
+        cache[key] = e
     }
 
 }

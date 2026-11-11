@@ -4,6 +4,7 @@ import com.cncverse.stremiobridge.model.SitePlugin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 
 // ─── Repo Models ─────────────────────────────────────────────────────────────
@@ -66,29 +67,29 @@ object RepoState {
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
+    // Every change below is one atomic step (update { }). They used to read the list, change the copy and write it back: two
+    // extensions installed or updated at the same moment ("update all", several repositories refreshing) overwrote each other,
+    // and one of them dropped out of the installed list - which was then saved like that.
     fun setRepos(repos: List<RepoEntry>) { _repos.value = repos }
 
     fun updateRepo(url: String, update: (RepoEntry) -> RepoEntry) {
-        _repos.value = _repos.value.map { if (it.url == url) update(it) else it }
+        _repos.update { list -> list.map { if (it.url == url) update(it) else it } }
     }
 
     fun addRepo(repo: RepoEntry) {
-        if (_repos.value.none { it.url == repo.url }) {
-            _repos.value = _repos.value + repo
-        }
+        _repos.update { list -> if (list.none { it.url == repo.url }) list + repo else list }
     }
 
     fun removeRepo(url: String) {
-        _repos.value = _repos.value.filter { it.url != url }
-        _availablePlugins.value = _availablePlugins.value.filter { it.repoEntry.url != url }
+        _repos.update { list -> list.filter { it.url != url } }
+        _availablePlugins.update { list -> list.filter { it.repoEntry.url != url } }
         // Also remove the installed-plugin records for this repo so the plugin
         // loader won't re-register them on the next forceReloadPlugins() call.
-        _installedPlugins.value = _installedPlugins.value.filter { it.repoUrl != url }
+        _installedPlugins.update { list -> list.filter { it.repoUrl != url } }
     }
 
     fun mergeAvailablePlugins(plugins: List<AvailablePlugin>, repoUrl: String) {
-        val others = _availablePlugins.value.filter { it.repoEntry.url != repoUrl }
-        _availablePlugins.value = others + plugins
+        _availablePlugins.update { list -> list.filter { it.repoEntry.url != repoUrl } + plugins }
     }
 
     fun setAvailablePlugins(plugins: List<AvailablePlugin>) {
@@ -98,18 +99,17 @@ object RepoState {
     fun setInstalledPlugins(plugins: List<InstalledPlugin>) { _installedPlugins.value = plugins }
 
     fun markInstalled(plugin: InstalledPlugin) {
-        val current = _installedPlugins.value.filter { it.internalName != plugin.internalName }
-        _installedPlugins.value = current + plugin
+        _installedPlugins.update { list -> list.filter { it.internalName != plugin.internalName } + plugin }
         setInstallState(plugin.internalName, PluginInstallState.Installed)
     }
 
     fun markUninstalled(internalName: String) {
-        _installedPlugins.value = _installedPlugins.value.filter { it.internalName != internalName }
+        _installedPlugins.update { list -> list.filter { it.internalName != internalName } }
         setInstallState(internalName, PluginInstallState.NotInstalled)
     }
 
     fun setInstallState(internalName: String, state: PluginInstallState) {
-        _pluginInstallStates.value = _pluginInstallStates.value + (internalName to state)
+        _pluginInstallStates.update { it + (internalName to state) }
     }
 
     fun getInstallState(internalName: String): PluginInstallState =

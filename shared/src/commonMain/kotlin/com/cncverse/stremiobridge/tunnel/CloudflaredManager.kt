@@ -18,8 +18,8 @@ import java.io.InputStreamReader
 
 object CloudflaredManager {
 
-    private var tunnelProcess: Process? = null
-    private var tunnelScope: CoroutineScope? = null
+    @Volatile private var tunnelProcess: Process? = null
+    @Volatile private var tunnelScope: CoroutineScope? = null
 
     var deviceIp: String = "127.0.0.1"
 
@@ -266,10 +266,15 @@ object CloudflaredManager {
 
                 for ((idx, mk) in attempts.withIndex()) {
                     val at = mk() ?: continue
+                    // Preparing an attempt can take half a minute (it asks Cloudflare for a tunnel). Stopped in that time - Stremio
+                    // Mode switched off, the server stopped - cloudflared was still started afterwards and nothing ever ended it:
+                    // the bridge stayed reachable from the internet while the app showed the tunnel as off.
+                    if (!isActive) break
                     val pb = ProcessBuilder(at.cmd)
                     pb.redirectErrorStream(true)
                     applyTunnelEnvironment(pb, workDir)
                     val process = pb.start()
+                    if (!isActive || tunnelScope !== scope) { runCatching { process.destroyForcibly() }; break }
                     tunnelProcess = process
                     val registered = java.util.concurrent.atomic.AtomicBoolean(false)
                     val last = idx == attempts.lastIndex
@@ -424,7 +429,7 @@ object CloudflaredManager {
         val req = okhttp3.Request.Builder().url("https://api.trycloudflare.com/tunnel")
             .header("User-Agent", "cloudflared/2024.1.0")
             .post("".toRequestBody("application/json".toMediaType())).build()
-        client.newCall(req).execute().use { r ->
+        try { client.newCall(req).execute().use { r ->
             val body = r.body?.string().orEmpty()
             if (!r.isSuccessful) { ServerState.warn("Quick tunnel request failed: HTTP ${r.code}"); null }
             else {
@@ -438,6 +443,9 @@ object CloudflaredManager {
                     QuickTunnel(id, host, creds.absolutePath)
                 }
             }
+        } } finally {
+            // a client of its own for one request: its threads and connection are given back at once
+            runCatching { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll() }
         }
     } catch (e: Exception) {
         ServerState.warn("Quick tunnel request error: ${e.message}")
