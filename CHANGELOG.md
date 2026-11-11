@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.2
 
 - **Live channels through the media server started slowly and fetched what nobody watched.** When a live playlist was opened, fetching ahead began at its top - the oldest part of the broadcast, up to 30 segments - in front of the segments the player actually asked for, and on a channel with a long rewind window one more old segment was downloaded for every new one. It starts at the live edge now.
 - **Stream lists with many subtitles are built faster:** the subtitle list, the same for every link of a title, was converted again for each link.
