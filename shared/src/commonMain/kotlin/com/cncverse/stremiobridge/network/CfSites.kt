@@ -76,7 +76,8 @@ object CfSites {
     private fun update(host: String, f: (CfSite) -> CfSite) {
         val h = host.lowercase()
         val now = System.currentTimeMillis()
-        map[h] = f(map[h] ?: CfSite(host = h, firstSeen = now))
+        // one step: two requests to the same site noting a challenge at the same moment overwrote each other's change
+        map.compute(h) { _, old -> f(old ?: CfSite(host = h, firstSeen = now)) }
         save()
     }
 

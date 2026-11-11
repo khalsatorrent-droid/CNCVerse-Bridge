@@ -15,13 +15,17 @@ object CfCookieInterceptor : Interceptor {
         var request = chain.request()
         val host = request.url.host
         val saved = runCatching { CfCookieStore.get(host) }.getOrNull()
+        var sent = false
         if (saved != null && request.header("Cookie").isNullOrBlank()) {
             request = request.newBuilder().header("Cookie", saved.cookie).header("User-Agent", saved.userAgent).build()
+            sent = true
         }
         val response = chain.proceed(request)
         val challenged = CfDetect.isChallenge(response)
         if (challenged) runCatching {
-            if (saved != null && CfCookieStore.get(host)?.cookie == saved.cookie) { CfCookieStore.forget(host); CfSites.noteExpired(host) }
+            // Only a clearance that was really sent and refused is dropped. A request that brought cookies of its own never
+            // carried the saved one, yet its challenge used to throw the (still good) clearance away.
+            if (saved != null && sent && CfCookieStore.get(host)?.cookie == saved.cookie) { CfCookieStore.forget(saved.host); CfSites.noteExpired(host) }
             else if (saved == null && CfSites.get(host)?.status != "SOLVED") CfSites.noteChallenge(host)
         }
         return response

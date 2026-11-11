@@ -13,6 +13,7 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.client.plugins.onDownload
 import io.ktor.client.statement.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -157,23 +158,64 @@ object OtaUpdater {
         }
     }
 
-    suspend fun downloadUpdate(assetUrl: String, fileName: String, onProgress: (Float) -> Unit): String? = withContext(Dispatchers.Default) {
+    /** For the update file: the app's own DNS (the plain client failed where the network's DNS is filtered), no limit on the whole download. */
+    private val downloadClient by lazy {
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns).followRedirects(true)
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
+
+    /**
+     * Downloads the update straight into a file. It used to be read into memory whole first (the Android package is 60 MB, the
+     * desktop installers 120 MB): on a phone or TV box with a small memory limit that could end the app in the middle of the
+     * update. Earlier downloads are removed first - each one stayed in the folder for good.
+     */
+    suspend fun downloadUpdate(assetUrl: String, fileName: String, onProgress: (Float) -> Unit): String? = withContext(Dispatchers.IO) {
+        var part: java.io.File? = null
         try {
-            val response = httpClient.get(assetUrl) {
-                onDownload { bytesSentTotal, contentLength ->
-                    if (contentLength != null && contentLength > 0L) {
-                        onProgress(bytesSentTotal.toFloat() / contentLength.toFloat())
-                    }
+            val dir = java.io.File(getOtaDownloadDir())
+            val name = fileName.substringAfterLast('/').substringAfterLast('\\').ifBlank { "update" }
+            val target = java.io.File(dir, name)
+            // only this app's own earlier downloads: on desktop the folder is the system's temporary folder
+            runCatching {
+                dir.listFiles()?.forEach { f ->
+                    val n = f.name.lowercase()
+                    if (f.isFile && n.startsWith("cncverse-bridge") && listOf(".apk", ".msi", ".exe", ".deb", ".dmg", ".part").any { n.endsWith(it) }) f.delete()
                 }
             }
-            if (response.status.value in 200..299) {
-                val bytes = response.readRawBytes()
-                return@withContext saveOtaFile(bytes, fileName)
+            val tmp = java.io.File(dir, "$name.part").also { part = it }
+            val req = okhttp3.Request.Builder().url(assetUrl).header("User-Agent", "CNCVerse-Bridge/${Constants.APP_VERSION}").build()
+            val ok = downloadClient.newCall(req).execute().use { r ->
+                val body = r.body
+                if (!r.isSuccessful || body == null) {
+                    ServerState.warn("Update download failed: HTTP ${r.code}")
+                    return@use false
+                }
+                val total = body.contentLength()
+                var done = 0L
+                tmp.outputStream().use { out ->
+                    body.byteStream().use { ins ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            val n = ins.read(buf)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            done += n
+                            if (total > 0) onProgress(done.toFloat() / total.toFloat())
+                        }
+                    }
+                }
+                // a connection cut short must not be handed to the installer as the update
+                total <= 0 || done == total
             }
-            null
+            if (!ok) { tmp.delete(); return@withContext null }
+            if (!tmp.renameTo(target)) { tmp.copyTo(target, overwrite = true); tmp.delete() }
+            target.absolutePath
         } catch (e: kotlinx.coroutines.CancellationException) {
+            runCatching { part?.delete() }
             throw e
         } catch (e: Exception) {
+            runCatching { part?.delete() }
             ServerState.warn("Update download failed: ${e.message?.take(100)}")
             null
         }

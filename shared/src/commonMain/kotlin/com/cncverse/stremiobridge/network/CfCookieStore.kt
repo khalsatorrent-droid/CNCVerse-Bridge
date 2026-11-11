@@ -54,9 +54,18 @@ object CfCookieStore {
         return c?.takeIf { now - it.savedAt < TTL_MS }
     }
 
+    private val SHARED_SUFFIXES = listOf(
+        "workers.dev", "pages.dev", "r2.dev", "github.io", "blogspot.com", "vercel.app", "netlify.app", "herokuapp.com",
+        "web.app", "firebaseapp.com", "onrender.com", "glitch.me", "repl.co", "fly.dev", "deno.dev", "b-cdn.net", "cloudfront.net",
+    )
+
     /** example.com for a.b.example.com, example.co.uk for a.example.co.uk. */
     fun apexOf(host: String): String {
-        val l = host.lowercase().split('.')
+        val h = host.lowercase()
+        // Addresses anybody can register a name under: two names there are two different sites. Treated as one, the clearance
+        // (and the browser name saved with it) of one site was sent to every other site of that address.
+        if (SHARED_SUFFIXES.any { h.endsWith(".$it") }) return h
+        val l = h.split('.')
         return if (l.size > 2 && l[l.size - 2].length <= 3 && l.last().length == 2) l.takeLast(3).joinToString(".")
         else l.takeLast(2).joinToString(".")
     }

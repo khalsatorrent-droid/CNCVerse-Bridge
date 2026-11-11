@@ -64,7 +64,9 @@ internal object TmdbGateway : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         if (!isTmdb(original.url.host)) return chain.proceed(original)
-        val req = original.newBuilder().url(original.url.newBuilder().host("api.tmdb.org").build()).build()
+        // (An "Accept-Encoding" an extension copied from a browser is not passed on: with it the answer comes back compressed
+        // and is not unpacked here, and the kept copy - handed to every other extension - was then unreadable bytes.)
+        val req = original.newBuilder().url(original.url.newBuilder().host("api.tmdb.org").build()).removeHeader("Accept-Encoding").build()
         if (req.method != "GET") return client.newCall(req).execute().withRequest(original)
 
         val key = buildString {
