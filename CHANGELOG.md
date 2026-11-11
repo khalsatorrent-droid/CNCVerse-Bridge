@@ -1,7 +1,12 @@
 # Changelog
 
-## 1.9.0
+## Unreleased
 
+- **Media server: connections no longer wasted after a jump.** An extra connection kept fetching the part the player had left behind (to the end of its 64 MB request, up to sixteen at once) while the new position waited; it now lets go and takes a piece ahead. Bytes written into a part already deleted behind the player are no longer counted as stored (a later jump back there cut the stream). A paused player's open connection is what marks the playing position, not the last short read elsewhere in the file.
+- **Media server: one connection per piece when the buffer was thin.** Connections sitting side by side asked for a long span, used 512 KB of it and dropped the answer - a new connection and handshake for every piece. A connection that cannot go past its piece asks for exactly that piece now, and is reused.
+- **HLS segments are sent from disk in steps** instead of being read into memory whole for every request; byte-range pieces are capped when the host gives no length.
+- **Relay: a fast HLS host was judged too slow** when its first segment did not finish inside the 2 s measurement; what arrives in that time is measured now.
+- **Website:** hardcoded subtitles stopped being redrawn after the player is closed; opening two titles quickly no longer shows the first one.
 - **Links from extensions were collected in lists that are not safe for several threads.** Extensions hand over their links and subtitles from many threads at once; the bridge put them into ordinary lists and sets. Links could be lost without any message, an extension's whole answer could be thrown away by an error, and a set could be damaged so that a thread kept spinning on it. The collections are thread-safe now and are copied before they are read (an extension that ran out of time may still be adding).
 - **A failed download can no longer replace a working extension.** The answer's status was not checked, and for repositories without a file hash whatever came back was saved as the extension - an error or rate-limit page, or a Wi-Fi login page. An error status is refused now, and anything that is not an extension file (a zip archive) is dropped and the installed one kept.
 - **Website player:** a subtitle made in the page (an uploaded file, or after changing the subtitle delay) left its copy in the browser's memory each time; it is released when the track is removed.
