@@ -54,6 +54,8 @@ actual class PluginLoader(private val context: Context) {
         plugins: List<SitePlugin>,
         cs3Files: Map<String, File>,
     ): List<LoadedPluginInfo> = withContext(Dispatchers.IO) {
+        // the built-in extractors, before any extension adds its own: unloadAll() goes back to exactly this set
+        if (baselineExtractors == null) baselineExtractors = extractorRegistry()?.let { r -> runCatching { ArrayList(r) }.getOrNull() }
         configureAppClientNetwork()
         val pluginContext = awaitForegroundActivity()
         // Load several plugins at once; each one's APIs are told apart by class loader
@@ -90,13 +92,19 @@ actual class PluginLoader(private val context: Context) {
             okClientField.isAccessible = true
             val existingOk = okClientField.get(currentNiceClient) as? okhttp3.OkHttpClient ?: return
 
+            // This runs on every (re)load of the extensions - an install, an update, the watchdog. The three steps below used to
+            // be added again each time, on top of the ones already there: after a few days of automatic updates every request
+            // of every extension went through dozens of copies of them.
+            val have = existingOk.interceptors
             val newOk = existingOk.newBuilder()
                 .dns(com.cncverse.stremiobridge.network.AdaptiveHostDns)
-                .addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
-                // TMDB: api.tmdb.org on its own HTTP/1.1 client, answers shared between extensions for an hour (upstream)
-                .addInterceptor(com.cncverse.stremiobridge.network.TmdbGateway)
-                // Cinemeta, TVmaze, IMDb, Kitsu, ani.zip answers shared between extensions for 30 min (upstream)
-                .addInterceptor(com.cncverse.stremiobridge.network.ResponseCache)
+                .apply {
+                    if (have.none { it === com.cncverse.stremiobridge.network.CfCookieInterceptor }) addInterceptor(com.cncverse.stremiobridge.network.CfCookieInterceptor)
+                    // TMDB: api.tmdb.org on its own HTTP/1.1 client, answers shared between extensions for an hour (upstream)
+                    if (have.none { it === com.cncverse.stremiobridge.network.TmdbGateway }) addInterceptor(com.cncverse.stremiobridge.network.TmdbGateway)
+                    // Cinemeta, TVmaze, IMDb, Kitsu, ani.zip answers shared between extensions for 30 min (upstream)
+                    if (have.none { it === com.cncverse.stremiobridge.network.ResponseCache }) addInterceptor(com.cncverse.stremiobridge.network.ResponseCache)
+                }
                 .fastFallback(true)
                 // HTTP/2 keepalive: a silently dead connection fails its ping and is dropped instead of reused (upstream)
                 .pingInterval(10, java.util.concurrent.TimeUnit.SECONDS)
@@ -370,7 +378,49 @@ actual class PluginLoader(private val context: Context) {
         }.getOrNull()
     }
 
+    /** Built-in extractors, noted before the first extension is loaded. */
+    @Volatile private var baselineExtractors: List<Any>? = null
+
+    /** CloudStream's list of extractors, shared by the whole app. */
+    @Suppress("UNCHECKED_CAST")
+    private fun extractorRegistry(): MutableList<Any>? = runCatching {
+        Class.forName("com.lagradost.cloudstream3.utils.ExtractorApiKt").getMethod("getExtractorApis").invoke(null) as? MutableList<Any>
+    }.getOrNull()
+
+    /**
+     * Takes out of CloudStream's app-wide lists what the extensions put there. Without it every reload (an install, an automatic
+     * update, the watchdog) left the old sources and extractors in those lists next to the new ones: the old extensions' code and
+     * everything they held could never be freed (memory growing with each reload until the app is killed), and each link was
+     * matched against an ever longer list of extractors. (The desktop loader has always done this.)
+     */
+    private fun resetCloudstreamRegistries() {
+        val stale: Set<Any> = synchronized(registeredApis) { java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Any, Boolean>()).also { it.addAll(registeredApis) } }
+        if (stale.isNotEmpty()) {
+            runCatching {
+                val holderClass = Class.forName("com.lagradost.cloudstream3.APIHolder")
+                val holder = holderClass.getDeclaredField("INSTANCE").also { it.isAccessible = true }.get(null)
+                @Suppress("UNCHECKED_CAST")
+                (holder.javaClass.getMethod("getAllProviders").invoke(holder) as? MutableList<Any>)?.removeAll { it in stale }
+                // the second list (name -> source), filled by registerMainAPI
+                runCatching {
+                    val remove = holderClass.getMethod("removePluginMapping", com.lagradost.cloudstream3.MainAPI::class.java)
+                    stale.forEach { api -> if (api is com.lagradost.cloudstream3.MainAPI) runCatching { remove.invoke(holder, api) } }
+                }
+            }.onFailure { ServerState.warn("Could not clear the old sources: ${it.message}") }
+        }
+        runCatching {
+            val baseline = baselineExtractors ?: return@runCatching
+            val registry = extractorRegistry() ?: return@runCatching
+            val keep: MutableSet<Any> = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Any, Boolean>())
+            keep.addAll(baseline)
+            val before = registry.size
+            registry.removeAll { it !in keep }
+            if (before != registry.size) ServerState.info("Extractor list back to the built-in ones: $before -> ${registry.size}")
+        }.onFailure { ServerState.warn("Could not clear the old extractors: ${it.message}") }
+    }
+
     actual fun unloadAll() {
+        runCatching { resetCloudstreamRegistries() }
         StremioServer.loadedApis.clear()
         registeredApis.clear()
         loadedPlugins.clear()
@@ -773,29 +823,7 @@ private fun Any.reflectToStreams(pluginName: String, api: Any? = null): List<Str
         var finalUrl = url
         if (url.contains(".mpd") && !clearkeyHex.isNullOrBlank()) {
             val encodedMpdUrl = java.net.URLEncoder.encode(url, "UTF-8")
-            val hostIp = try {
-                val interfaces = java.net.NetworkInterface.getNetworkInterfaces().asSequence().toList()
-                val preferred = interfaces.filter { iface ->
-                    iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
-                    (iface.name.contains("wlan", ignoreCase = true) ||
-                     iface.name.contains("eth", ignoreCase = true) ||
-                     iface.name.contains("en", ignoreCase = true))
-                }
-                val candidates = if (preferred.isNotEmpty()) preferred else interfaces.filter { iface ->
-                    iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
-                    !iface.name.contains("p2p", ignoreCase = true) &&
-                    !iface.name.contains("dummy", ignoreCase = true) &&
-                    !iface.name.contains("tun", ignoreCase = true) &&
-                    !iface.name.contains("rmnet", ignoreCase = true)
-                }
-                candidates
-                    .flatMap { it.inetAddresses.asSequence() }
-                    .filterIsInstance<java.net.Inet4Address>()
-                    .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
-                    .map { it.hostAddress }
-                    .sorted()
-                    .firstOrNull() ?: "127.0.0.1"
-            } catch (e: Exception) { "127.0.0.1" }
+            val hostIp = lanAddress()
             
             var proxyBase = "http://$hostIp:" + com.cncverse.stremiobridge.state.ServerState.serverPort
             val activeTunnel = com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
@@ -836,6 +864,44 @@ private fun Any.reflectToStreams(pluginName: String, api: Any? = null): List<Str
     }
 }
 
+/**
+ * This device's address on the local network. Kept for a few seconds: it was worked out again - a walk over every network
+ * interface - for each subtitle track and each DASH link of each answer, which for a title with a hundred subtitle tracks took
+ * seconds on a phone.
+ */
+@Volatile private var lanAddressAt = 0L
+@Volatile private var lanAddressValue = "127.0.0.1"
+private fun lanAddress(): String {
+    val now = android.os.SystemClock.elapsedRealtime()
+    if (lanAddressAt != 0L && now - lanAddressAt < 5_000) return lanAddressValue
+    val found = try {
+        val interfaces = java.net.NetworkInterface.getNetworkInterfaces().asSequence().toList()
+        val preferred = interfaces.filter { iface ->
+            iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
+            (iface.name.contains("wlan", ignoreCase = true) ||
+             iface.name.contains("eth", ignoreCase = true) ||
+             iface.name.contains("en", ignoreCase = true))
+        }
+        val candidates = if (preferred.isNotEmpty()) preferred else interfaces.filter { iface ->
+            iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
+            !iface.name.contains("p2p", ignoreCase = true) &&
+            !iface.name.contains("dummy", ignoreCase = true) &&
+            !iface.name.contains("tun", ignoreCase = true) &&
+            !iface.name.contains("rmnet", ignoreCase = true)
+        }
+        candidates
+            .flatMap { it.inetAddresses.asSequence() }
+            .filterIsInstance<java.net.Inet4Address>()
+            .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
+            .mapNotNull { it.hostAddress }
+            .sorted()
+            .firstOrNull() ?: "127.0.0.1"
+    } catch (e: Exception) { "127.0.0.1" }
+    lanAddressValue = found
+    lanAddressAt = now
+    return found
+}
+
 private fun Any.reflectToSubtitle(pluginName: String, api: Any? = null): StremioSubtitle? {
     return try {
         val cls = this.javaClass
@@ -851,29 +917,7 @@ private fun Any.reflectToSubtitle(pluginName: String, api: Any? = null): Stremio
             .recoverCatching { @Suppress("UNCHECKED_CAST") (cls.getField("headers").get(this) as? Map<String, String>) }
             .getOrNull()
             
-        val hostIp = try {
-            val interfaces = java.net.NetworkInterface.getNetworkInterfaces().asSequence().toList()
-            val preferred = interfaces.filter { iface ->
-                iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
-                (iface.name.contains("wlan", ignoreCase = true) ||
-                 iface.name.contains("eth", ignoreCase = true) ||
-                 iface.name.contains("en", ignoreCase = true))
-            }
-            val candidates = if (preferred.isNotEmpty()) preferred else interfaces.filter { iface ->
-                iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
-                !iface.name.contains("p2p", ignoreCase = true) &&
-                !iface.name.contains("dummy", ignoreCase = true) &&
-                !iface.name.contains("tun", ignoreCase = true) &&
-                !iface.name.contains("rmnet", ignoreCase = true)
-            }
-            candidates
-                .flatMap { it.inetAddresses.asSequence() }
-                .filterIsInstance<java.net.Inet4Address>()
-                .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
-                .map { it.hostAddress }
-                .sorted()
-                .firstOrNull() ?: "127.0.0.1"
-        } catch (e: Exception) { "127.0.0.1" }
+        val hostIp = lanAddress()
         
         var proxyBase = "http://$hostIp:" + com.cncverse.stremiobridge.state.ServerState.serverPort
         val activeTunnel = com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
@@ -965,13 +1009,11 @@ private class DirectMainApiWrapper(
                 rawResults = api.search(query)
             } catch (e: NotImplementedError) {
                 try {
-                    val suspendResult = kotlin.coroutines.suspendCoroutine<Any?> { cont ->
-                        try {
-                            val method = api.javaClass.getMethod("search", String::class.java, Int::class.javaPrimitiveType, kotlin.coroutines.Continuation::class.java)
-                            method.invoke(api, query, 1, cont)
-                        } catch (ex: Exception) {
-                            cont.resumeWith(Result.failure(ex))
-                        }
+                    // (the plain suspendCoroutine used before waited for ever when the extension answered at once, without
+                    // pausing - its answer came back as the return value and was dropped)
+                    val method = api.javaClass.getMethod("search", String::class.java, Int::class.javaPrimitiveType, kotlin.coroutines.Continuation::class.java)
+                    val suspendResult = kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn<Any?> { cont ->
+                        method.invoke(api, query, 1, cont)
                     }
                     rawResults = if (suspendResult is List<*>) {
                         suspendResult

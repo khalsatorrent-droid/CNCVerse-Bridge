@@ -32,6 +32,8 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 class MainActivity : com.lagradost.cloudstream3.MainActivity() {
 
+    companion object { @Volatile private var uiGuardInstalled = false }
+
     private var serviceBound = false
     private var bridgeService: StremioForegroundService? = null
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -133,7 +135,9 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // Prevent crashes on the UI thread caused by missing plugin methods
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
+        // (set up once per process: it used to be added again every time the screen was created - each rotation, each
+        // reopening of the app - one inside the other, without end)
+        if (!uiGuardInstalled) { uiGuardInstalled = true; android.os.Handler(android.os.Looper.getMainLooper()).post {
             while (true) {
                 try {
                     android.os.Looper.loop()
@@ -145,7 +149,7 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
                     }
                 }
             }
-        }
+        } }
 
         // Bind to service if already running
         Intent(this, StremioForegroundService::class.java).also { intent ->

@@ -99,6 +99,7 @@ class StremioForegroundService : Service() {
     }
 
     private var liveJob: Job? = null
+    private var startJob: Job? = null
 
     /** Keeps the notification text true: extensions loaded now, and whether the Stremio link is online. */
     private fun startLiveNotification() {
@@ -130,9 +131,12 @@ class StremioForegroundService : Service() {
             return START_STICKY
         }
         startForeground(NOTIF_ID, buildNotification("Starting CNCVerse Bridge…"))
+        // Asked to start again while the first start is still under way (the app swiped away during start-up, a second tap):
+        // a second start used to run next to the first - two loads of the extensions and two servers fighting for the port.
+        if (startJob?.isActive == true) return START_STICKY
         ServerState.updateStatus(ServerStatus.Starting("Initialising…"))
 
-        serviceScope.launch {
+        startJob = serviceScope.launch {
             runCatching { startBridge() }
                 .onFailure { e ->
                     Log.e(TAG, "Bridge failed", e)

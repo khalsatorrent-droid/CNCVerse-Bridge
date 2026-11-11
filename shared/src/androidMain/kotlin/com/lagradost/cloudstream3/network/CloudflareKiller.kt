@@ -24,8 +24,10 @@ class CloudflareKiller : Interceptor {
 
         // A site solved before: send its saved clearance straight away (no challenge, no WebView)
         val saved = com.cncverse.stremiobridge.network.CfCookieStore.get(host)
+        var sent = false
         if (saved != null && request.header("Cookie").isNullOrBlank()) {
             request = request.newBuilder().header("Cookie", saved.cookie).header("User-Agent", saved.userAgent).build()
+            sent = true
         }
         var response = chain.proceed(request)
 
@@ -44,7 +46,9 @@ class CloudflareKiller : Interceptor {
         val challenged = com.cncverse.stremiobridge.network.CfDetect.isChallenge(response)
         if (challenged) {
             // The saved clearance did not work (expired / other UA / other IP): drop it and solve again
-            if (saved != null) { com.cncverse.stremiobridge.network.CfCookieStore.forget(host); sites.noteExpired(host) }
+            // (only when it was really sent: a request with cookies of its own never carried it. And under the name it is saved
+            // by - a clearance kept for the main domain was never removed by the sub-domain's name, and was sent again every time)
+            if (saved != null && sent) { com.cncverse.stremiobridge.network.CfCookieStore.forget(saved.host); sites.noteExpired(host) }
 
             // Step 1: many "challenges" are only a block of requests that do not look like a browser. Same request
             // with the full header set of a Chrome page load (what Raghav's TheMoviesFlix does) often passes at once.

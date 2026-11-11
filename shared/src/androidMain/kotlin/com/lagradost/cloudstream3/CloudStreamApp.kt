@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 class CloudStreamApp {
     companion object {
         @PublishedApi
-        internal var inMemorySettings: MutableMap<String, String>? = null
+        @Volatile internal var inMemorySettings: MutableMap<String, String>? = null
 
         @PublishedApi
         internal fun getSettings(): MutableMap<String, String> {
@@ -64,15 +64,30 @@ class CloudStreamApp {
             return v
         }
 
+        /**
+         * Saves one setting. Only that one entry is written. Before, every save wiped the whole settings store and wrote back
+         * the copy held in memory - which only knows text values read at start-up. Anything an extension had saved through
+         * Android's own preferences (its switches, numbers, a login written with putString) was erased by the next save of any
+         * other setting, and every save rewrote hundreds of entries while requests waited.
+         */
         fun setKey(path: String, value: Any?) {
             synchronized(this) {
                 val settings = getSettings()
-                if (value == null) {
-                    settings.remove(path)
+                val encoded = value?.let { encodeValue(it) }
+                if (encoded == null) {
+                    if (settings.remove(path) == null) return
                 } else {
-                    settings[path] = encodeValue(value)
+                    if (settings.put(path, encoded) == encoded) return
                 }
-                saveExtensionSettings(HashMap(settings))
+                runCatching {
+                    val editor = AndroidContextHolder.appContext
+                        .getSharedPreferences("cnc_ext_settings", Context.MODE_PRIVATE).edit()
+                    if (encoded == null) editor.remove(path) else editor.putString(path, encoded)
+                    editor.apply()
+                }.onFailure {
+                    // no app context yet (very early start): the old full write, which reports its own errors
+                    runCatching { saveExtensionSettings(HashMap(settings)) }
+                }
             }
         }
 
