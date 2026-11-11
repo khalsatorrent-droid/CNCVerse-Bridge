@@ -2368,8 +2368,26 @@ object StremioServer {
         return try { withTimeoutOrNull(ms) { d.await() } } finally { if (!d.isCompleted) d.cancel() }
     }
 
+    /**
+     * Recent TMDB answers. One search asks the same things several times over - "which TMDB id is this IMDb id" alone is asked
+     * by the running-time, episode-count, alternative-titles, IMDb-id and local-title lookups, each with its own request.
+     */
+    private val tmdbAnswers = object : LinkedHashMap<String, Pair<Long, JsonObject>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, JsonObject>>?) = size > 200
+    }
+    private const val TMDB_ANSWER_TTL_MS = 6 * 3_600_000L
+
     private suspend fun fetchTmdbJson(endpointPathAndQuery: String): JsonObject? {
         val cleanPath = endpointPathAndQuery.trimStart('/')
+        synchronized(tmdbAnswers) { tmdbAnswers[cleanPath] }
+            ?.takeIf { System.currentTimeMillis() - it.first < TMDB_ANSWER_TTL_MS }?.let { return it.second }
+        return fetchTmdbJsonNow(cleanPath)?.also { j ->
+            // (a season's full episode list is big and asked once: not kept)
+            if (!cleanPath.contains("/season/")) synchronized(tmdbAnswers) { tmdbAnswers[cleanPath] = System.currentTimeMillis() to j }
+        }
+    }
+
+    private suspend fun fetchTmdbJsonNow(cleanPath: String): JsonObject? {
         val delimiter = if (cleanPath.contains("?")) "&" else "?"
         val answers = kotlinx.coroutines.channels.Channel<JsonObject?>(TMDB_HOSTS.size)
         // "First answer wins" only works when the loser is not waited for. The two requests used to be children of this call:
@@ -4026,8 +4044,11 @@ object StremioServer {
     ): GenericMatch? {
         val cacheKey = api.internalName
         val parsed = ExternalIds.parse(id)
-        val season = if (type == "series") parsed?.season else null
-        val episode = if (type == "series") parsed?.episode else null
+        // "anime" is asked for by season and episode like "series": left out, an anime request with a TMDB / IMDb id that no
+        // anime database knew was matched like a movie, and the links of the series page (its first episode) came back
+        val episodic = type == "series" || type == "anime"
+        val season = if (episodic) parsed?.season else null
+        val episode = if (episodic) parsed?.episode else null
         val isEpisode = season != null && episode != null
         val wantImdb = parsed?.takeIf { it.scheme == "imdb" }?.key
         val wantTmdb = parsed?.takeIf { it.scheme == "tmdb" }?.key
@@ -4312,7 +4333,7 @@ object StremioServer {
             return linksFor(api, m.match.name, m.dataUrl, m.episodeLabel, title, year)
         }
 
-        val requestedSeason = if (type == "series" && id.contains(":")) ExternalIds.parse(id)?.season else null
+        val requestedSeason = if ((type == "series" || type == "anime") && id.contains(":")) ExternalIds.parse(id)?.season else null
 
         // tt / tmdb / tvdb ids carry the real season; kitsu / MAL / AniList ids name one season entry already
         val parsedId = ExternalIds.parse(id)
@@ -4462,6 +4483,13 @@ object StremioServer {
             // TMDB numbering was translated to the AniList entry: its own episode number, or the running number on a site that merges seasons
             val epNo = target?.let { if (mergedList) it.absolute else it.local } ?: parsed?.episode
             val epList = mediaInfo.episodes
+            // A page without any episode list (the show's film, an OVA, a broken page) is one video: it can stand for episode 1,
+            // never for a later one - it used to be handed out for whichever episode was asked for.
+            if (epList.isNullOrEmpty() && epNo != null && epNo > 1) {
+                ServerState.debug("[STREAM_EMPTY] [${api.name}] '${bestMatch.name}' has no episode list - not episode $epNo")
+                StreamTracker.record(api.pluginInternalName, api.internalName, api.name, 0, "Entry without episodes (asked for episode $epNo)", noMatch = true)
+                return emptyList()
+            }
             if (!epList.isNullOrEmpty()) {
                 // A later-season entry (kitsu "Season 2") numbers its own episodes from 1; a franchise page lists seasons
                 val wantSeason = if (target != null) (if (mergedList) 1 else target.index + 1)
@@ -4513,7 +4541,7 @@ object StremioServer {
                 matchedEpisode = episodeLabel(ep)
                 ServerState.debug("[${api.name}] Anime episode $epNo -> '${ep.name}'")
             }
-        } else if (type == "series" && id.contains(":")) {
+        } else if ((type == "series" || type == "anime") && id.contains(":")) {
             val parsed  = ExternalIds.parse(id)
             val season  = parsed?.season
             val episode = parsed?.episode
