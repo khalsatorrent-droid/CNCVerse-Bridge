@@ -466,12 +466,31 @@ object Relay {
         val left = maxOf(500L, DECIDE_MS - (System.currentTimeMillis() - t0))
         val client = MediaServer.clientFor(id, src).newBuilder().callTimeout(left, TimeUnit.MILLISECONDS).build()
         val s0 = System.currentTimeMillis()
-        val bytes = runCatching { client.newCall(MediaServer.requestFor(src, segUrl, range)).execute().use { r -> if (r.isSuccessful) r.body?.bytes()?.size ?: 0 else -1 } }.getOrDefault(0)
+        // Read as a stream and counted as it arrives. It used to be read whole or not at all: a segment that did not finish inside
+        // the 2 s (a 4K segment is 10 MB and more) counted as "no data in time", so a perfectly fast host was judged too slow
+        // and the link handed to the media server.
+        var got = 0L
+        var full = -1L
+        var refused = false
+        runCatching {
+            client.newCall(MediaServer.requestFor(src, segUrl, range)).execute().use { r ->
+                if (!r.isSuccessful) { refused = true; return@use }
+                val body = r.body ?: return@use
+                full = body.contentLength()
+                val ins = body.byteStream()
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) { if (full < 0) full = got; break }
+                    got += n
+                }
+            }
+        }
         val took = maxOf(50L, System.currentTimeMillis() - s0)
-        if (bytes < 0) return relayNow(id, url, "HLS, the first segment was refused")
-        val speed = if (bytes > 0) bytes * 8_000.0 / took else 0.0
+        if (refused) return relayNow(id, url, "HLS, the first segment was refused")
+        val speed = if (got > 0) got * 8_000.0 / took else 0.0
         if (speed > 0) noteSpeed(host, speed)
-        val bitrate = bw ?: if (bytes > 0) bytes * 8.0 / dur else null
+        val bitrate = bw ?: if (full > 0 && dur > 0) full * 8.0 / dur else null
         return decide(id, url, "HLS", speed, bitrate, System.currentTimeMillis() - t0, "first segment")
     }
 

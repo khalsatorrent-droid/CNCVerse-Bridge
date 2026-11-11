@@ -1237,7 +1237,16 @@ object MediaServer {
             // count as a refusal here, and 64 MB per request is already 32x fewer requests than one per piece. The connection may
             // extend its claim several times inside this span; when the span is used up the caller asks for the next one.
             val hardEnd = if (e.closedTotal > 0) minOf(e.total, e.closedTotal) else e.total
-            val reqEnd = minOf(hardEnd, pos + REQUEST_SPAN)
+            // ...unless the piece after this one is already taken (another connection is on it, or it is on disk): then this
+            // connection can never go past its own piece, and the request asks for exactly that piece. It used to ask for the long
+            // span anyway and drop the answer after one piece - a dropped answer cannot be reused, so every piece cost a new
+            // connection to the host (a new handshake each 512 KB) exactly when the buffer was thin and many connections sat side by side.
+            val nextFree = e.have.contiguousEnd(s1) == s1 && synchronized(e.claims) {
+                val c = e.claims.floorEntry(s1)
+                val mainAt = if (e.worker != null) e.writePos else -1L
+                !(c != null && c.value > s1) && !(mainAt >= 0 && s1 >= mainAt && s1 < mainAt + NEAR_SEG)
+            }
+            val reqEnd = if (nextFree) minOf(hardEnd, pos + REQUEST_SPAN) else minOf(hardEnd, maxOf(s1, pos + 1))
             val range = "bytes=$pos-${reqEnd - 1}"
             client.newCall(requestFor(e.src, e.url, range)).execute().use { r ->
                 noteTtfb(e.url, System.currentTimeMillis() - t0)
@@ -1270,6 +1279,11 @@ object MediaServer {
                     e.have.add(off, off + n)
                     e.dlBytes.addAndGet(n.toLong())
                     off += n
+                    // The part this connection is writing was deleted behind the player meanwhile (a jump ahead). Its open file is
+                    // gone from the folder, so these bytes are on no disk: they must not count as stored (a later jump back here
+                    // found "data" it could not read, and the stream was cut), and the connection is of no use here any more.
+                    val fl = e.floor
+                    if (off <= fl || off - n < fl) { synchronized(e.store) { e.have.remove(0, minOf(off, e.floor)) }; wr.close(); if (off <= fl) break }
                     // Still inside its 512 KB piece after 4 s: this connection is standing between the player and its next bytes.
                     // The piece is released (its bytes are already on disk, so nothing is lost) and the region ahead is left to
                     // the other connections. The connection itself stays open and takes the next free piece - a socket that is
@@ -1304,7 +1318,11 @@ object MediaServer {
     private fun extendClaim(e: FileEntry, from: Long, end: Long): Long? = synchronized(e.claims) {
         if (e.total <= end) return null
         val ahead = aheadFor(e)
-        val to = if (ahead > 0) minOf(e.total, playPos(e) + ahead) else e.total
+        val pp = playPos(e)
+        // The piece lies behind the player (it jumped ahead): this connection must not go on fetching what was left behind - it
+        // used to carry on to the end of its 64 MB request, sixteen of them at once, while the new position waited for data.
+        if (end < maxOf(pp, e.floor)) return null
+        val to = if (ahead > 0) minOf(e.total, pp + ahead) else e.total
         if (to <= end) return null
         // the next bytes are already taken (another connection, the main download, or they are on disk)
         val covering = e.claims.floorEntry(end)
@@ -1336,8 +1354,15 @@ object MediaServer {
     private fun playPos(e: FileEntry): Long {
         val now = System.currentTimeMillis()
         var low = Long.MAX_VALUE
-        for (r in e.readers.values) if (now - r[1] < 60_000L && r[0] < low) low = r[0]
-        return if (low == Long.MAX_VALUE) e.lastRead else low
+        var open = Long.MAX_VALUE
+        for (r in e.readers.values) {
+            if (r[0] < open) open = r[0]
+            if (now - r[1] < 60_000L && r[0] < low) low = r[0]
+        }
+        // None read lately but a connection is still open: a paused player (or one whose own buffer is full). Its position is
+        // the playing one - "the last position anyone read" could be a short read elsewhere in the file (its end, for the index),
+        // and then the part buffered around the real position was deleted and the download went to the wrong place.
+        return if (low != Long.MAX_VALUE) low else if (open != Long.MAX_VALUE) open else e.lastRead
     }
 
     /** Deletes the 2 MB pieces that lie more than KEEP_BEHIND behind the playing position (only for sources that can seek). */
@@ -2054,9 +2079,15 @@ object MediaServer {
             call.response.header("Content-Range", cr)
             return call.respondBytes(piece, pct, HttpStatusCode.PartialContent)
         }
-        val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+        // Only the first bytes are looked at to tell a playlist from a segment. The whole segment used to be read into memory for
+        // that - and again for every request of it (tens of MB for a 4K segment, several at a time) - before being sent.
+        val size = file.length()
+        val isPlaylist = size in 8..2_000_000 && withContext(Dispatchers.IO) {
+            runCatching { file.inputStream().use { ins -> val h = ByteArray(7); ins.read(h) == 7 && String(h) == "#EXTM3U" } }.getOrDefault(false)
+        }
         // Some hosts hand out playlists under names without ".m3u8": recognise them by content and rewrite them too
-        if (bytes.size in 8..2_000_000 && bytes[0] == '#'.code.toByte() && String(bytes, 0, 7) == "#EXTM3U") {
+        if (isPlaylist) {
+            val bytes = withContext(Dispatchers.IO) { file.readBytes() }
             val key = "$id|$url"
             // a playlist must not stay on disk as if it were a segment: a live one would never move on, a signed one never renew
             runCatching { file.delete() }
@@ -2070,12 +2101,23 @@ object MediaServer {
             ?: guessSegmentType(url)
         val ct = runCatching { ContentType.parse(mime) }.getOrDefault(ContentType.Application.OctetStream)
         call.response.header(HttpHeaders.AcceptRanges, "bytes")
-        val range = parseRange(call.request.header("Range"), bytes.size.toLong())
-        if (range != null) {
-            call.response.header("Content-Range", "bytes ${range.first}-${range.second}/${bytes.size}")
-            call.respondBytes(bytes.copyOfRange(range.first.toInt(), range.second.toInt() + 1), ct, HttpStatusCode.PartialContent)
-        } else {
-            call.respondBytes(bytes, ct)
+        val range = parseRange(call.request.header("Range"), size)
+        val start = range?.first ?: 0L
+        val len = if (range != null) range.second - range.first + 1 else size
+        if (range != null) call.response.header("Content-Range", "bytes ${range.first}-${range.second}/$size")
+        // sent from the file in steps, never held in memory whole
+        call.respondBytesWriter(ct, if (range != null) HttpStatusCode.PartialContent else HttpStatusCode.OK, len) {
+            RandomAccessFile(file, "r").use { raf ->
+                raf.seek(start)
+                val buf = ByteArray(256 * 1024)
+                var left = len
+                while (left > 0) {
+                    val n = raf.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                    if (n < 0) break
+                    writeFully(buf, 0, n)
+                    left -= n
+                }
+            }
         }
     }
 
