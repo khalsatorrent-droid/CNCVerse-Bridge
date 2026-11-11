@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.51
 
 - **Fourth round of fixes.**
   - **A folder and a file per link, written while the list was answered.** Every link of every list got its own folder in the media cache (500 links = 500 folders and file writes before the player had its answer), and the cache-size check then walked all of them about once a second during playback. Now it is one small file per link in one folder, written in the background; folders are only made for links that are played, and the size check reuses its answer for 4 seconds.
