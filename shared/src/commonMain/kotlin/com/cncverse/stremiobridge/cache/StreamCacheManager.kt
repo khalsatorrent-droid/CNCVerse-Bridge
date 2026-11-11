@@ -423,6 +423,30 @@ object StreamCacheManager {
         loadConfig()
         loadDiskCache()
 
+        startJobs()
+
+        // Restarts and deploys used to empty the cache: save it on the way down
+        if (!shutdownHookInstalled) {
+            shutdownHookInstalled = true
+            Runtime.getRuntime().addShutdownHook(Thread {
+                runCatching { if (config.diskPersistenceEnabled) saveToDiskNow() }
+            })
+        }
+
+        ServerState.info("StreamCacheManager initialized: ${memoryCache.size} active entries in RAM.")
+    }
+
+    /**
+     * The server was stopped and started again (the Stop / Start button, or the watchdog bringing a stuck server back): stopping
+     * ends the two background jobs, and nothing started them again - init only runs once per app start. From then on expired
+     * results were never removed and nothing was saved to disk until the app itself was restarted.
+     */
+    fun ensureRunning() {
+        if (dataFile == null) return
+        if (cleanupJob?.isActive != true || persistenceJob?.isActive != true) startJobs()
+    }
+
+    private fun startJobs() {
         // Background periodic purge and flush jobs
         cleanupJob?.cancel()
         cleanupJob = maintenanceScope.launch {
@@ -443,16 +467,6 @@ object StreamCacheManager {
                 }
             }
         }
-
-        // Restarts and deploys used to empty the cache: save it on the way down
-        if (!shutdownHookInstalled) {
-            shutdownHookInstalled = true
-            Runtime.getRuntime().addShutdownHook(Thread {
-                runCatching { if (config.diskPersistenceEnabled) saveToDiskNow() }
-            })
-        }
-
-        ServerState.info("StreamCacheManager initialized: ${memoryCache.size} active entries in RAM.")
     }
 
     private fun loadConfig() {

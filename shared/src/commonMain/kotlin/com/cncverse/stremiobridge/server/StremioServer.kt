@@ -469,6 +469,8 @@ object StremioServer {
         if (engine != null) return activePort
         if (cacheDir != null) {
             loadConfig(cacheDir)
+            // loadConfig does nothing the second time: what stop() ended has to be started again here
+            com.cncverse.stremiobridge.cache.StreamCacheManager.ensureRunning()
         } else {
             val defaultCache = System.getProperty("user.home") + "/.cncverse_bridge"
             com.cncverse.stremiobridge.cache.StreamCacheManager.init(defaultCache)
@@ -503,11 +505,23 @@ object StremioServer {
     fun restartEngine() {
         runCatching { engine?.stop(0, 500) }
         engine = null
-        engine = embeddedServer(CIO, port = activePort, host = "0.0.0.0") {
-            setupPlugins()
-            setupRoutes()
-        }.start(wait = false)
-        ServerState.info("Web server started again on port $activePort")
+        // the port is not always free the instant the old server has stopped: a few tries instead of giving up at the first
+        var last: Throwable? = null
+        for (attempt in 1..5) {
+            try {
+                engine = embeddedServer(CIO, port = activePort, host = "0.0.0.0") {
+                    setupPlugins()
+                    setupRoutes()
+                }.start(wait = false)
+                ServerState.info("Web server started again on port $activePort")
+                return
+            } catch (t: Throwable) {
+                last = t
+                engine = null
+                Thread.sleep(400L * attempt)
+            }
+        }
+        throw last ?: IllegalStateException("could not start the web server")
     }
 
     fun stop() {
@@ -955,7 +969,8 @@ object StremioServer {
     private const val ENCODE_CACHE_MIN_ITEMS = 200
     private const val ENCODE_CACHE_MAX = 64
     /** Encoded catalogs can be ~15 MB each (big playlists): cap the total, not just the count. */
-    private const val ENCODE_CACHE_MAX_BYTES = 300L * 1024 * 1024
+    // (a fixed 300 MB was more than a phone's whole app memory: an eighth of what the app may use, 300 MB at most)
+    private val ENCODE_CACHE_MAX_BYTES = (Runtime.getRuntime().maxMemory() / 8).coerceIn(16L * 1024 * 1024, 300L * 1024 * 1024)
 
     private suspend fun ApplicationCall.respondCatalogJson(metas: List<StremioMeta>, cacheable: Boolean) {
         if (!cacheable || metas.size < ENCODE_CACHE_MIN_ITEMS) {
@@ -1300,7 +1315,7 @@ object StremioServer {
                     // "Support the project" entry on top, only above real results (can be hidden in the app)
                     val withSupport = if (p.showSupport && list.isNotEmpty()) listOf(SUPPORT_STREAM) + list else list
                     // "Refresh results" button first (it is not a video: it opens a page in the browser)
-                    if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size)) + withSupport else withSupport
+                    if (p.showRefresh) listOf(refreshStream(type, id, streams.size, list.size, base)) + withSupport else withSupport
                 }
                 .map { s -> s.subtitles?.let { subs -> s.copy(subtitles = SubtitleTools.process(subs, p, base, isAnime(type, id))) } ?: s }
 
@@ -1456,6 +1471,8 @@ object StremioServer {
         if (start) {
             searchStatus.remove(key); searchPartial.remove(key)
             streamRequestStart[key] = System.currentTimeMillis()
+            // a finished search keeps its whole list (hundreds of links): only the newest few stay, not fifty of them
+            if (webSearches.size > 6) webSearches.entries.removeIf { it.value.isCompleted }
             if (webSearches.size > 50) webSearches.clear()
             webSearches[key] = streamSearchScope.async(pluginDispatcher) { buildStreams(type, id) }
         }
@@ -1678,7 +1695,7 @@ object StremioServer {
 
     private val lastRefresh = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    private fun refreshStream(type: String, id: String, found: Int, shown: Int): StremioStream {
+    private fun refreshStream(type: String, id: String, found: Int, shown: Int, base: String = mediaBase()): StremioStream {
         val st = searchStatus["$type:$id"]
         val perSource = st?.counts?.entries?.filter { it.value > 0 }?.sortedByDescending { it.value }
         val total = maxOf(found, st?.counts?.values?.sum() ?: 0)
@@ -1697,7 +1714,7 @@ object StremioServer {
         return StremioStream(
             name = head,
             title = "$state$sources\n⚡ Click here to clear the saved results of this title and search again (not a video)",
-            url = mediaBase() + "/refresh/" + java.net.URLEncoder.encode(type, "UTF-8") + "/" + java.net.URLEncoder.encode(id, "UTF-8"),
+            url = base.trimEnd('/') + "/refresh/" + java.net.URLEncoder.encode(type, "UTF-8") + "/" + java.net.URLEncoder.encode(id, "UTF-8"),
         )
     }
 
@@ -1712,8 +1729,16 @@ object StremioServer {
         if (lastRefresh.size > 200) lastRefresh.clear()
         lastRefresh[key] = nowMs
         val cache = com.cncverse.stremiobridge.cache.StreamCacheManager
-        val removed = cache.invalidatePrefix("stream:generic:$type:$id:") +
+        // The saved lists are stored under "stream:generic:k2:…" (the "k2" was added later) and each extension's own answer under
+        // "stream:provider:<extension>:…". This removed "stream:generic:<type>:…" - a name nothing is stored under - so the
+        // refresh removed nothing and the "new" search was answered from the same saved results.
+        val removed = cache.invalidatePrefix("stream:generic:k2:$type:$id:") +
+            cache.invalidatePrefix("stream:generic:$type:$id:") +
+            loadedApis.sumOf { api -> cache.invalidatePrefix("stream:provider:${api.internalName}:$type:$id") } +
             (StremioIds.decode(id)?.let { (pluginKey, dataUrl) -> cache.invalidatePrefix("stream:direct:$pluginKey:$dataUrl") } ?: 0)
+        // ...and the bigger list kept from an earlier search would be put straight back
+        lastGood.remove("k2:$type:$id")
+        searchStatus.remove(key); searchPartial.remove(key); webSearches.remove(key)
         SearchLoadCache.clear()
         ServerState.info("[Request] refresh $type/$id: $removed saved list(s) removed, searching again")
         streamSearchScope.launch(pluginDispatcher) { runCatching { buildStreams(type, id) } }
@@ -2037,6 +2062,13 @@ object StremioServer {
             providerCatalogCache.putAll(newProviderCatalogs)
             providerCatalogCache.keys.retainAll(apis.map { it.internalName }.toSet())
             homePageCatalogCache.putAll(newHomePageCache)
+            // pages of catalogs that no longer exist (an extension that was removed or renamed) used to stay for good -
+            // a TV playlist's page is thousands of channels
+            runCatching {
+                val liveIds = providerCatalogCache.values.flatten().map { it.id }.toSet()
+                homePageCatalogCache.keys.removeIf { k -> k.split(':').getOrNull(1)?.let { it !in liveIds } ?: false }
+                homePageCachedAt.keys.retainAll(homePageCatalogCache.keys)
+            }
 
             ServerState.info("✅ Fresh home page & manifest refresh complete (${newProviderCatalogs.size} providers, ${newHomePageCache.size} home pages)")
         }
@@ -2327,36 +2359,48 @@ object StremioServer {
         "http://127.0.0.1:${ServerState.serverPort}", "http://localhost:${ServerState.serverPort}",
     ).map { it.trimEnd('/') }.filter { it.isNotEmpty() }.distinct()
 
+    /** The two TMDB requests run here, not as children of the asking request (see [fetchTmdbJson]). */
+    private val tmdbScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** [block] (blocking network code) on [tmdbScope], waited for at most [ms]; null when it failed or took longer. */
+    private suspend fun <T> detachedWithin(ms: Long, block: () -> T): T? {
+        val d = tmdbScope.async { runCatching(block).getOrNull() }
+        return try { withTimeoutOrNull(ms) { d.await() } } finally { if (!d.isCompleted) d.cancel() }
+    }
+
     private suspend fun fetchTmdbJson(endpointPathAndQuery: String): JsonObject? {
         val cleanPath = endpointPathAndQuery.trimStart('/')
         val delimiter = if (cleanPath.contains("?")) "&" else "?"
         val answers = kotlinx.coroutines.channels.Channel<JsonObject?>(TMDB_HOSTS.size)
-        return coroutineScope {
-            val tries = TMDB_HOSTS.map { host ->
-                launch {
-                    val url = "$host/$cleanPath${delimiter}api_key=$TMDB_API_KEY"
-                    ServerState.debug("Fetching TMDB: $url")
-                    val json = try {
-                        serverJson.parseToJsonElement(withContext(Dispatchers.IO) { com.cncverse.stremiobridge.network.DohHttp.text(url) }).jsonObject
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        ServerState.debug("TMDB error on $host: ${e.message?.take(80)}")
-                        null
-                    }
-                    answers.send(json)
+        // "First answer wins" only works when the loser is not waited for. The two requests used to be children of this call:
+        // a network read cannot be interrupted, and a call does not return before its children have ended - so every lookup
+        // took as long as the SLOWER host (the one whose connections hang or get reset), and the 8 s limit could not cut it
+        // short either. Each title needs several of these lookups before its search even starts.
+        val tries = TMDB_HOSTS.map { host ->
+            tmdbScope.launch {
+                val url = "$host/$cleanPath${delimiter}api_key=$TMDB_API_KEY"
+                ServerState.debug("Fetching TMDB: $url")
+                val json = try {
+                    serverJson.parseToJsonElement(com.cncverse.stremiobridge.network.DohHttp.text(url)).jsonObject
+                } catch (e: Throwable) {
+                    ServerState.debug("TMDB error on $host: ${e.message?.take(80)}")
+                    null
                 }
+                answers.trySend(json)
             }
-            // First successful answer wins; a failed host just leaves it to the other one
-            val result = withTimeoutOrNull(TMDB_TIMEOUT_MS) {
+        }
+        // First successful answer wins; a failed host just leaves it to the other one
+        val result = try {
+            withTimeoutOrNull(TMDB_TIMEOUT_MS) {
                 var found: JsonObject? = null
                 repeat(TMDB_HOSTS.size) { if (found == null) found = answers.receive() }
                 found
             }
+        } finally {
             tries.forEach { it.cancel() }
-            if (result == null) ServerState.warn("TMDB lookup failed on all hosts: $cleanPath")
-            result
         }
+        if (result == null) ServerState.warn("TMDB lookup failed on all hosts: $cleanPath")
+        return result
     }
 
     /** "scheme:key:season:episode" -> running time in seconds (0 = not known). */
@@ -2705,16 +2749,18 @@ object StremioServer {
         genericMediaCache[cacheKey]?.let { return it }
 
         val isImdbId = tmdbId.startsWith("tt")
-        val mediaType = if (type == "series") "tv" else "movie"
+        // "anime" is a series too (a tmdb: id asked for as anime was looked up as a movie)
+        val isSeries = type == "series" || type == "anime"
+        val mediaType = if (isSeries) "tv" else "movie"
 
         // 1. If it's an IMDb ID, try Cinemeta first (extremely fast & resilient)
         if (isImdbId) {
             try {
-                val cinemetaType = if (type == "series") "series" else "movie"
+                val cinemetaType = if (isSeries) "series" else "movie"
                 val cinemetaUrl = "https://v3-cinemeta.strem.io/meta/$cinemetaType/$tmdbId.json"
-                val responseText = withTimeoutOrNull(8_000) {
-                    withContext(Dispatchers.IO) { com.cncverse.stremiobridge.network.DohHttp.text(cinemetaUrl) }
-                }
+                // detached: a network read cannot be interrupted, so the 8 s limit did nothing while it was this call's own child
+                // (a Cinemeta that hung held the title lookup for up to a minute)
+                val responseText = detachedWithin(8_000) { com.cncverse.stremiobridge.network.DohHttp.text(cinemetaUrl) }
                 if (responseText != null) {
                     val json = serverJson.parseToJsonElement(responseText).jsonObject
                     val meta = json["meta"]?.jsonObject
@@ -2940,6 +2986,9 @@ object StremioServer {
                             } else if (fresh.isNotEmpty()) {
                                 homePageCatalogCache[cacheKey] = fresh
                                 homePageCachedAt[cacheKey] = System.currentTimeMillis()
+                            } else {
+                                // nothing came back (the site is down): the next try is in 2 minutes, not at every single opening
+                                homePageCachedAt[cacheKey] = System.currentTimeMillis() - ttl + CATALOG_REFRESH_RETRY_MS
                             }
                         } finally {
                             homePageRefreshing.remove(refreshKey)
