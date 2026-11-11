@@ -1743,7 +1743,8 @@ object MediaServer {
                         throw IOException(if (r.code == 200) "range ignored" else "HTTP ${r.code}")
                     }
                     if ((r.body?.contentLength() ?: -1L) > MAX_RANGE_BYTES) { fatal = true; throw IOException("range too big") }
-                    val bytes = r.body?.bytes() ?: ByteArray(0)
+                    // (capped also when the host does not say how long the answer is)
+                    val bytes = r.body?.let { b -> runCatching { readCapped(b, MAX_RANGE_BYTES) }.getOrElse { fatal = true; throw it } } ?: ByteArray(0)
                     r.header("Content-Range")?.let { cr -> runCatching { crFile.writeText(cr) } }
                     return bytes to r.header("Content-Type")?.substringBefore(';')?.trim()
                 }
