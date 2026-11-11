@@ -20,19 +20,44 @@ object PluginInstaller {
         File(cacheDir, "installed_plugins.json")
 
     /** Load persisted installed plugin list from disk. */
-    fun loadInstalledPlugins(cacheDir: String): List<InstalledPlugin> {
+    fun loadInstalledPlugins(cacheDir: String): List<InstalledPlugin> = readInstalled(cacheDir) ?: emptyList()
+
+    private fun backupFile(cacheDir: String) = File(cacheDir, "installed_plugins.bak")
+
+    /**
+     * The installed list, or null when the file is there but cannot be read (cut off by a crash, damaged storage). An unreadable
+     * list used to count as "nothing is installed" - and the start-up cleanup then deleted every extension file as a file "no
+     * installed extension uses". The copy kept from the last good save is tried before giving up.
+     */
+    private fun readInstalled(cacheDir: String): List<InstalledPlugin>? {
         val f = installedFile(cacheDir)
-        if (!f.exists()) return emptyList()
+        if (!f.exists()) return if (backupFile(cacheDir).exists()) readBackup(cacheDir) else emptyList()
         return try {
             installedJson.decodeFromString<List<InstalledPlugin>>(f.readText())
         } catch (e: Exception) {
-            emptyList()
+            ServerState.warn("installed_plugins.json could not be read (${e.message?.take(60)}) - trying the copy of the last good save")
+            readBackup(cacheDir)
+        }
+    }
+
+    private fun readBackup(cacheDir: String): List<InstalledPlugin>? = runCatching {
+        installedJson.decodeFromString<List<InstalledPlugin>>(backupFile(cacheDir).readText())
+    }.getOrNull()
+
+    /** The list on disk as it is now becomes the backup - only when it reads fine and holds something. */
+    private fun keepBackup(cacheDir: String) {
+        runCatching {
+            val f = installedFile(cacheDir)
+            if (!f.exists() || f.length() < 3) return
+            val text = f.readText()
+            if (installedJson.decodeFromString<List<InstalledPlugin>>(text).isNotEmpty()) backupFile(cacheDir).writeTextAtomic(text)
         }
     }
 
     /** Persist the current installed plugin list to disk. */
     private fun saveInstalledPlugins(cacheDir: String) {
         try {
+            keepBackup(cacheDir)
             installedFile(cacheDir).writeTextAtomic(
                 installedJson.encodeToString(RepoState.installedPlugins.value)
             )
@@ -160,7 +185,9 @@ object PluginInstaller {
     fun pruneOrphans(cacheDir: String, repoUrls: Collection<String>): List<String> {
         if (repoUrls.isEmpty()) return emptyList()
         val normalizedKnown = repoUrls.map { normalizeRepoUrl(it) }.toSet()
-        val installed = loadInstalledPlugins(cacheDir)
+        // An unreadable or empty list is no reason to delete files: with nothing "installed", every extension file on the device
+        // is a file no installed extension uses, and all of them were deleted.
+        val installed = readInstalled(cacheDir)?.takeIf { it.isNotEmpty() } ?: return emptyList()
         val (keep, orphaned) = installed.partition { normalizeRepoUrl(it.repoUrl) in normalizedKnown }
         orphaned.forEach { deletePluginFiles(cacheDir, it.internalName, it.localPath, keep) }
         if (orphaned.isNotEmpty()) {
@@ -229,6 +256,7 @@ object PluginInstaller {
 
     private fun writeInstalled(cacheDir: String, plugins: List<InstalledPlugin>) {
         try {
+            keepBackup(cacheDir)
             installedFile(cacheDir).writeTextAtomic(installedJson.encodeToString(plugins))
         } catch (_: Exception) {}
     }

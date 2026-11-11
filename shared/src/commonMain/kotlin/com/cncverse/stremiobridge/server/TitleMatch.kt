@@ -55,9 +55,16 @@ object TitleMatch {
 
     /** The name without year, brackets, season words, language / quality tags and punctuation: "The Boys (2019) Season 4 Hindi 1080p" -> "the boys". */
     fun baseName(name: String): String {
+        val plain = baseNameOf(name, dropYear = true)
+        // A title that IS a year ("1917", "2012", "1899"): with the year taken out nothing was left, an empty name scores 0,
+        // and such a film or series could never be matched on any site. The number stays when it is all there is.
+        return plain.ifEmpty { baseNameOf(name, dropYear = false) }
+    }
+
+    private fun baseNameOf(name: String, dropYear: Boolean): String {
         var t = fold(name).replace("&", " and ")
         t = BRACKETS.replace(t, " ")
-        t = YEAR.replace(t, " ")
+        if (dropYear) t = YEAR.replace(t, " ")
         t = SEASON_WORDS_RX.replace(t, " ")
         t = NON_ALNUM.replace(t, " ")
         t = TAG_WORDS.replace(" $t ", " ")
@@ -304,8 +311,19 @@ object MatchMemory {
 
     fun forget(key: String?) { if (key != null && map.remove(key) != null) save() }
 
+    private val savePlanned = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Written a few seconds later, once, for everything that changed meanwhile. Every confirmed match used to rewrite the whole
+     * file (up to 5,000 entries) right there on the search's own thread - with thirty extensions answering, thirty times a search.
+     */
     private fun save() {
-        val f = file ?: return
-        runCatching { synchronized(lock) { f.writeTextAtomic(json.encodeToString(map.toMap())) } }
+        if (file == null || !savePlanned.compareAndSet(false, true)) return
+        Thread({
+            runCatching { Thread.sleep(5_000) }
+            savePlanned.set(false)
+            val f = file ?: return@Thread
+            runCatching { synchronized(lock) { f.writeTextAtomic(json.encodeToString(map.toMap())) } }
+        }, "match-memory-save").apply { isDaemon = true; start() }
     }
 }

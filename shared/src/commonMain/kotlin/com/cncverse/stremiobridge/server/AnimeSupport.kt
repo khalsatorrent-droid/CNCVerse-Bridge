@@ -104,7 +104,8 @@ object AnimeResolver {
     private fun aniListSearch(term: String): Hit? = aniListHit("String", "search:\$v", JsonPrimitive(term))
 
     /** The first few AniList anime a search finds, best first (the right one is not always the first). */
-    private fun aniListSearchAll(term: String): List<Hit> {
+    /** Null = the request itself failed (AniList down, rate limit, no network): that says nothing about the title. */
+    private fun aniListSearchAll(term: String): List<Hit>? {
         val query = "query(\$v:String){Page(perPage:6){media(search:\$v,type:ANIME){id idMal title{english romaji native}synonyms seasonYear startDate{year}episodes format}}}"
         val body = JsonObject(mapOf("query" to JsonPrimitive(query), "variables" to JsonObject(mapOf("v" to JsonPrimitive(term))))).toString()
         val text = runCatching {
@@ -114,9 +115,9 @@ object AnimeResolver {
                     .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body))
                     .build()
             ).execute().use { r -> if (r.code == 200) r.body?.string() else null }
-        }.getOrNull() ?: return emptyList()
+        }.getOrNull() ?: return null
         val list = ((json.parseToJsonElement(text).jsonObject["data"] as? JsonObject)?.get("Page") as? JsonObject)?.get("media") as? JsonArray
-            ?: return emptyList()
+            ?: return null
         return list.mapNotNull { (it as? JsonObject)?.let { m -> hitOf(m) } }
     }
 
@@ -184,11 +185,16 @@ object AnimeResolver {
         val fwd = ArrayList<Hit>()
         // Prequels and sequels are independent walks: run them side by side instead of one after the other
         // (each hop is a network call; a long franchise used to take 30+ s one hop at a time)
+        // A walk that stops because a request failed (rate limit, network) leaves seasons out. With an earlier season missing every
+        // later one moves up a place: "season 3" becomes the entry of season 2. Such a chain was used - and kept, so the wrong
+        // season came back until the app was restarted. A broken walk now gives no chain at all (the other ways of finding the
+        // episode take over) and nothing is kept.
+        val broken = java.util.concurrent.atomic.AtomicBoolean(false)
         val backJob = walkPool.submit(Runnable {
             val seen = HashSet<Int>().apply { add(anilistId) }
             var p = start.prequel
             while (p != null && back.size < 10 && seen.add(p)) {
-                val n = aniListNode(p) ?: break
+                val n = aniListNode(p) ?: run { broken.set(true); null } ?: break
                 back.add(n.hit)
                 p = n.prequel
             }
@@ -196,13 +202,14 @@ object AnimeResolver {
         val seenFwd = HashSet<Int>().apply { add(anilistId) }
         var q = start.sequel
         while (q != null && fwd.size < 10 && seenFwd.add(q)) {
-            val n = aniListNode(q) ?: break
+            val n = aniListNode(q) ?: run { broken.set(true); null } ?: break
             fwd.add(n.hit)
             q = n.sequel
         }
         // If the prequel walk is somehow still running after 60 s, do not read the list it is still filling
         val backDone = runCatching { backJob.get(60, TimeUnit.SECONDS) }.isSuccess
-        val chain = (if (backDone) back.reversed() else emptyList()) + start.hit + fwd
+        if (!backDone || broken.get()) return emptyList()
+        val chain = back.reversed() + start.hit + fwd
         if (chainCache.size > 3_000) chainCache.clear()
         chainCache[anilistId] = chain
         for (h in chain) h.anilistId?.let { chainCache[it] = chain }
@@ -307,7 +314,10 @@ object AnimeResolver {
         var failed = false
         val info = withContext(Dispatchers.IO) {
             try {
-                val raw = aniListSearchAll(title)
+                // A failed request used to count as "AniList found nothing", and that was remembered for 12 hours: one rate
+                // limit (AniList allows 30 requests a minute, a long franchise uses them up) or one network hiccup and a real
+                // anime was searched as an ordinary series - plain title only, no season mapping - for the rest of the day.
+                val raw = aniListSearchAll(title) ?: run { failed = true; return@withContext null }
                 val nt = AnimeMatcher.normalize(title)
                 val fits = raw.filter { h -> h.info.titles.any { AnimeMatcher.dice(AnimeMatcher.normalize(it), nt) >= 0.85 } }
                 // the entry of the same year when there is one; otherwise the first hit, as before (it must fit the name)
@@ -644,8 +654,10 @@ object AnimeEpisodes {
             val before = seasons.filterKeys { it < wantedSeason }.values.sumOf { s -> s.size }
             list.firstOrNull { it.episode == before + episode && (it.season ?: 1) >= wantedSeason - 1 }?.let { return it }
             list.firstOrNull { it.episode == episode }?.let { return it }
-        } else {
-            // season 1 asked but it lists seasons with other numbers: take the first with that number
+        } else if (wantedSeason !in seasons || list.filter { it.episode != null }.groupBy { it.episode }.none { it.value.size > 1 }) {
+            // The wanted season is not listed at all, or the numbers run on across the seasons (no number is used twice): the
+            // first episode with that number. Not when each season counts from 1 again and ours simply has no such episode -
+            // that used to hand out the same number from ANOTHER season (season 2 episode 13 asked, season 1's episode 13 given).
             list.firstOrNull { it.episode == episode }?.let { return it }
         }
         // 4. no episode numbers at all: the order of the list
