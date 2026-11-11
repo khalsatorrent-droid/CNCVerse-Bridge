@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.52
 
 - **Fifth round of fixes.**
   - **Signed DASH and subtitle links: the address was decoded twice.** `/decrypt`, `/init_decrypt`, `/proxy/mpd` and `/proxy/subtitle` URL-decoded the address again after the server had already done it, turning the `%2B` / `%2F` / `%3D` of a signature into `+`, `/`, `=` and a real `+` into a space - the host then answered 403.
