@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.7
 
 - **AniPM (media.settlar.io) links were refused with "HTTP 403" through the relay and the media server.** Their links are signed for the public address of whoever asked for them. The extensions connect IPv6-first, the relay and media server went out over IPv4 - and on mobile networks such as Jio the two leave from different public addresses, so the host refused the bridge. The relay, the media server and the quality / header checks now connect the way the extensions do; a request still refused is asked again over IPv6 only and IPv4 only, and the kind that works is kept for that host.
 
