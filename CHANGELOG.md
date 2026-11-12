@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **AniPM (media.settlar.io): a Cloudflare block page ("HTTP 403") even with the right headers.** The log of v1.9.8 showed the host's Cloudflare refusing the bridge while CloudStream's own player plays the same link. The bridge talks HTTP/1.1 only (so that parallel connections are real ones); a refused request is now asked again over HTTP/2 - what a browser and CloudStream's player use - and that is kept for the host when it works. The log line for a refusal also names the Cloudflare error code when there is one.
+
 ## 1.9.8
 
 - **AniPM (media.settlar.io) playlists still refused with "HTTP 403".** Their player host wants the headers its own embed page sends. An extension build that leaves them out still plays in CloudStream's player, but not through the bridge. The relay, the media server and the quality check now add `Origin: https://embed.settlar.io` and `Referer: https://embed.settlar.io/` to requests for that host when the extension did not send them. (Hard-sub links also need the extension to send the `X-Settlar-Key-Proof` header; the bridge forwards it when present.)
