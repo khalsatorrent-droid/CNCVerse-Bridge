@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Signed playlist links that are good for one read** (or a very short time) were read by the quality check while the list was prepared, then refused when the player asked for them ("HTTP 502 Bad Gateway"). The player's first request now gets the copy that was just read.
+- **Tunnel: a changed address is said plainly.** A free temporary tunnel gets a new address every time it starts again - also after the tunnel check restarts it - and the player keeps calling the old one ("Error 1033"). The log now says when the address changed, with the new add-on address to install (or turn on Stable Link for one address that stays).
+- **Tunnel check: time the app was held by the system is noted.** When the phone was asleep or battery saving held the app, nothing checked the tunnel; the log now says so and the check runs at once.
+
 ## 1.9.5
 
 - **A playlist that starts with a byte-order mark was refused** as "not a playlist" by the relay and the media server (players skip the mark); it is read normally now.

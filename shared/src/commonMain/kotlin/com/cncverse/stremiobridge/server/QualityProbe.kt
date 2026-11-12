@@ -160,6 +160,8 @@ object QualityProbe {
             client.newCall(b.build()).execute().use { r ->
                 if (!r.isSuccessful) { failed = true; Probe(emptyList(), false) } else {
                     val text = readLimited(r.body?.byteStream(), 512 * 1024)
+                    // kept for the player's first request of this playlist (see MediaServer.rememberPlaylist)
+                    if (MediaServer.isM3u(text)) MediaServer.rememberPlaylist(url, r.request.url.toString(), text)
                     Probe(parseMaster(text, r.request.url.toString()), AUDIO_GROUP.containsMatchIn(text), audioLanguagesOf(text))
                 }
             }

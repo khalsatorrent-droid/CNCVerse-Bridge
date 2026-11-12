@@ -23,6 +23,9 @@ object CloudflaredManager {
 
     var deviceIp: String = "127.0.0.1"
 
+    /** The temporary address the tunnel had last, to notice when a restart gives it a new one. */
+    @Volatile private var lastQuickUrl: String? = null
+
     private val QUICK_URL = Regex("https://(?!api\\.)[a-z0-9-]+\\.trycloudflare\\.com")
     private val QUICK_HOST = Regex("(?<![a-z0-9-])(?!api\\.)[a-z0-9-]+\\.trycloudflare\\.com")
 
@@ -165,8 +168,19 @@ object CloudflaredManager {
             var bad = 0
             var failedRestarts = 0
             var sinceUrl = 0L
+            var lastRound = System.currentTimeMillis()
             while (isActive) {
                 delay(GUARD_EVERY_MS)
+                // A round far later than planned: the system held the app (phone asleep, battery saving) and nothing checked the
+                // tunnel meanwhile. Said in the log, so a dead link after a night is not a mystery.
+                val now = System.currentTimeMillis()
+                val late = now - lastRound - GUARD_EVERY_MS
+                lastRound = now
+                if (late > 5 * 60_000L && ServerState.isStremioMode.value) {
+                    ServerState.warn("Tunnel check: the app was held by the system for ${late / 60_000} min (phone asleep or battery " +
+                        "saving) - the tunnel was not checked in that time. Checking now. (Allow the app to run in the background without " +
+                        "battery limits to keep the link alive.)")
+                }
                 if (!ServerState.isStremioMode.value || lastPort <= 0) { bad = 0; sinceUrl = 0; continue }
                 val url = ServerState.activeTunnelUrl.value
                 val alive = tunnelProcess?.isAlive == true
@@ -285,6 +299,17 @@ object CloudflaredManager {
                         if (ServerState.activeTunnelUrl.value != url) {
                             ServerState.activeTunnelUrl.value = url
                             ServerState.info("🚀 Cloudflare tunnel ready: $url  (Stremio add-on: $url/manifest.json)")
+                            // A free temporary link gets a new address every time the tunnel starts again (after a restart by the
+                            // tunnel check, too): the player still calls the old one and gets "Error 1033". Said plainly, once.
+                            val before = lastQuickUrl
+                            if (quick && QUICK_URL.matches(url)) {
+                                lastQuickUrl = url
+                                if (before != null && before != url && !StableLink.enabled) {
+                                    ServerState.warn("⚠️ The tunnel address CHANGED: $before → $url. The old address no longer works - " +
+                                        "install the add-on again in your player with $url/manifest.json, or turn on Stable Link in Settings " +
+                                        "for one address that stays the same.")
+                                }
+                            }
                             // A temporary link gets a fixed address that redirects to it (opt-in, see StableLink)
                             if (quick && StableLink.enabled && QUICK_URL.matches(url)) {
                                 currentQuickUrl = url

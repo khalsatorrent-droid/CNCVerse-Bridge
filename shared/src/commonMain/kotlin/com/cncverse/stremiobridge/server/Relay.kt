@@ -422,7 +422,7 @@ object Relay {
         if (decisions[id] == MEDIA && mediaCan(true)) return MediaServer.servePlaylist(call, id, tok)
         requests.incrementAndGet()
         val t0 = System.currentTimeMillis()
-        val (finalUrl, text) = try {
+        val (finalUrl, text) = MediaServer.takeReadPlaylist(url) ?: try {
             withContext(Dispatchers.IO) {
                 MediaServer.clientFor(id, src).newCall(MediaServer.requestFor(src, url)).execute().use { r ->
                     if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")

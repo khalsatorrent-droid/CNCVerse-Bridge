@@ -534,6 +534,25 @@ object MediaServer {
      */
     internal fun isM3u(text: String?): Boolean = text != null && text.trimStart('\uFEFF', ' ', '\t', '\r', '\n').startsWith("#EXTM3U")
 
+    // ── Playlists read while the list was prepared (the quality check), handed to the player's first request ──
+    // A signed playlist link can be good for a single read, or for a very short time: read by the quality check, the same link
+    // was refused when the player then asked for it, and the bridge answered "502". The first request of the player now gets the
+    // copy that was just read (once, within 3 minutes); every later request reads the link again as before.
+    private class ReadPlaylist(val at: Long, val finalUrl: String, val text: String)
+    private val readPlaylists = ConcurrentHashMap<String, ReadPlaylist>()
+
+    internal fun rememberPlaylist(url: String, finalUrl: String, text: String) {
+        if (text.length > 2_000_000) return
+        // a live playlist moves on every few seconds: only lists of renditions and finished videos are kept
+        if (!text.contains("#EXT-X-STREAM-INF") && !text.contains("#EXT-X-ENDLIST")) return
+        if (readPlaylists.size > 200) readPlaylists.clear()
+        readPlaylists[url] = ReadPlaylist(System.currentTimeMillis(), finalUrl, noBom(text))
+    }
+
+    /** The copy read a moment ago (final address, text), taken once. */
+    internal fun takeReadPlaylist(url: String): Pair<String, String>? =
+        readPlaylists.remove(url)?.takeIf { System.currentTimeMillis() - it.at < 180_000L }?.let { it.finalUrl to it.text }
+
     /** The playlist text without a leading byte-order mark. */
     internal fun noBom(text: String): String = text.removePrefix("\uFEFF")
 
@@ -1926,7 +1945,8 @@ object MediaServer {
         val ttl = { t: String -> if (local && (t.contains("#EXT-X-ENDLIST") || t.contains("#EXT-X-STREAM-INF"))) 6 * 3_600_000L else playlistTtl(t) }
         val text = if (cached != null && System.currentTimeMillis() - cached.at < ttl(cached.text)) cached.text else {
             val fin = arrayOfNulls<String>(1)
-            val raw = noBom(try {
+            val early = takeReadPlaylist(url)?.also { fin[0] = it.first }?.second
+            val raw = noBom(early ?: try {
                 withContext(Dispatchers.IO) { String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first) }
             } catch (t: Exception) {
                 // the extension's server is gone: the copy saved on disk still works
