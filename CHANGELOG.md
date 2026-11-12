@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.4
 
 - **HLS links whose address has no ".m3u8" did not play in the player** (AniPM's hard-sub links, `https://media.settlar.io/v1/object/…`). The bridge knew they were playlists (the extension marks them so), but unless they needed headers it handed them to the player as they were - and a Stremio player, which is not told the type, took them for a video file. Such links now always go out through the relay, under an address that ends in ".m3u8".
 
