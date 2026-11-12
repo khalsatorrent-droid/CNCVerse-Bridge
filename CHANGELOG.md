@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.5
 
 - **A playlist that starts with a byte-order mark was refused** as "not a playlist" by the relay and the media server (players skip the mark); it is read normally now.
 - **The log says why a relayed link did not play.** When a host refuses the playlist, a segment or a file, or answers with something that is not a playlist, the reason (HTTP code, or the start of what came back) is written to the log - the player only shows "loading failed".
