@@ -855,6 +855,22 @@ object MediaServer {
         }
     }
 
+    /** Remembers cookies a site sets while its playlist / file is fetched, and sends them back to it. */
+    private class SessionCookies : okhttp3.CookieJar {
+        private val store = ConcurrentHashMap<String, MutableList<okhttp3.Cookie>>()
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+            val list = store.getOrPut(url.host) { java.util.concurrent.CopyOnWriteArrayList() }
+            cookies.forEach { c -> list.removeAll { it.name == c.name && it.path == c.path }; list.add(c) }
+        }
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
+            val now = System.currentTimeMillis()
+            return store[url.host].orEmpty().filter { it.expiresAt > now && it.matches(url) }
+        }
+    }
+
+    private val clients = ConcurrentHashMap<String, okhttp3.OkHttpClient>()
+    private val clientUsed = ConcurrentHashMap<String, Long>()
+
     internal fun clientFor(id: String, src: MediaSource): okhttp3.OkHttpClient {
         val hasCookie = src.headers.keys.any { it.equals("cookie", true) }
         if (hasCookie) return baseClient // the extension's own Cookie header must not be replaced
