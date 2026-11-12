@@ -898,8 +898,23 @@ object MediaServer {
             runCatching { com.cncverse.stremiobridge.network.CfCookieStore.get(LinkUrl.host(url).orEmpty()) }.getOrNull() else null
         if (cf != null) { b.header("Cookie", cf.cookie); b.header("User-Agent", cf.userAgent); hasUa = true }
         if (!hasUa) b.header("User-Agent", UA)
+        // AniPM's player host answers 403 to a request that does not come from its own embed page. An extension that does not
+        // send these (older builds) still plays in CloudStream's player; here the bridge fills in what the embed page sends.
+        if (LinkUrl.host(url)?.let { it == "settlar.io" || it.endsWith(".settlar.io") } == true) {
+            if (src.headers.keys.none { it.equals("origin", true) }) b.header("Origin", "https://embed.settlar.io")
+            if (src.headers.keys.none { it.equals("referer", true) }) b.header("Referer", "https://embed.settlar.io/")
+        }
         if (range != null) b.header("Range", range)
         return b.build()
+    }
+
+    /** What a refused request was asked with and what the host said, for the log: the player only shows "loading failed". */
+    internal fun refusalNote(req: okhttp3.Request, r: okhttp3.Response): String {
+        val names = listOf("Origin", "Referer", "X-Settlar-Key-Proof", "Cookie").filter { req.header(it) != null }
+        val body = runCatching { r.peekBody(300).string() }.getOrDefault("")
+        val server = r.header("Server")?.let { " server=$it" }.orEmpty()
+        val cf = if (r.header("cf-mitigated") != null) " cf-mitigated=${r.header("cf-mitigated")}" else ""
+        return " [sent: ${names.joinToString().ifEmpty { "no Origin/Referer/Cookie" }}$server$cf; answer: \"${sample(body)}\"]"
     }
 
     // ── Direct files: download to disk, serve from disk ───────────────────────
@@ -1798,7 +1813,7 @@ object MediaServer {
             try {
                 client.newCall(requestFor(src, url)).execute().use { r ->
                     if (!r.isSuccessful) {
-                        if (r.code in 400..499 && r.code != 408 && r.code != 429) throw IOException("HTTP ${r.code}")
+                        if (r.code in 400..499 && r.code != 408 && r.code != 429) throw IOException("HTTP ${r.code}" + if (r.code == 403 || r.code == 401) refusalNote(r.request, r) else "")
                         throw IllegalStateException("HTTP ${r.code}")
                     }
                     // where the answer really came from (after redirects): relative links inside a playlist start there
