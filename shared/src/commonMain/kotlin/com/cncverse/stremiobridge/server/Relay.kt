@@ -204,6 +204,8 @@ object Relay {
     /** times a dropped connection is asked again in a row (each wait a little longer) */
     private const val MAX_RESUMES = 6
 
+    private val refusedLogged = ConcurrentHashMap.newKeySet<String>()
+
     suspend fun serveStream(call: ApplicationCall, id: String, tok: String, fileName: String? = null) {
         val src = MediaServer.sourceFor(id) ?: return call.respondText("Not found", status = HttpStatusCode.NotFound)
         val url = MediaServer.urlOfToken(id, tok) ?: return call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
@@ -231,12 +233,17 @@ object Relay {
             return call.respondText("Upstream unavailable: ${t.message}", status = HttpStatusCode.BadGateway)
         }
         try {
+            // a refused segment or file shows in the player only as "loading failed": the reason goes to the log (once per link)
+            if (!resp.isSuccessful && !head) {
+                if (refusedLogged.size > 500) refusedLogged.clear()
+                if (refusedLogged.add(id)) ServerState.warn("[Relay] ${LinkUrl.host(url)} refused the request: HTTP ${resp.code}")
+            }
             val body = resp.body
             val ctText = resp.header("Content-Type")
             // a playlist under a name without ".m3u8" (a rendition or audio group): rewritten like any other
             if (!head && resp.isSuccessful && (ctText?.contains("mpegurl", true) == true || MediaServer.isPlaylistName(url))) {
-                val text = withContext(Dispatchers.IO) { body?.let { String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES)) }.orEmpty() }
-                if (text.trimStart().startsWith("#EXTM3U")) return respondPlaylist(call, id, src, resp.request.url.toString(), text)
+                val text = withContext(Dispatchers.IO) { body?.let { MediaServer.noBom(String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES))) }.orEmpty() }
+                if (MediaServer.isM3u(text)) return respondPlaylist(call, id, src, resp.request.url.toString(), text)
                 val textType = runCatching { ContentType.parse(ctText ?: "text/plain") }.getOrDefault(ContentType.Text.Plain)
                 return call.respondText(text, textType, HttpStatusCode.fromValue(resp.code))
             }
@@ -420,13 +427,18 @@ object Relay {
                 MediaServer.clientFor(id, src).newCall(MediaServer.requestFor(src, url)).execute().use { r ->
                     if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
                     // capped: a link labelled HLS that is really a video file must not be read into memory
-                    r.request.url.toString() to (r.body?.let { String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES)) }.orEmpty())
+                    r.request.url.toString() to (r.body?.let { MediaServer.noBom(String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES))) }.orEmpty())
                 }
             }
         } catch (t: Exception) {
+            // (written to the log: the player only shows "loading failed", and this is the only place the reason is known)
+            ServerState.warn("[Relay] playlist from ${LinkUrl.host(url)} failed: ${t.message}")
             return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
         }
-        if (!text.trimStart().startsWith("#EXTM3U")) return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
+        if (!MediaServer.isM3u(text)) {
+            ServerState.warn("[Relay] ${LinkUrl.host(finalUrl)} did not answer with a playlist: \"${MediaServer.sample(text)}\"")
+            return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
+        }
         if (text.contains("#EXTINF")) {
             // An audio or subtitle playlist is not what the link is judged by. The player opens it together with the video's
             // playlist, and when it came first the whole link was decided on a few hundred kbit/s of audio (or a subtitle

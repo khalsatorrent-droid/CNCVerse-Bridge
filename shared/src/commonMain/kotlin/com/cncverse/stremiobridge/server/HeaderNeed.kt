@@ -170,7 +170,7 @@ object HeaderNeed {
                 while (n < buf.size) { val k = stream.read(buf, n, buf.size - n); if (k < 0) break; n += k }
                 String(buf, 0, n, Charsets.UTF_8)
             }
-            if (!text.trimStart().startsWith("#EXTM3U")) return false
+            if (!MediaServer.isM3u(text)) return false
             val ref = firstUri(text) ?: return false
             val next = cur.toHttpUrlOrNull()?.resolve(ref)?.toString() ?: return false
             val isPlaylist = text.contains("#EXT-X-STREAM-INF") || (!text.contains("#EXTINF") && ref.substringBefore('?').endsWith(".m3u8", true))

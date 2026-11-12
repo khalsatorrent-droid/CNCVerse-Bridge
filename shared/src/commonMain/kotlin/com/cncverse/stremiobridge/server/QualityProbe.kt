@@ -80,7 +80,7 @@ object QualityProbe {
 
     /** Renditions listed by a master playlist (empty for a media playlist or anything else). */
     fun parseMaster(text: String, baseUrl: String): List<Variant> {
-        if (!text.trimStart().startsWith("#EXTM3U")) return emptyList()
+        if (!MediaServer.isM3u(text)) return emptyList()
         val lines = text.lines().map { it.trim() }
         val raw = ArrayList<Triple<String, Int, Long>>() // url, height tier (0 = unknown), bandwidth
         var i = 0

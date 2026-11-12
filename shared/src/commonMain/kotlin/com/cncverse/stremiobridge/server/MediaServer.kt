@@ -528,6 +528,18 @@ object MediaServer {
         }
     }
 
+    /**
+     * A playlist, also when it starts with a byte-order mark: some servers write one before "#EXTM3U", and such a playlist was
+     * refused as "not a playlist" (players skip the mark).
+     */
+    internal fun isM3u(text: String?): Boolean = text != null && text.trimStart('\uFEFF', ' ', '\t', '\r', '\n').startsWith("#EXTM3U")
+
+    /** The playlist text without a leading byte-order mark. */
+    internal fun noBom(text: String): String = text.removePrefix("\uFEFF")
+
+    /** A short, single-line sample of an answer for the log. */
+    internal fun sample(text: String): String = text.take(120).replace(Regex("\\s+"), " ").trim()
+
     internal fun looksLikeHls(url: String, linkType: String?): Boolean =
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
 
@@ -656,7 +668,7 @@ object MediaServer {
         return try {
             val fin = arrayOfNulls<String>(1)
             val raw = String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
-            if (!raw.trimStart().startsWith("#EXTM3U")) throw IOException("not a playlist")
+            if (!isM3u(raw)) throw IOException("not a playlist")
             runCatching { File(File(root ?: return@runCatching, id).also { it.mkdirs() }, "playlist.m3u8").writeText(raw) }
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
             val base = fin[0] ?: url
@@ -667,7 +679,7 @@ object MediaServer {
         } catch (t: Exception) {
             // the extension's server is gone but an earlier run saved the playlist: that copy is used
             val saved = runCatching { File(root ?: return@runCatching null, "$id/playlist.m3u8").takeIf { it.exists() }?.readText() }.getOrNull()
-            if (saved != null && saved.trimStart().startsWith("#EXTM3U")) {
+            if (saved != null && isM3u(saved)) {
                 val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(saved) else saved
                 playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, url, useRaw, key))
                 return true
@@ -1914,16 +1926,20 @@ object MediaServer {
         val ttl = { t: String -> if (local && (t.contains("#EXT-X-ENDLIST") || t.contains("#EXT-X-STREAM-INF"))) 6 * 3_600_000L else playlistTtl(t) }
         val text = if (cached != null && System.currentTimeMillis() - cached.at < ttl(cached.text)) cached.text else {
             val fin = arrayOfNulls<String>(1)
-            val raw = try {
+            val raw = noBom(try {
                 withContext(Dispatchers.IO) { String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first) }
             } catch (t: Exception) {
                 // the extension's server is gone: the copy saved on disk still works
                 val saved = if (url == src.url) withContext(Dispatchers.IO) {
                     runCatching { File(root ?: return@runCatching null, "$id/playlist.m3u8").takeIf { it.exists() }?.readText() }.getOrNull()
                 } else null
-                saved ?: return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
-            }
-            if (!raw.trimStart().startsWith("#EXTM3U")) {
+                saved ?: run {
+                    ServerState.warn("[Media] playlist from ${LinkUrl.host(url)} failed: ${t.message}")
+                    return call.respondText("Source error: ${t.message}", status = HttpStatusCode.BadGateway)
+                }
+            })
+            if (!isM3u(raw)) {
+                ServerState.warn("[Media] ${LinkUrl.host(url)} did not answer with a playlist: \"${sample(raw)}\"")
                 return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
             }
             val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
@@ -1965,7 +1981,7 @@ object MediaServer {
                     runCatching {
                         val fin = arrayOfNulls<String>(1)
                         val text = String(fetchRemote(id, src, u, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
-                        if (text.trimStart().startsWith("#EXTM3U")) {
+                        if (isM3u(text)) {
                             val rewritten = rewritePlaylist(id, fin[0] ?: u, text, key)
                             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
                             if (isLoopbackUrl(u) && text.contains("#EXTINF")) prefetch(id, src, key, 0)
@@ -2056,7 +2072,7 @@ object MediaServer {
             val plUrl = pk.substringAfter('|')
             val fin = arrayOfNulls<String>(1)
             val text = String(fetchRemote(id, src, plUrl, attempts = 1, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
-            if (!text.trimStart().startsWith("#EXTM3U") || !text.contains("#EXT-X-ENDLIST") || !text.contains("#EXTINF")) return null
+            if (!isM3u(text) || !text.contains("#EXT-X-ENDLIST") || !text.contains("#EXTINF")) return null
             val rewritten = rewritePlaylist(id, fin[0] ?: plUrl, text, pk)
             val fresh = playlistSegs[pk] ?: return null
             if (fresh.size != old.size) return null
