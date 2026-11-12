@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.8
 
 - **AniPM (media.settlar.io) playlists still refused with "HTTP 403".** Their player host wants the headers its own embed page sends. An extension build that leaves them out still plays in CloudStream's player, but not through the bridge. The relay, the media server and the quality check now add `Origin: https://embed.settlar.io` and `Referer: https://embed.settlar.io/` to requests for that host when the extension did not send them. (Hard-sub links also need the extension to send the `X-Settlar-Key-Proof` header; the bridge forwards it when present.)
 - **The log says why a link was refused.** A 401 / 403 from a playlist now names which of Origin / Referer / Key-Proof / Cookie were sent and the first part of the host's answer (for example a Cloudflare block page).
