@@ -827,6 +827,12 @@ object MediaServer {
 
     private val v6Client by lazy { rawClientBuilder().dns(FamilyDns(true)).build() }
     private val v4Client by lazy { rawClientBuilder().dns(FamilyDns(false)).build() }
+    /** Speaks HTTP/2 like a browser or CloudStream's player: some Cloudflare rules refuse a browser User-Agent sent over HTTP/1.1. */
+    private val h2Client by lazy { rawClientBuilder().protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1)).build() }
+    private val h2V6Client by lazy { rawClientBuilder().protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1)).dns(FamilyDns(true)).build() }
+    private val h2V4Client by lazy { rawClientBuilder().protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1)).dns(FamilyDns(false)).build() }
+    /** Hosts that refuse HTTP/1.1 but answer over HTTP/2, with the client that worked. */
+    private val hostH2 = ConcurrentHashMap<String, okhttp3.OkHttpClient>()
 
     /**
      * A refused request (403) is asked again over IPv6 only, then IPv4 only. A link signed for the public address of whoever
@@ -836,9 +842,22 @@ object MediaServer {
     private object FamilyRetry : okhttp3.Interceptor {
         override fun intercept(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
             val req = chain.request()
+            val host = req.url.host
+            hostH2[host]?.let { c -> runCatching { c.newCall(req).execute() }.getOrNull()?.let { return it } }
             val first = chain.proceed(req)
             if (first.code != 403) return first
-            val host = req.url.host
+            // the same refusal over HTTP/2 (any address kind), then each kind alone
+            if (!hostH2.containsKey(host)) for (c in listOf(h2Client, h2V6Client, h2V4Client)) {
+                val alt = runCatching { c.newCall(req).execute() }.getOrNull() ?: continue
+                if (alt.code != 403) {
+                    first.close()
+                    if (hostH2.size > 500) hostH2.clear()
+                    hostH2[host] = c
+                    ServerState.info("[Relay] $host refused the request over HTTP/1.1 and answered over HTTP/2 - using that for it from now on")
+                    return alt
+                }
+                alt.close()
+            }
             if (hostFamily.containsKey(host)) return first
             for (v6 in listOf(true, false)) {
                 val alt = runCatching { (if (v6) v6Client else v4Client).newCall(req).execute() }.getOrNull() ?: continue
@@ -911,7 +930,10 @@ object MediaServer {
     /** What a refused request was asked with and what the host said, for the log: the player only shows "loading failed". */
     internal fun refusalNote(req: okhttp3.Request, r: okhttp3.Response): String {
         val names = listOf("Origin", "Referer", "X-Settlar-Key-Proof", "Cookie").filter { req.header(it) != null }
-        val body = runCatching { r.peekBody(300).string() }.getOrDefault("")
+        val raw = runCatching { r.peekBody(4000).string() }.getOrDefault("")
+        // a Cloudflare block page: its error code (1020 = a firewall rule, 1010 = browser signature, 1015 = rate limit...) says what refused
+        val cfCode = Regex("[Ee]rror code:?\\s*(?:<[^>]*>\\s*)*(\\d{4})").find(raw)?.groupValues?.get(1)
+        val body = if (cfCode != null) "Cloudflare error $cfCode: " + Regex("<title>([^<]*)</title>").find(raw)?.groupValues?.get(1).orEmpty() else raw
         val server = r.header("Server")?.let { " server=$it" }.orEmpty()
         val cf = if (r.header("cf-mitigated") != null) " cf-mitigated=${r.header("cf-mitigated")}" else ""
         return " [sent: ${names.joinToString().ifEmpty { "no Origin/Referer/Cookie" }}$server$cf; answer: \"${sample(body)}\"]"
