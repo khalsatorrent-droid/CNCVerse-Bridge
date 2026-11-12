@@ -425,7 +425,7 @@ object Relay {
         val (finalUrl, text) = MediaServer.takeReadPlaylist(url) ?: try {
             withContext(Dispatchers.IO) {
                 MediaServer.clientFor(id, src).newCall(MediaServer.requestFor(src, url)).execute().use { r ->
-                    if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
+                    if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}" + if (r.code == 403 || r.code == 401) MediaServer.refusalNote(r.request, r) else "")
                     // capped: a link labelled HLS that is really a video file must not be read into memory
                     r.request.url.toString() to (r.body?.let { MediaServer.noBom(String(MediaServer.readCapped(it, MediaServer.MAX_PLAYLIST_BYTES))) }.orEmpty())
                 }

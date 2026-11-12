@@ -156,7 +156,13 @@ object QualityProbe {
         var failed = false
         val probe = try {
             val b = okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36")
-            s.behaviorHints?.proxyHeaders?.request?.forEach { (k, v) -> runCatching { b.header(k, v) } }
+            val sent = s.behaviorHints?.proxyHeaders?.request.orEmpty()
+            sent.forEach { (k, v) -> runCatching { b.header(k, v) } }
+            // AniPM's player host wants what its embed page sends (see MediaServer.requestFor)
+            if (LinkUrl.host(url)?.let { it == "settlar.io" || it.endsWith(".settlar.io") } == true) {
+                if (sent.keys.none { it.equals("origin", true) }) b.header("Origin", "https://embed.settlar.io")
+                if (sent.keys.none { it.equals("referer", true) }) b.header("Referer", "https://embed.settlar.io/")
+            }
             client.newCall(b.build()).execute().use { r ->
                 if (!r.isSuccessful) { failed = true; Probe(emptyList(), false) } else {
                     val text = readLimited(r.body?.byteStream(), 512 * 1024)
