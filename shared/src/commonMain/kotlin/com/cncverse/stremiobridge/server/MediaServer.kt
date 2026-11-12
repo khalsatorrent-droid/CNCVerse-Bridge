@@ -788,36 +788,72 @@ object MediaServer {
     // ── HTTP clients ──────────────────────────────────────────────────────────
 
     private val baseClient by lazy {
-        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
-            // Several connections per file / many HLS segments: keep them open for the next piece instead of
-            // closing all but five and paying a new TCP + TLS handshake for every segment
-            .connectionPool(okhttp3.ConnectionPool(48, 5, TimeUnit.MINUTES))
-            // HTTP/1.1 only: over HTTP/2 OkHttp puts all the "parallel" connections of a file on ONE TCP connection
-            // (multiplexed), so 8 connections downloaded no faster than one and a slow piece held up the others
-            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(45, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .retryOnConnectionFailure(true)
+        rawClientBuilder()
+            // (a signed link refused here is asked for again over the other kind of address, see FamilyRetry)
+            .addInterceptor(FamilyRetry)
             .build()
     }
 
-    /** Remembers cookies a site sets while its playlist / file is fetched, and sends them back to it. */
-    private class SessionCookies : okhttp3.CookieJar {
-        private val store = ConcurrentHashMap<String, MutableList<okhttp3.Cookie>>()
-        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
-            val list = store.getOrPut(url.host) { java.util.concurrent.CopyOnWriteArrayList() }
-            cookies.forEach { c -> list.removeAll { it.name == c.name && it.path == c.path }; list.add(c) }
-        }
-        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
-            val now = System.currentTimeMillis()
-            return store[url.host].orEmpty().filter { it.expiresAt > now && it.matches(url) }
+    private fun rawClientBuilder() = okhttp3.OkHttpClient.Builder().dns(FamilyDns(null))
+        // Several connections per file / many HLS segments: keep them open for the next piece instead of
+        // closing all but five and paying a new TCP + TLS handshake for every segment
+        .connectionPool(okhttp3.ConnectionPool(48, 5, TimeUnit.MINUTES))
+        // HTTP/1.1 only: over HTTP/2 OkHttp puts all the "parallel" connections of a file on ONE TCP connection
+        // (multiplexed), so 8 connections downloaded no faster than one and a slow piece held up the others
+        .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+        // The extensions' own client connects the same way (IPv6 first where the network has it). This one used to go out
+        // over IPv4: on a network where the two have different public addresses (mobile networks such as Jio) a link signed
+        // for the address the extension asked from was refused here ("HTTP 403") - AniPM's media.settlar.io links, for one.
+        .fastFallback(true)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .retryOnConnectionFailure(true)
+
+    /** Hosts that answered only over one kind of address: true = IPv6, false = IPv4. */
+    private val hostFamily = ConcurrentHashMap<String, Boolean>()
+
+    /** The app's DNS, limited to one kind of address when [only] is set, or when [hostFamily] knows the host. */
+    private class FamilyDns(private val only: Boolean?) : okhttp3.Dns {
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            val all = com.cncverse.stremiobridge.network.AppDns.lookup(hostname)
+            val want = only ?: hostFamily[hostname] ?: return all
+            return all.filter { (it is java.net.Inet6Address) == want }.ifEmpty {
+                if (only != null) throw java.net.UnknownHostException("$hostname has no ${if (want) "IPv6" else "IPv4"} address") else all
+            }
         }
     }
 
-    private val clients = ConcurrentHashMap<String, okhttp3.OkHttpClient>()
-    private val clientUsed = ConcurrentHashMap<String, Long>()
+    private val v6Client by lazy { rawClientBuilder().dns(FamilyDns(true)).build() }
+    private val v4Client by lazy { rawClientBuilder().dns(FamilyDns(false)).build() }
+
+    /**
+     * A refused request (403) is asked again over IPv6 only, then IPv4 only. A link signed for the public address of whoever
+     * asked for it (the extension) works only from that same address, and on many mobile networks IPv6 and IPv4 leave from
+     * different ones. The kind that worked is kept for that host, so the segments that follow go the same way at once.
+     */
+    private object FamilyRetry : okhttp3.Interceptor {
+        override fun intercept(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
+            val req = chain.request()
+            val first = chain.proceed(req)
+            if (first.code != 403) return first
+            val host = req.url.host
+            if (hostFamily.containsKey(host)) return first
+            for (v6 in listOf(true, false)) {
+                val alt = runCatching { (if (v6) v6Client else v4Client).newCall(req).execute() }.getOrNull() ?: continue
+                if (alt.code != 403) {
+                    first.close()
+                    if (hostFamily.size > 500) hostFamily.clear()
+                    hostFamily[host] = v6
+                    ServerState.info("[Relay] $host refused the request over one kind of address and answered over ${if (v6) "IPv6" else "IPv4"} - using that for it from now on")
+                    return alt
+                }
+                alt.close()
+            }
+            return first
+        }
+    }
 
     internal fun clientFor(id: String, src: MediaSource): okhttp3.OkHttpClient {
         val hasCookie = src.headers.keys.any { it.equals("cookie", true) }

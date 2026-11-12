@@ -42,7 +42,7 @@ object QualityProbe {
     private val inFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Unit>>()
 
     private val client by lazy {
-        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns).fastFallback(true)
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS)
             .callTimeout(4, TimeUnit.SECONDS)
