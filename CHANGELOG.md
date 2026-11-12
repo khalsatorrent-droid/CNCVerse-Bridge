@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.6
 
 - **Signed playlist links that are good for one read** (or a very short time) were read by the quality check while the list was prepared, then refused when the player asked for them ("HTTP 502 Bad Gateway"). The player's first request now gets the copy that was just read.
 - **Tunnel: a changed address is said plainly.** A free temporary tunnel gets a new address every time it starts again - also after the tunnel check restarts it - and the player keeps calling the old one ("Error 1033"). The log now says when the address changed, with the new add-on address to install (or turn on Stable Link for one address that stays).
