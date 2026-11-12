@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.9
 
 - **AniPM (media.settlar.io): a Cloudflare block page ("HTTP 403") even with the right headers.** The log of v1.9.8 showed the host's Cloudflare refusing the bridge while CloudStream's own player plays the same link. The bridge talks HTTP/1.1 only (so that parallel connections are real ones); a refused request is now asked again over HTTP/2 - what a browser and CloudStream's player use - and that is kept for the host when it works. The log line for a refusal also names the Cloudflare error code when there is one.
 
