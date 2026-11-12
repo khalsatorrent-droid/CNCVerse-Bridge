@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **HLS links whose address has no ".m3u8" did not play in the player** (AniPM's hard-sub links, `https://media.settlar.io/v1/object/…`). The bridge knew they were playlists (the extension marks them so), but unless they needed headers it handed them to the player as they were - and a Stremio player, which is not told the type, took them for a video file. Such links now always go out through the relay, under an address that ends in ".m3u8".
+
 ## 1.9.3
 
 - **Links found by the search went missing from lists read from the cache, with no reason given.** A site link that runs out within a few minutes (Vedu, Netflix and others hand out such links) was never kept in the saved list, so the "Refresh" entry counted it ("Vedu: 6") but the list - answered from the cache - had none of them and the search report said nothing. Such links are kept now until their own end time, and links a saved list has lost are shown in the search report as found and dropped, with the reason ("the site's link expired after it was found").

@@ -531,8 +531,28 @@ object MediaServer {
     internal fun looksLikeHls(url: String, linkType: String?): Boolean =
         linkType.equals("M3U8", true) || url.substringBefore('?').endsWith(".m3u8", true) || url.contains(".m3u8", true)
 
+    /**
+     * An HLS link whose address does not say so: the extension marks it as a playlist (CloudStream's link type M3U8), but there
+     * is no ".m3u8" anywhere in it - AniPM's signed https://media.settlar.io/v1/object/… links, for one. CloudStream's player is
+     * told the type; a Stremio player is not (an answer has no field for it) and goes by the address, takes it for a video file
+     * and fails. Such a link is never handed out as it is.
+     */
+    internal fun isHiddenHls(s: StremioStream): Boolean {
+        val url = s.url ?: return false
+        return s.info?.linkType.equals("M3U8", true) && url.startsWith("http", true) && !url.contains(".m3u8", true) &&
+            s.externalUrl == null && s.infoHash == null && s.ytId == null && s.clearkey == null
+    }
+
     /** The stream pointed at this bridge's media server when it qualifies; otherwise unchanged. */
     fun rewrite(s: StremioStream, base: String, forWeb: Boolean = false, runtimeMin: Int = 0): StremioStream {
+        val out = rewriteFor(s, base, forWeb, runtimeMin)
+        // left as it was, though the player could not tell it is a playlist: it goes out through the relay, whose address
+        // ends in ".m3u8" (whatever the relay / media server settings say; the relay passes it through, nothing is stored)
+        if (out.url == s.url && isHiddenHls(s)) Relay.rewrite(s, base, forWeb, runtimeMin, force = true)?.let { return it }
+        return out
+    }
+
+    private fun rewriteFor(s: StremioStream, base: String, forWeb: Boolean, runtimeMin: Int): StremioStream {
         val p = prefs
         // Relay on: links that need headers go to it (with the media server on too, it picks one of the two when playback starts)
         if (p.relay) Relay.rewrite(s, base, forWeb, runtimeMin)?.let { return it }

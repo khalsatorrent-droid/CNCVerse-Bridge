@@ -150,7 +150,7 @@ object Relay {
      * leaves it alone. "Only links that need headers": links whose host refuses them without the extension's headers;
      * "Those + all HLS": every HLS link as well; "Every link": every http(s) link (other add-ons' links too).
      */
-    fun rewrite(s: StremioStream, base: String, forWeb: Boolean, runtimeMinutes: Int = 0): StremioStream? {
+    fun rewrite(s: StremioStream, base: String, forWeb: Boolean, runtimeMinutes: Int = 0, force: Boolean = false): StremioStream? {
         val url = s.url ?: return null
         val mode = MediaServer.prefs.mode
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return null
@@ -170,6 +170,7 @@ object Relay {
         // the host answered a plain request: the player could open the link itself
         val needsHeaders = needsCf || (headers.isNotEmpty() && HeaderNeed.verdict(url, headers) != false)
         val picked = when {
+            force -> true
             needsHeaders -> true
             mode == "all" -> true
             mode == "hls" -> hls
