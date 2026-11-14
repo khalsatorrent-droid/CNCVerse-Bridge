@@ -53,6 +53,21 @@ object Profiles {
     val showNsfw: Boolean get() = nsfwPrefs.value.first
     val nsfwAddon: Boolean get() = nsfwPrefs.value.second
 
+    // ── Music ────────────────────────────────────────────────────────────────
+    // Music extensions (Monochrome, MusicBox: the "Music" type) are never part of the main add-on, the profiles or the NSFW link:
+    // they are answered by the music add-on (/music/manifest.json, the Eclipse add-on protocol) and the website's Music page.
+
+    const val MUSIC_ID = "music"
+    val MUSIC_PROFILE = BridgeProfile(MUSIC_ID, "Music")
+
+    private val VIDEO_TYPES = setOf("movie", "tvseries", "series", "anime", "animemovie", "ova", "cartoon", "asiandrama", "documentary", "live", "tv", "torrent", "nsfw")
+
+    /** True when the types name music (or audio) and no video type: an extension that lists both is a video one. */
+    fun isMusicTypes(types: List<String>?): Boolean {
+        val t = types?.map { it.trim().lowercase() }.orEmpty()
+        return t.any { it == "music" || it == "audio" } && t.none { it in VIDEO_TYPES }
+    }
+
     fun isNsfwTypes(types: List<String>?): Boolean = types?.any { it.trim().equals("NSFW", ignoreCase = true) } == true
 
     fun setShowNsfw(on: Boolean) { nsfwPrefs.value = on to nsfwAddon; save() }

@@ -715,6 +715,10 @@ object StremioServer {
         if (prof?.id == Profiles.NSFW_ID) return !api.isNsfw || isSwitchedOff(api)
         // NSFW extensions are never part of the main add-on, the website or the other profiles
         if (api.isNsfw) return true
+        // The music add-on: only music extensions, those switched on in the Extensions screen
+        if (prof?.id == Profiles.MUSIC_ID) return !api.isMusic || isSwitchedOff(api)
+        // Music extensions are never part of the main add-on, the website's video pages or the other profiles
+        if (api.isMusic) return true
         // Serving an extra profile: it uses exactly the extensions it was given
         prof?.let { return !Profiles.allows(it, api) }
         return isSwitchedOff(api)
@@ -873,6 +877,14 @@ object StremioServer {
             // serves the main add-on (older installs made with such links keep working).
             get("/manifest.json") { ServerState.info("[Request] manifest"); call.respond(buildManifest()) }
             get("/u/{profileId}/manifest.json") { call.asProfile { call.respond(buildManifest()) } }
+
+            // ── Music add-on: Eclipse's add-on protocol, only the music extensions ──
+            get("/music/manifest.json") { MusicAddon.manifest(call) }
+            get("/music/search") { MusicAddon.search(call) }
+            get("/music/stream/{id}") { MusicAddon.stream(call) }
+            get("/music/album/{id}") { MusicAddon.album(call) }
+            get("/music/artist/{id}") { MusicAddon.artist(call) }
+            options("/music/{path...}") { MusicAddon.preflight(call) }
 
             get("/catalog/{path...}") { call.asProfile { call.respondCatalog() } }
             get("/u/{profileId}/catalog/{path...}") { call.asProfile { call.respondCatalog() } }
@@ -1353,7 +1365,8 @@ object StremioServer {
     }
 
     // ── Website: search straight in the extensions (their own catalogs and their own links) ──
-    private fun webExtApi(id: String): MainApiWrapper? = loadedApis.firstOrNull { it.internalName == id && !isGloballyDisabled(it) }
+    private fun webExtApi(id: String): MainApiWrapper? =
+        loadedApis.firstOrNull { it.internalName == id && (!isGloballyDisabled(it) || (it.isMusic && !isSwitchedOff(it))) }
 
     private val extGate = kotlinx.coroutines.sync.Semaphore(4)
 
@@ -1435,17 +1448,16 @@ object StremioServer {
 
     /** Website "Music": the music extension (Monochrome): its home-page sections as genres, and its search. */
     suspend fun webMusicJson(skip: Int, genre: String?, q: String?): String {
-        val apis = loadedApis.filter { a ->
-            !isGloballyDisabled(a) && (a.name.contains("monochrome", true) ||
-                a.supportedTypes.any { it.equals("Music", true) || it.equals("Audio", true) })
-        }
+        val apis = loadedApis.filter { a -> a.isMusic && !isSwitchedOff(a) }
         val api = apis.firstOrNull { it.name.contains("monochrome", true) } ?: apis.firstOrNull()
             ?: return """{"none":true,"genres":[],"items":[]}"""
         val def = (providerCatalogCache[api.internalName] ?: defaultCatalogDefsForApi(api)).firstOrNull()
             ?: return """{"none":true,"genres":[],"items":[]}"""
         val genres = def.extra.firstOrNull { it.name == "genre" }?.options.orEmpty()
         val items = withContext(pluginDispatcher) {
-            withTimeoutOrNull(30_000L) { runCatching { buildCatalog(def.type, def.id, q?.ifBlank { null }, skip, genre?.ifBlank { null }) }.getOrNull() }
+            withTimeoutOrNull(30_000L) {
+                runCatching { Profiles.run(Profiles.MUSIC_PROFILE) { buildCatalog(def.type, def.id, q?.ifBlank { null }, skip, genre?.ifBlank { null }) } }.getOrNull()
+            }
         } ?: emptyList()
         return shelfJson(genres, items, api.name)
     }
@@ -2371,6 +2383,14 @@ object StremioServer {
 
     /** TMDB answer for the website version ([endpointPathAndQuery] without the key). */
     suspend fun tmdb(endpointPathAndQuery: String): JsonObject? = fetchTmdbJson(endpointPathAndQuery)
+
+    /** The address this client reached the bridge on (the music add-on builds its stream links with it). */
+    fun musicBase(call: ApplicationCall): String = call.mediaBaseForRequest()
+
+    /** A music link prepared like the other streams (headers, the media server, the extension's local server), no slow checks. */
+    fun prepareMusicStream(st: StremioStream, base: String): StremioStream =
+        try { LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, false, 4), base) }
+        catch (e: Throwable) { ServerState.warn("[Music] could not prepare a link: ${e.javaClass.simpleName}: ${e.message}"); st }
 
     /** Every address stream links can start with, so the website can turn them into its own address. */
     fun webBases(): List<String> = listOfNotNull(
@@ -4820,6 +4840,8 @@ interface MainApiWrapper {
     val mainUrl: String? get() = null
     /** Marked NSFW (its repo entry or its own types list "NSFW"): only served by the NSFW add-on link. */
     val isNsfw: Boolean get() = false
+    /** A music extension (Monochrome, MusicBox): only served by the music add-on link (/music/manifest.json) and the website's Music page. */
+    val isMusic: Boolean get() = false
     suspend fun getMainPageSections(): List<String>
     fun clearCache() {}
 

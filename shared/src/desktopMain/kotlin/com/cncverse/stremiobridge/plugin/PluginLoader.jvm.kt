@@ -854,6 +854,8 @@ private class DirectMainApiWrapper(
     override val mainUrl: String? get() = runCatching { api.mainUrl }.getOrNull()?.takeIf { it.isNotBlank() }
     override val isNsfw: Boolean get() = com.cncverse.stremiobridge.server.Profiles.isNsfwTypes(plugin.tvTypes) ||
         runCatching { api.supportedTypes.any { it.name.equals("NSFW", ignoreCase = true) } }.getOrDefault(false)
+    override val isMusic: Boolean get() = com.cncverse.stremiobridge.server.Profiles.isMusicTypes(plugin.tvTypes) ||
+        runCatching { com.cncverse.stremiobridge.server.Profiles.isMusicTypes(api.supportedTypes.map { it.name }) }.getOrDefault(false)
     override val pluginInternalName: String get() = plugin.internalName
 
     /** Tags all network traffic of these calls with the plugin (slow-request log). */
@@ -1393,6 +1395,7 @@ private fun Any.reflectToSubtitle(pluginName: String): StremioSubtitle? {
  */
 private class MetadataOnlyWrapper(private val plugin: SitePlugin) : MainApiWrapper {
     override val isNsfw: Boolean get() = com.cncverse.stremiobridge.server.Profiles.isNsfwTypes(plugin.tvTypes)
+    override val isMusic: Boolean get() = com.cncverse.stremiobridge.server.Profiles.isMusicTypes(plugin.tvTypes)
     override val name: String get() = plugin.name
     override val internalName: String get() = plugin.internalName
     override val supportedTypes: List<String> get() = plugin.tvTypes ?: listOf("movie")
