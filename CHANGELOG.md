@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.0
 
 - **Music add-on for the Eclipse app.** A separate link, `http://<bridge>:8080/music/manifest.json` (shown in Settings > Music), serves the music extensions (Monochrome, MusicBox: extensions of the "Music" type) with Eclipse's add-on protocol: search for songs, albums and artists, album and artist pages, and playback (lossless first; links that need headers go through the media server / relay). Music extensions are no longer part of the main add-on, the profiles or the NSFW link, so their catalogs no longer show in the other manifests. The website's Music page keeps working.
 
