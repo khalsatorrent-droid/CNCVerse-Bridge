@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music add-on for the Eclipse app.** A separate link, `http://<bridge>:8080/music/manifest.json` (shown in Settings > Music), serves the music extensions (Monochrome, MusicBox: extensions of the "Music" type) with Eclipse's add-on protocol: search for songs, albums and artists, album and artist pages, and playback (lossless first; links that need headers go through the media server / relay). Music extensions are no longer part of the main add-on, the profiles or the NSFW link, so their catalogs no longer show in the other manifests. The website's Music page keeps working.
+
 ## 1.9.9
 
 - **AniPM (media.settlar.io): a Cloudflare block page ("HTTP 403") even with the right headers.** The log of v1.9.8 showed the host's Cloudflare refusing the bridge while CloudStream's own player plays the same link. The bridge talks HTTP/1.1 only (so that parallel connections are real ones); a refused request is now asked again over HTTP/2 - what a browser and CloudStream's player use - and that is kept for the host when it works. The log line for a refusal also names the Cloudflare error code when there is one.

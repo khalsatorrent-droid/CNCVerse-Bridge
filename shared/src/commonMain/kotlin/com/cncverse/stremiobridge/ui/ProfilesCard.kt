@@ -77,7 +77,7 @@ private fun ProfileEditor(p: BridgeProfile, onChange: () -> Unit, linkRows: @Com
     var confirmDelete by remember(p.id) { mutableStateOf(false) }
     val choices = remember(open) {
         // NSFW extensions belong to the NSFW add-on only
-        StremioServer.loadedApis.filter { !it.isNsfw }.distinctBy { it.pluginInternalName }
+        StremioServer.loadedApis.filter { !it.isNsfw && !it.isMusic }.distinctBy { it.pluginInternalName }
             .map { it.pluginInternalName to it.name }.sortedBy { it.second.lowercase() }
     }
     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(vertical = 8.dp))
@@ -174,5 +174,47 @@ fun NsfwCard() {
                 if (links.isEmpty()) Text("Start the server to get the link", color = TextMuted, fontSize = 11.sp)
             }
         }
+    }
+}
+
+/**
+ * Settings > Music: the music extensions (Monochrome, MusicBox...) are never part of the main add-on or the profiles. They have
+ * an add-on link of their own, made for the Eclipse music app (its add-on protocol): search, albums, artists and playback.
+ */
+@Composable
+fun MusicCard() {
+    val status by ServerState.status.collectAsState()
+    val tunnel by ServerState.activeTunnelUrl.collectAsState()
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf<String?>(null) }
+    val running = status as? ServerStatus.Running
+    val publicBase = tunnel?.takeIf { it.isNotBlank() } ?: TunnelSettings.publicUrl
+    val localBase = running?.let { "http://${it.ipAddress}:${it.port}" }
+    val path = "/music/manifest.json"
+    val installed = remember(running) { StremioServer.loadedApis.count { it.isMusic } }
+
+    AmoledCard(Modifier.fillMaxWidth()) {
+        SectionTitle("Music", "Music extensions have a separate add-on link for the Eclipse app. They are never in the main add-on or the profiles.")
+        if (installed == 0) {
+            Text("No music extension is installed (Monochrome and MusicBox are in the Watchuu repository)", color = TextMuted, fontSize = 11.sp)
+        } else {
+            Text("$installed music extension(s) in this add-on", color = TextMuted, fontSize = 11.sp)
+        }
+        val links = buildList {
+            publicBase?.let { add("Internet" to "$it$path") }
+            localBase?.let { add("This network" to "$it$path") }
+        }
+        links.forEach { (label, url) ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, color = TextMuted, fontSize = 10.sp)
+                    Text(url, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                TextButton(onClick = { clipboard.setText(AnnotatedString(url)); copied = url }) {
+                    Text(if (copied == url) "Copied" else "Copy", color = Violet400, fontSize = 12.sp)
+                }
+            }
+        }
+        if (links.isEmpty()) Text("Start the server to get the link", color = TextMuted, fontSize = 11.sp)
     }
 }
