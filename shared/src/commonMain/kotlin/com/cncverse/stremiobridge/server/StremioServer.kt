@@ -884,6 +884,12 @@ object StremioServer {
             get("/music/stream/{id}") { MusicAddon.stream(call) }
             get("/music/album/{id}") { MusicAddon.album(call) }
             get("/music/artist/{id}") { MusicAddon.artist(call) }
+            // one music extension per link: the same protocol, searching only that extension
+            get("/music/e/{ext}/manifest.json") { MusicAddon.manifest(call, call.parameters["ext"].orEmpty()) }
+            get("/music/e/{ext}/search") { MusicAddon.search(call, call.parameters["ext"].orEmpty()) }
+            get("/music/e/{ext}/stream/{id}") { MusicAddon.stream(call) }
+            get("/music/e/{ext}/album/{id}") { MusicAddon.album(call) }
+            get("/music/e/{ext}/artist/{id}") { MusicAddon.artist(call) }
             options("/music/{path...}") { MusicAddon.preflight(call) }
 
             get("/catalog/{path...}") { call.asProfile { call.respondCatalog() } }

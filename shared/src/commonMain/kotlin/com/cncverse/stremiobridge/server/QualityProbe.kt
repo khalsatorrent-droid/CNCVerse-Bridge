@@ -23,7 +23,8 @@ import java.util.concurrent.TimeUnit
  * rendition so the player (or the user) can pick 1080p / 720p / 480p directly.
  */
 object QualityProbe {
-    class Variant(val url: String, val height: Int, val bandwidth: Long)
+    /** [videoOnly]: its CODECS name no sound codec (the sound comes from somewhere else in the master). */
+    class Variant(val url: String, val height: Int, val bandwidth: Long, val videoOnly: Boolean = false)
 
     /** What a master playlist lists; [externalAudio] = the sound lives in separate playlists (the master must stay). */
     class Probe(val variants: List<Variant>, val externalAudio: Boolean, val languages: List<String> = emptyList())
@@ -76,6 +77,8 @@ object QualityProbe {
         else -> 0
     }
 
+    private val AUDIO_CODECS = listOf("mp4a", "ac-3", "ec-3", "opus", "mp3", "flac", "dts", "ac-4", "alac", "vorbis")
+
     private val ATTR = Regex("([A-Z0-9-]+)=(\"[^\"]*\"|[^,]*)")
 
     /** Renditions listed by a master playlist (empty for a media playlist or anything else). */
@@ -83,6 +86,7 @@ object QualityProbe {
         if (!MediaServer.isM3u(text)) return emptyList()
         val lines = text.lines().map { it.trim() }
         val raw = ArrayList<Triple<String, Int, Long>>() // url, height tier (0 = unknown), bandwidth
+        val videoOnly = HashSet<String>()
         var i = 0
         while (i < lines.size) {
             val line = lines[i]
@@ -98,6 +102,8 @@ object QualityProbe {
                     // name, and that name replaced the link's address - a link that could not play)
                     val abs = MediaServer.resolve(baseUrl, lines[j])
                     raw += Triple(abs, tier, bw)
+                    val codecs = attrs["CODECS"]?.lowercase()
+                    if (codecs != null && AUDIO_CODECS.none { it in codecs }) videoOnly += abs
                 }
                 i = j
             }
@@ -106,7 +112,7 @@ object QualityProbe {
         if (raw.isEmpty()) return emptyList()
         val noRes = raw.all { it.second == 0 }
         // a rendition whose address could not be made absolute is useless (and must never become a link's address)
-        return raw.filter { it.first.startsWith("http", true) }.map { (u, t, bw) -> Variant(u, if (noRes) tierFromBandwidth(bw) else t, bw) }
+        return raw.filter { it.first.startsWith("http", true) }.map { (u, t, bw) -> Variant(u, if (noRes) tierFromBandwidth(bw) else t, bw, u in videoOnly) }
     }
 
     private fun isHlsCandidate(s: StremioStream): Boolean {
@@ -144,7 +150,11 @@ object QualityProbe {
             if (!a["TYPE"].equals("AUDIO", ignoreCase = true)) null else AudioLangs.languageOf(a["NAME"], a["LANGUAGE"])
         }.distinct().toList()
 
-    private val AUDIO_GROUP = Regex("#EXT-X-MEDIA:[^\\n]*TYPE=AUDIO[^\\n]*URI=\"", RegexOption.IGNORE_CASE)
+    /** The sound lives in separate playlists (#EXT-X-MEDIA TYPE=AUDIO with a URI, the attributes in any order). */
+    internal fun hasAudioGroup(text: String): Boolean = text.lineSequence().map { it.trim() }.any { l ->
+        l.startsWith("#EXT-X-MEDIA:", true) && TYPE_AUDIO.containsMatchIn(l) && l.contains("URI=", true)
+    }
+    private val TYPE_AUDIO = Regex("(?<![A-Z-])TYPE=\"?AUDIO\"?(,|$)", RegexOption.IGNORE_CASE)
 
     /** The highest rendition: tallest picture, then highest bitrate. */
     fun topVariant(variants: List<Variant>): Variant? =
@@ -168,7 +178,7 @@ object QualityProbe {
                     val text = readLimited(r.body?.byteStream(), 512 * 1024)
                     // kept for the player's first request of this playlist (see MediaServer.rememberPlaylist)
                     if (MediaServer.isM3u(text)) MediaServer.rememberPlaylist(url, r.request.url.toString(), text)
-                    Probe(parseMaster(text, r.request.url.toString()), AUDIO_GROUP.containsMatchIn(text), audioLanguagesOf(text))
+                    Probe(parseMaster(text, r.request.url.toString()), hasAudioGroup(text), audioLanguagesOf(text))
                 }
             }
         } catch (e: Exception) {
@@ -210,7 +220,7 @@ object QualityProbe {
                 .let { i -> if (probe.languages.isNotEmpty() && i.audioLanguages == null) i.copy(audioLanguages = probe.languages) else i }
             if (!split || variants.size < 2) {
                 // Play the highest rendition every time (when the sound is inside it), and label it with that resolution
-                val top = if (bestOnly && !probe.externalAudio) topVariant(variants) else null
+                val top = if (bestOnly && !probe.externalAudio) topVariant(variants)?.takeIf { !it.videoOnly } else null
                 out += if (top != null && top.url != s.url) {
                     s.copy(url = top.url, info = info.copy(quality = best, linkType = s.info?.linkType ?: "M3U8", bandwidth = top.bandwidth.takeIf { it > 0 }))
                 } else s.copy(info = info.copy(quality = best))
@@ -223,10 +233,12 @@ object QualityProbe {
                 if (!seen.add(v.url)) continue
                 val label = "${v.height}p"
                 val base = info.linkName ?: s.title.orEmpty()
+                // the master with only this resolution (served by the relay): a bare rendition loses the master's separate
+                // audio / subtitle groups and played without sound
                 out += s.copy(
-                    url = v.url,
+                    url = MediaServer.withPin(s.url!!, v.height),
                     name = (s.name ?: "") + " " + label,
-                    info = info.copy(quality = v.height, linkName = (base + " " + label).trim(), bandwidth = v.bandwidth.takeIf { it > 0 }),
+                    info = info.copy(quality = v.height, linkType = "M3U8", linkName = (base + " " + label).trim(), bandwidth = v.bandwidth.takeIf { it > 0 }),
                 )
             }
             out += s.copy(

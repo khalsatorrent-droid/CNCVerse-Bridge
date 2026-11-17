@@ -40,6 +40,18 @@ object MusicAddon {
     fun apis(): List<MainApiWrapper> =
         StremioServer.loadedApis.filter { it.isMusic && !StremioServer.isSwitchedOff(it) }
 
+    /** The name of one music extension in its own link (/music/e/<slug>/manifest.json): letters and digits only. */
+    fun slug(api: MainApiWrapper): String = api.pluginInternalName.lowercase().filter { it.isLetterOrDigit() }.ifEmpty {
+        api.internalName.lowercase().filter { it.isLetterOrDigit() }
+    }
+
+    /** Every installed music extension with its link name (switched-off ones too: the link then answers with nothing). */
+    fun linkable(): List<Pair<String, String>> = StremioServer.loadedApis.filter { it.isMusic }
+        .distinctBy { slug(it) }.map { slug(it) to it.name }.sortedBy { it.second.lowercase() }
+
+    /** The extensions one link serves: all of them, or the one its slug names. */
+    private fun apisFor(only: String?): List<MainApiWrapper> = if (only == null) apis() else apis().filter { slug(it) == only }
+
     private fun api(internalName: String): MainApiWrapper? =
         apis().firstOrNull { it.internalName == internalName || it.pluginInternalName == internalName }
 
@@ -72,13 +84,17 @@ object MusicAddon {
         call.respondText("", status = HttpStatusCode.NoContent)
     }
 
-    suspend fun manifest(call: ApplicationCall) {
-        ServerState.info("[Request] music manifest")
+    suspend fun manifest(call: ApplicationCall, only: String? = null) {
+        ServerState.info("[Request] music manifest" + (only?.let { " ($it)" } ?: ""))
+        // one extension's own link: its own add-on id, so the app can have it next to the others
+        val one = only?.let { o -> StremioServer.loadedApis.firstOrNull { it.isMusic && slug(it) == o } }
+        if (only != null && one == null) return call.reply(error("No music extension \"$only\" is installed"), HttpStatusCode.NotFound)
         call.reply(buildJsonObject {
-            put("id", ADDON_ID)
-            put("name", "CNCVerse Music")
+            put("id", if (one != null) "$ADDON_ID.$only" else ADDON_ID)
+            put("name", if (one != null) "CNCVerse Music · ${one.name}" else "CNCVerse Music")
             put("version", "1.0.0")
-            put("description", "Music from the CNCVerse Bridge music extensions (Monochrome, MusicBox...)")
+            put("description", if (one != null) "Music from the ${one.name} extension (CNCVerse Bridge)"
+                else "Music from the CNCVerse Bridge music extensions (Monochrome, MusicBox...)")
             put("icon", "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Bridge/refs/heads/main/logo.png")
             put("resources", buildJsonArray { listOf("search", "stream", "catalog").forEach { add(JsonPrimitive(it)) } })
             put("types", buildJsonArray { listOf("track", "album", "artist").forEach { add(JsonPrimitive(it)) } })
@@ -108,10 +124,10 @@ object MusicAddon {
         return name.trim() to fallbackArtist
     }
 
-    suspend fun search(call: ApplicationCall) {
+    suspend fun search(call: ApplicationCall, only: String? = null) {
         val q = call.request.queryParameters["q"].orEmpty().trim()
-        ServerState.info("[Request] music search \"$q\"")
-        val list = apis()
+        ServerState.info("[Request] music search \"$q\"" + (only?.let { " ($it)" } ?: ""))
+        val list = apisFor(only)
         if (q.isEmpty() || list.isEmpty()) return call.reply(buildJsonObject {
             put("tracks", JsonArray(emptyList())); put("albums", JsonArray(emptyList())); put("artists", JsonArray(emptyList()))
         })

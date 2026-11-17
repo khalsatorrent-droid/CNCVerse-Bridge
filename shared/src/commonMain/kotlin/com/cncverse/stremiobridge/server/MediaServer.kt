@@ -576,6 +576,13 @@ object MediaServer {
 
     /** The stream pointed at this bridge's media server when it qualifies; otherwise unchanged. */
     fun rewrite(s: StremioStream, base: String, forWeb: Boolean = false, runtimeMin: Int = 0): StremioStream {
+        // one rendition of "List every quality separately": the master goes through the relay, which hands it out with that
+        // resolution only (and its sound / subtitle groups); where the relay cannot take it, the adaptive master is played
+        pinOf(s.url)?.let { h ->
+            val plain = s.copy(url = stripPin(s.url!!))
+            Relay.rewrite(plain, base, forWeb, runtimeMin, force = true, pinHeight = h)?.let { return it }
+            return rewrite(plain, base, forWeb, runtimeMin)
+        }
         val out = rewriteFor(s, base, forWeb, runtimeMin)
         // left as it was, though the player could not tell it is a playlist: it goes out through the relay, whose address
         // ends in ".m3u8" (whatever the relay / media server settings say; the relay passes it through, nothing is stored)
@@ -689,7 +696,7 @@ object MediaServer {
             val raw = String(fetchRemote(id, src, url, finalUrl = fin, maxBytes = MAX_PLAYLIST_BYTES).first)
             if (!isM3u(raw)) throw IOException("not a playlist")
             runCatching { File(File(root ?: return@runCatching, id).also { it.mkdirs() }, "playlist.m3u8").writeText(raw) }
-            val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
+            val useRaw = shapeMaster(raw, src.headers)
             val base = fin[0] ?: url
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, base, useRaw, key))
             if (raw.contains("#EXTINF")) prefetch(id, src, key, firstWanted(key, raw))
@@ -699,7 +706,7 @@ object MediaServer {
             // the extension's server is gone but an earlier run saved the playlist: that copy is used
             val saved = runCatching { File(root ?: return@runCatching null, "$id/playlist.m3u8").takeIf { it.exists() }?.readText() }.getOrNull()
             if (saved != null && isM3u(saved)) {
-                val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(saved) else saved
+                val useRaw = shapeMaster(saved, src.headers)
                 playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritePlaylist(id, url, useRaw, key))
                 return true
             }
@@ -1935,34 +1942,62 @@ object MediaServer {
      * The same picture is often listed once per audio group (AAC stereo, Dolby 5.1…): one entry per group is kept, so the player
      * can still take the audio its device can decode - keeping a single entry could leave only a group it cannot play.
      */
-    internal fun keepBestVariant(text: String): String {
+    internal fun keepBestVariant(text: String, pinHeight: Int? = null): String {
         if (!text.contains("#EXT-X-STREAM-INF")) return text
         val lines = text.lines()
-        class V(val infoIdx: Int, val urlIdx: Int, val height: Int, val bw: Long, val audio: String?)
+        class V(val infoIdx: Int, val urlIdx: Int, val w: Int, val height: Int, val bw: Long, val audio: String?) { var tier = 0 }
         val vs = ArrayList<V>()
         var i = 0
         while (i < lines.size) {
             val l = lines[i].trim()
             if (l.startsWith("#EXT-X-STREAM-INF")) {
                 val a = ATTRS.findAll(l.substringAfter(':')).associate { it.groupValues[1] to it.groupValues[2].trim('"') }
-                val h = a["RESOLUTION"]?.lowercase()?.split('x')?.getOrNull(1)?.toIntOrNull() ?: 0
+                val res = a["RESOLUTION"]?.lowercase()?.split('x')
+                val w = res?.getOrNull(0)?.toIntOrNull() ?: 0
+                val h = res?.getOrNull(1)?.toIntOrNull() ?: 0
                 val bw = a["AVERAGE-BANDWIDTH"]?.toLongOrNull() ?: a["BANDWIDTH"]?.toLongOrNull() ?: 0L
                 var j = i + 1
                 while (j < lines.size && (lines[j].isBlank() || lines[j].startsWith("#"))) j++
-                if (j < lines.size) vs += V(i, j, h, bw, a["AUDIO"])
+                if (j < lines.size) vs += V(i, j, w, h, bw, a["AUDIO"])
                 i = j
             }
             i++
         }
         if (vs.size < 2) return text
-        val top = vs.maxWithOrNull(compareBy<V>({ it.height }, { it.bw })) ?: return text
+        // the same tiers the quality probe gave the renditions (a "720p" entry of "List every quality separately")
+        val noRes = vs.all { it.height == 0 }
+        vs.forEach { it.tier = if (noRes) QualityProbe.tierFromBandwidth(it.bw) else if (it.height > 0) QualityProbe.tierOf(it.w, it.height) else 0 }
+        val pool = pinHeight?.let { p -> vs.filter { it.tier == p }.ifEmpty { null } } ?: vs
+        val top = pool.maxWithOrNull(compareBy<V>({ it.height }, { it.bw })) ?: return text
         val drop = HashSet<Int>()
         val keep = ArrayList<V>()
         keep += top
-        if (top.height > 0) vs.filter { it.height == top.height && it.audio != top.audio }.groupBy { it.audio }.values
-            .forEach { g -> g.maxByOrNull { it.bw }?.let { keep += it } }
+        // the same picture with another sound track (another AUDIO group) stays, so every language can still be picked
+        if (top.height > 0 || pinHeight != null) pool.filter { it.tier == top.tier && it.height == top.height && it.audio != top.audio }
+            .groupBy { it.audio }.values.forEach { g -> g.maxByOrNull { it.bw }?.let { keep += it } }
         for (v in vs) if (keep.none { it === v }) { drop += v.infoIdx; for (k in v.infoIdx..v.urlIdx) drop += k }
+        // (the #EXT-X-MEDIA audio / subtitle groups are never dropped: a rendition without its group plays without sound)
         return lines.filterIndexed { idx, _ -> idx !in drop }.joinToString("\n")
+    }
+
+    /** A rendition entry of "List every quality separately": the master's address plus this mark (see [withPin]). */
+    private const val PIN_MARK = "#cnc-h="
+    /** Registered with a link whose master playlist is served with one resolution only (never sent to the host: X-Cnc-). */
+    internal const val PIN_HEADER = "X-Cnc-Pin-Height"
+
+    /** The master playlist [url] played at [height] only: its audio / subtitle groups stay (a bare rendition has no sound). */
+    internal fun withPin(url: String, height: Int): String = url.substringBefore(PIN_MARK) + PIN_MARK + height
+    internal fun pinOf(url: String?): Int? = url?.takeIf { it.contains(PIN_MARK) }?.substringAfterLast(PIN_MARK)?.toIntOrNull()
+    internal fun stripPin(url: String): String = url.substringBefore(PIN_MARK)
+
+    /** A master playlist as it is handed out: one resolution for a pinned link, the best one with "Always play the highest". */
+    internal fun shapeMaster(text: String, headers: Map<String, String>): String {
+        val pin = headers[PIN_HEADER]?.toIntOrNull()
+        return when {
+            pin != null -> keepBestVariant(text, pin)
+            StremioServer.streamPrefs.bestHls -> keepBestVariant(text)
+            else -> text
+        }
     }
 
     /**
@@ -2051,7 +2086,7 @@ object MediaServer {
                 ServerState.warn("[Media] ${LinkUrl.host(url)} did not answer with a playlist: \"${sample(raw)}\"")
                 return call.respondText("Source did not return a playlist", status = HttpStatusCode.BadGateway)
             }
-            val useRaw = if (StremioServer.streamPrefs.bestHls) keepBestVariant(raw) else raw
+            val useRaw = shapeMaster(raw, src.headers)
             // relative links start at the address the playlist really came from (a signed link often redirects)
             val base = fin[0] ?: url
             val rewritten = rewritePlaylist(id, base, useRaw, key)
@@ -2246,7 +2281,7 @@ object MediaServer {
             val key = "$id|$url"
             // a playlist must not stay on disk as if it were a segment: a live one would never move on, a signed one never renew
             runCatching { file.delete() }
-            val rewritten = rewritePlaylist(id, url, String(bytes).let { if (StremioServer.streamPrefs.bestHls) keepBestVariant(it) else it }, key)
+            val rewritten = rewritePlaylist(id, url, shapeMaster(String(bytes), src.headers), key)
             playlistCache[key] = CachedPlaylist(System.currentTimeMillis(), rewritten)
             if (rewritten.contains("#EXTINF")) prefetch(id, src, key, firstWanted(key, rewritten))
             call.response.header(HttpHeaders.CacheControl, "no-store")

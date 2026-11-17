@@ -150,7 +150,7 @@ object Relay {
      * leaves it alone. "Only links that need headers": links whose host refuses them without the extension's headers;
      * "Those + all HLS": every HLS link as well; "Every link": every http(s) link (other add-ons' links too).
      */
-    fun rewrite(s: StremioStream, base: String, forWeb: Boolean, runtimeMinutes: Int = 0, force: Boolean = false): StremioStream? {
+    fun rewrite(s: StremioStream, base: String, forWeb: Boolean, runtimeMinutes: Int = 0, force: Boolean = false, pinHeight: Int? = null): StremioStream? {
         val url = s.url ?: return null
         val mode = MediaServer.prefs.mode
         if (s.externalUrl != null || s.infoHash != null || s.ytId != null || s.clearkey != null) return null
@@ -177,7 +177,8 @@ object Relay {
             else -> forWeb && hls // the website's player needs CORS on playlists, whatever the mode
         }
         if (!picked) return null
-        val id = MediaServer.register(url, if (forWeb && hls) headers + (WEB to "1") else headers)
+        val marks = buildMap { if (forWeb && hls) put(WEB, "1"); pinHeight?.let { put(MediaServer.PIN_HEADER, it.toString()) } }
+        val id = MediaServer.register(url, headers + marks)
         val tok = MediaServer.token(id, url)
         if (runtimeMinutes > 0) { if (runtimeMin.size > 5_000) runtimeMin.clear(); runtimeMin[id] = runtimeMinutes }
         val newUrl = if (hls) "$base/relay/$id/pl/$tok.m3u8" else "$base/relay/$id/f/$tok/${MediaServer.fileName(url)}"
@@ -508,7 +509,7 @@ object Relay {
     }
 
     private suspend fun respondPlaylist(call: ApplicationCall, id: String, src: MediaSource, url: String, raw: String) {
-        val use = if (StremioServer.streamPrefs.bestHls) MediaServer.keepBestVariant(raw) else raw
+        val use = MediaServer.shapeMaster(raw, src.headers)
         val out = withContext(Dispatchers.IO) { rewritePlaylist(id, src, url, use) }
         call.response.header(HttpHeaders.CacheControl, "no-store")
         call.respondText(out, ContentType.parse("application/vnd.apple.mpegurl"))
@@ -524,7 +525,7 @@ object Relay {
      */
     private fun rewritePlaylist(id: String, src: MediaSource, playlistUrl: String, text: String): String {
         val web = src.headers.containsKey(WEB)
-        val headers = src.headers.filterKeys { it != WEB }
+        val headers = src.headers.filterKeys { !it.startsWith("X-Cnc-", true) }
         val decided = HashMap<String, Boolean>()
         fun direct(u: String): Boolean {
             if (web) return false

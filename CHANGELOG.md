@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **"List every quality separately": the 1080p / 720p / ... entries had no sound.** Each entry pointed straight at one rendition of the master playlist, so when the sound lives in a separate audio playlist (most anime and many embed hosts) the player got a picture with no audio, and lost the subtitle tracks too. Each entry now plays the master playlist with only that resolution kept (served by the relay), so its audio and subtitle groups stay.
+- **"Always play the highest resolution": some links played without sound.** A separate audio playlist was only noticed when its attributes were written in one order (TYPE before URI); written the other way round, the link was switched to the bare top rendition, which has no sound. The check now reads the attributes in any order, and a rendition whose codecs name no sound codec is never played on its own.
+- **Music: one link per music extension.** Besides the link with all music extensions (`/music/manifest.json`), each music extension has its own: `/music/e/<name>/manifest.json` (listed in Settings > Music), so every user can add only the music extensions they like.
+
 ## 1.10.0
 
 - **Music add-on for the Eclipse app.** A separate link, `http://<bridge>:8080/music/manifest.json` (shown in Settings > Music), serves the music extensions (Monochrome, MusicBox: extensions of the "Music" type) with Eclipse's add-on protocol: search for songs, albums and artists, album and artist pages, and playback (lossless first; links that need headers go through the media server / relay). Music extensions are no longer part of the main add-on, the profiles or the NSFW link, so their catalogs no longer show in the other manifests. The website's Music page keeps working.
