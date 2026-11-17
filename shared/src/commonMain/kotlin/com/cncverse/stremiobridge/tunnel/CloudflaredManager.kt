@@ -193,7 +193,10 @@ object CloudflaredManager {
                     sinceUrl = 0
                     // the bridge itself must answer, otherwise restarting the tunnel would not help
                     val local = reachable("http://127.0.0.1:$lastPort/manifest.json")
-                    if (local && !reachable("$url/manifest.json")) { bad++; if (bad >= 2) why = "the tunnel link does not answer" } else bad = 0
+                    // the tunnel itself, not the fixed link: asking the relay every 2 minutes made ~21,600 relay calls a month
+                    // per bridge (the relay is checked by the 15-minute re-registration anyway)
+                    val probe = currentQuickUrl?.takeIf { StableLink.enabled && url == StableLink.url } ?: url
+                    if (local && !reachable("$probe/manifest.json")) { bad++; if (bad >= 2) why = "the tunnel link does not answer" } else bad = 0
                 }
                 if (why == null) { if (alive && url != null) failedRestarts = 0; continue }
                 if (!internetUp()) { ServerState.warn("Tunnel check: $why, but there is no internet right now - waiting"); continue }
