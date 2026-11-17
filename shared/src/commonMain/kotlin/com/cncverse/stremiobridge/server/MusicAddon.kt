@@ -32,25 +32,25 @@ import kotlinx.serialization.json.put
  */
 object MusicAddon {
     private const val ADDON_ID = "com.cncverse.stremiobridge.music"
-    private const val SEARCH_LIMIT_MS = 12_000L
-    private const val LOAD_LIMIT_MS = 25_000L
-    private const val LINKS_LIMIT_MS = 30_000L
+    private const val SEARCH_LIMIT_MS = 8_000L
+    private const val LOAD_LIMIT_MS = 15_000L
+    private const val LINKS_LIMIT_MS = 20_000L
 
     /** The enabled music extensions. */
     fun apis(): List<MainApiWrapper> =
         StremioServer.loadedApis.filter { it.isMusic && !StremioServer.isSwitchedOff(it) }
 
-    /** The name of one music extension in its own link (/music/e/<slug>/manifest.json): letters and digits only. */
-    fun slug(api: MainApiWrapper): String = api.pluginInternalName.lowercase().filter { it.isLetterOrDigit() }.ifEmpty {
-        api.internalName.lowercase().filter { it.isLetterOrDigit() }
-    }
+    /**
+     * Music gets its own small pool of threads: a search that is typed letter by letter, or a slow extension, must never use up the
+     * threads the main add-on, the manifest and the tunnel check need (the shared plugin pool has 32).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val musicDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO.limitedParallelism(6)
 
-    /** Every installed music extension with its link name (switched-off ones too: the link then answers with nothing). */
-    fun linkable(): List<Pair<String, String>> = StremioServer.loadedApis.filter { it.isMusic }
-        .distinctBy { slug(it) }.map { slug(it) to it.name }.sortedBy { it.second.lowercase() }
-
-    /** The extensions one link serves: all of them, or the one its slug names. */
-    private fun apisFor(only: String?): List<MainApiWrapper> = if (only == null) apis() else apis().filter { slug(it) == only }
+    private class Cached(val at: Long, val value: List<SearchResult>)
+    private val searchCache = java.util.concurrent.ConcurrentHashMap<String, Cached>()
+    private val inFlight = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<SearchResult>>>()
+    private const val SEARCH_CACHE_MS = 90_000L
 
     private fun api(internalName: String): MainApiWrapper? =
         apis().firstOrNull { it.internalName == internalName || it.pluginInternalName == internalName }
@@ -84,17 +84,13 @@ object MusicAddon {
         call.respondText("", status = HttpStatusCode.NoContent)
     }
 
-    suspend fun manifest(call: ApplicationCall, only: String? = null) {
-        ServerState.info("[Request] music manifest" + (only?.let { " ($it)" } ?: ""))
-        // one extension's own link: its own add-on id, so the app can have it next to the others
-        val one = only?.let { o -> StremioServer.loadedApis.firstOrNull { it.isMusic && slug(it) == o } }
-        if (only != null && one == null) return call.reply(error("No music extension \"$only\" is installed"), HttpStatusCode.NotFound)
+    suspend fun manifest(call: ApplicationCall) {
+        ServerState.info("[Request] music manifest")
         call.reply(buildJsonObject {
-            put("id", if (one != null) "$ADDON_ID.$only" else ADDON_ID)
-            put("name", if (one != null) "CNCVerse Music · ${one.name}" else "CNCVerse Music")
+            put("id", ADDON_ID)
+            put("name", "CNCVerse Music")
             put("version", "1.0.0")
-            put("description", if (one != null) "Music from the ${one.name} extension (CNCVerse Bridge)"
-                else "Music from the CNCVerse Bridge music extensions (Monochrome, MusicBox...)")
+            put("description", "Music from the CNCVerse Bridge music extensions (Monochrome, MusicBox...)")
             put("icon", "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Bridge/refs/heads/main/logo.png")
             put("resources", buildJsonArray { listOf("search", "stream", "catalog").forEach { add(JsonPrimitive(it)) } })
             put("types", buildJsonArray { listOf("track", "album", "artist").forEach { add(JsonPrimitive(it)) } })
@@ -124,19 +120,18 @@ object MusicAddon {
         return name.trim() to fallbackArtist
     }
 
-    suspend fun search(call: ApplicationCall, only: String? = null) {
+    suspend fun search(call: ApplicationCall) {
         val q = call.request.queryParameters["q"].orEmpty().trim()
-        ServerState.info("[Request] music search \"$q\"" + (only?.let { " ($it)" } ?: ""))
-        val list = apisFor(only)
+        ServerState.info("[Request] music search \"$q\"")
+        val list = apis()
         if (q.isEmpty() || list.isEmpty()) return call.reply(buildJsonObject {
             put("tracks", JsonArray(emptyList())); put("albums", JsonArray(emptyList())); put("artists", JsonArray(emptyList()))
         })
         // every music extension at the same time; one that is slow or fails only costs its own results
         val found = coroutineScope {
             list.map { api ->
-                async(StremioServer.pluginDispatcher) {
-                    val res = withTimeoutOrNull(SEARCH_LIMIT_MS) { runCatching { api.search(q) }.getOrNull() }.orEmpty()
-                    api to res
+                async {
+                    api to searchOne(api, q)
                 }
             }.awaitAll()
         }
@@ -173,11 +168,30 @@ object MusicAddon {
         })
     }
 
+    /** One extension's results for a query: kept for a minute and a half, and a second ask for the same query waits for the first. */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private suspend fun searchOne(api: MainApiWrapper, q: String): List<SearchResult> {
+        val key = api.internalName + "|" + q.lowercase()
+        val now = System.currentTimeMillis()
+        searchCache[key]?.let { if (now - it.at < SEARCH_CACHE_MS) return it.value }
+        if (searchCache.size > 200) searchCache.entries.removeIf { now - it.value.at >= SEARCH_CACHE_MS }
+        val job = inFlight.computeIfAbsent(key) {
+            kotlinx.coroutines.GlobalScope.async(musicDispatcher) {
+                try {
+                    val res = withTimeoutOrNull(SEARCH_LIMIT_MS) { runCatching { api.search(q) }.getOrNull() }.orEmpty()
+                    if (res.isNotEmpty()) searchCache[key] = Cached(System.currentTimeMillis(), res)
+                    res
+                } finally { inFlight.remove(key) }
+            }
+        }
+        return job.await()
+    }
+
     // ── Album / artist ──────────────────────────────────────────────────────
 
     private suspend fun loadInfo(api: MainApiWrapper, url: String): MediaInfo? =
         withTimeoutOrNull(LOAD_LIMIT_MS) {
-            withContext(StremioServer.pluginDispatcher) { runCatching { api.load(url) }.getOrNull() }
+            withContext(musicDispatcher) { runCatching { api.load(url) }.getOrNull() }
         }
 
     private fun trackObjects(api: MainApiWrapper, info: MediaInfo, artist: String): List<JsonObject> {
@@ -264,7 +278,7 @@ object MusicAddon {
             info?.episodes?.firstOrNull()?.dataUrl ?: info?.dataUrl?.takeIf { it.isNotBlank() } ?: url
         } else url
         val built = withTimeoutOrNull(LINKS_LIMIT_MS) {
-            withContext(StremioServer.pluginDispatcher) { runCatching { api.loadLinks(data) }.getOrDefault(emptyList()) }
+            withContext(musicDispatcher) { runCatching { api.loadLinks(data) }.getOrDefault(emptyList()) }
         }.orEmpty()
         val best = pickBest(built) ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
         val label = "${best.name} ${best.title}"

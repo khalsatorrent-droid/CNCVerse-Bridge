@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music add-on: one link again, and it no longer slows the bridge or the tunnel.** The per-extension links (`/music/e/<name>/manifest.json`) are removed; `/music/manifest.json` serves all music extensions. Music work now runs on its own small thread pool (a search typed letter by letter or a slow extension can no longer use up the threads the main add-on and the tunnel check need), a search is kept for 90 s and asked only once when the same one arrives twice, the limits are shorter, and a plain audio link is handed to the app as it is instead of being downloaded whole by the media server first (only links that need headers or live in an extension's own server are prepared).
+
 ## 1.10.1
 
 - **"List every quality separately": the 1080p / 720p / ... entries had no sound.** Each entry pointed straight at one rendition of the master playlist, so when the sound lives in a separate audio playlist (most anime and many embed hosts) the player got a picture with no audio, and lost the subtitle tracks too. Each entry now plays the master playlist with only that resolution kept (served by the relay), so its audio and subtitle groups stay.
