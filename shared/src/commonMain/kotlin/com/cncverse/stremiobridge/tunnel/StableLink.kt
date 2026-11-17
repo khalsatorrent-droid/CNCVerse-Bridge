@@ -118,7 +118,9 @@ object StableLink {
 
     /** True when [url]/manifest.json answers. */
     private fun fixedLinkAnswers(): Boolean = runCatching {
-        client.newCall(okhttp3.Request.Builder().url("$url/manifest.json").build()).execute().use { it.isSuccessful }
+        // a query of its own each time: Rockon's CDN caches a redirect per address for a few seconds, and right after a
+        // registration that cached answer can still lead to the previous tunnel (the query reaches the bridge, which ignores it)
+        client.newCall(okhttp3.Request.Builder().url("$url/manifest.json?check=${System.currentTimeMillis()}").build()).execute().use { it.isSuccessful }
     }.getOrDefault(false)
 
     /**
