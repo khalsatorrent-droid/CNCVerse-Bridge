@@ -884,12 +884,6 @@ object StremioServer {
             get("/music/stream/{id}") { MusicAddon.stream(call) }
             get("/music/album/{id}") { MusicAddon.album(call) }
             get("/music/artist/{id}") { MusicAddon.artist(call) }
-            // one music extension per link: the same protocol, searching only that extension
-            get("/music/e/{ext}/manifest.json") { MusicAddon.manifest(call, call.parameters["ext"].orEmpty()) }
-            get("/music/e/{ext}/search") { MusicAddon.search(call, call.parameters["ext"].orEmpty()) }
-            get("/music/e/{ext}/stream/{id}") { MusicAddon.stream(call) }
-            get("/music/e/{ext}/album/{id}") { MusicAddon.album(call) }
-            get("/music/e/{ext}/artist/{id}") { MusicAddon.artist(call) }
             options("/music/{path...}") { MusicAddon.preflight(call) }
 
             get("/catalog/{path...}") { call.asProfile { call.respondCatalog() } }
@@ -2395,7 +2389,12 @@ object StremioServer {
 
     /** A music link prepared like the other streams (headers, the media server, the extension's local server), no slow checks. */
     fun prepareMusicStream(st: StremioStream, base: String): StremioStream =
-        try { LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, false, 4), base) }
+        try {
+            // A plain audio link goes out as it is: the media server would download the whole file (a FLAC is tens of MB) over the
+            // tunnel before the first note. Only links that need headers or live in an extension's local server are prepared.
+            val needsHelp = !st.behaviorHints?.proxyHeaders?.request.isNullOrEmpty() || com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(st.url)
+            if (!needsHelp) st else LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, false, 4), base)
+        }
         catch (e: Throwable) { ServerState.warn("[Music] could not prepare a link: ${e.javaClass.simpleName}: ${e.message}"); st }
 
     /** Every address stream links can start with, so the website can turn them into its own address. */

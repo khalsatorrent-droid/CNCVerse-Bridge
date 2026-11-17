@@ -192,25 +192,17 @@ fun MusicCard() {
     val localBase = running?.let { "http://${it.ipAddress}:${it.port}" }
     val path = "/music/manifest.json"
     val installed = remember(running) { StremioServer.loadedApis.count { it.isMusic } }
-    // one link for all music extensions, and one per extension so each can be added (or left out) on its own
-    val perExt = remember(running) { com.cncverse.stremiobridge.server.MusicAddon.linkable() }
 
     AmoledCard(Modifier.fillMaxWidth()) {
-        SectionTitle("Music", "Music extensions have add-on links of their own for the Eclipse app: one with all of them, and one per extension. They are never in the main add-on or the profiles.")
+        SectionTitle("Music", "Music extensions have a separate add-on link for the Eclipse app. They are never in the main add-on or the profiles.")
         if (installed == 0) {
             Text("No music extension is installed (Monochrome and MusicBox are in the Watchuu repository)", color = TextMuted, fontSize = 11.sp)
         } else {
             Text("$installed music extension(s) in this add-on", color = TextMuted, fontSize = 11.sp)
         }
-        val groups = buildList {
-            add("All music extensions" to path)
-            perExt.forEach { (slug, name) -> add(name to "/music/e/$slug/manifest.json") }
-        }
         val links = buildList {
-            groups.forEach { (title, p) ->
-                publicBase?.let { add("$title · Internet" to "$it$p") }
-                localBase?.let { add("$title · This network" to "$it$p") }
-            }
+            publicBase?.let { add("Internet" to "$it$path") }
+            localBase?.let { add("This network" to "$it$path") }
         }
         links.forEach { (label, url) ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
