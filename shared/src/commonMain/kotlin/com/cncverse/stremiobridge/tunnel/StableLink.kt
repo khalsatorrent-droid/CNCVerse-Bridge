@@ -8,23 +8,49 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
- * A fixed address for the free temporary Cloudflare link, through the pencarimovie-server relay
- * (https://github.com/aiskendi/pencarimovie-server): this device gets a permanent id, and
- * `https://<id>-tunnel.pencarimovie.com` redirects to whatever `….trycloudflare.com` link the tunnel got this time.
- * Every time the tunnel starts, the new link is registered with the relay (`{shortId, tunnelUrl}`).
+ * A fixed address for the free temporary Cloudflare link, through a relay: this device gets a permanent id, and the
+ * relay's address for that id redirects to whatever `….trycloudflare.com` link the tunnel got this time. Every time
+ * the tunnel starts, the new link is registered with the relay (`{shortId, tunnelUrl}`).
  *
- * The relay belongs to the pencarimovie-server author, who allows it for personal use only (no monetising), so this is
+ * Two relays speak the same protocol ([Relay]):
+ * - Rockon (https://github.com/khalsatorrent-droid/Rockon, on Vercel): `https://rockon-xi.vercel.app/<id>` - the default.
+ * - pencarimovie-server (https://github.com/aiskendi/pencarimovie-server): `https://<id>-tunnel.pencarimovie.com`.
+ *   It belongs to its author, who allows it for personal use only (no monetising).
+ *
  * OFF until the user turns it on in Settings.
  */
 object StableLink {
-    private const val KEY_ENABLED = "KEY_STABLE_LINK_ENABLED"
-    private const val KEY_ID = "KEY_STABLE_LINK_ID"
-    private const val PRIMARY = "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register"
-    private const val FALLBACK = "https://tunnel.pencarimovie.com/api/tunnel/register"
+    enum class Relay(val label: String, val endpoints: List<String>) {
+        ROCKON("Rockon", listOf("https://rockon-xi.vercel.app/api/tunnel/register")),
+        PENCARIMOVIE("pencarimovie", listOf(
+            "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register",
+            "https://tunnel.pencarimovie.com/api/tunnel/register",
+        ));
+
+        fun urlFor(id: String): String = when (this) {
+            ROCKON -> "https://rockon-xi.vercel.app/$id"
+            PENCARIMOVIE -> "https://$id-tunnel.pencarimovie.com"
+        }
+    }
+
+    private const val KEY_RELAY = "KEY_STABLE_LINK_RELAY"
+
+    /** The relay in use. Installs that had the fixed link on before Rockon was added keep pencarimovie until changed (their link stays the same). */
+    var relay: Relay
+        get() = getExtensionSetting(KEY_RELAY)?.let { s -> Relay.entries.firstOrNull { it.name == s } }
+            ?: if (enabled) Relay.PENCARIMOVIE else Relay.ROCKON
+        set(v) = setExtensionSetting(KEY_RELAY, v.name)
+
+    /** Paths of the Rockon site itself: never an id there. */
+    private val RESERVED = setOf("api", "links", "register", "tunnel", "favicon", "robots")
 
     var enabled: Boolean
         get() = getExtensionSetting(KEY_ENABLED) == "true"
-        set(v) = setExtensionSetting(KEY_ENABLED, if (v) "true" else "false")
+        set(v) {
+            // the relay is fixed before the switch changes, so turning it on for the first time picks Rockon
+            if (getExtensionSetting(KEY_RELAY) == null) setExtensionSetting(KEY_RELAY, relay.name)
+            setExtensionSetting(KEY_ENABLED, if (v) "true" else "false")
+        }
 
     /**
      * Permanent per-install id: "cb" + 10 random hex characters (40 random bits, 12 characters - the longest the relay
@@ -53,28 +79,28 @@ object StableLink {
     fun reset(): String = newId()
 
     /** An id the user typed: 4-12 lower-case letters or digits (what the relay accepts), or null. Spaces and capitals are tidied first. */
-    fun cleanId(text: String): String? = text.trim().lowercase().takeIf { Regex("^[a-z0-9]{4,12}$").matches(it) }
+    fun cleanId(text: String): String? = text.trim().lowercase().takeIf { Regex("^[a-z0-9]{4,12}$").matches(it) && it !in RESERVED }
 
-    /** Uses an id of the user's own choice (e.g. "merimarzi" gives https://merimarzi-tunnel.pencarimovie.com). Returns false when it is not a valid id. */
+    /** Uses an id of the user's own choice (e.g. "merimarzi" gives https://rockon-xi.vercel.app/merimarzi). Returns false when it is not a valid id. */
     fun setCustomId(text: String): Boolean {
         val v = cleanId(text) ?: return false
         setExtensionSetting(KEY_ID, v)
         return true
     }
 
-    val url: String get() = "https://$id-tunnel.pencarimovie.com"
+    val url: String get() = relay.urlFor(id)
 
-    // The relay can be slow (its own client notes 8-9 s per registration): generous time limits
+    // The relays can be slow (pencarimovie notes 8-9 s per registration; Vercel starts cold): generous time limits
     private val client by lazy {
         okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
             .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
     }
 
-    /** One registration round on both relay addresses; true when either accepted it. */
+    /** One registration round on the relay's addresses; true when one accepted it. */
     private fun registerOnce(quickUrl: String): Boolean {
         val json = """{"shortId":"$id","tunnelUrl":"$quickUrl"}"""
         var accepted = false
-        for (endpoint in listOf(PRIMARY, FALLBACK)) {
+        for (endpoint in relay.endpoints) {
             val code = runCatching {
                 client.newCall(okhttp3.Request.Builder().url(endpoint).post(json.toRequestBody("application/json".toMediaType())).build())
                     .execute().use { it.code }

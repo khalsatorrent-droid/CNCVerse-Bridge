@@ -88,16 +88,37 @@ fun TunnelSettingsCard() {
         var stable by remember { mutableStateOf(StableLink.enabled) }
         var fixedUrl by remember { mutableStateOf(StableLink.url) }
         var fixedMsg by remember { mutableStateOf<String?>(null) }
+        var relayPick by remember { mutableStateOf(StableLink.relay) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Fixed link for the free temporary tunnel", color = TextPrimary, fontSize = 13.sp)
                 Text(
-                    "Uses the pencarimovie-server relay: $fixedUrl always redirects to the current temporary link, so the Stremio add-on URL stays the same. Personal use only (the relay's owner does not allow monetising it). Takes effect the next time the tunnel starts.",
+                    "$fixedUrl always redirects to the current temporary link, so the Stremio add-on URL stays the same. Takes effect the next time the tunnel starts.",
                     color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,
                 )
             }
-            Switch(checked = stable, onCheckedChange = { stable = it; StableLink.enabled = it })
+            Switch(checked = stable, onCheckedChange = { stable = it; StableLink.enabled = it; relayPick = StableLink.relay })
         }
+        Text("Relay", color = TextMuted, fontSize = 11.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StableLink.Relay.entries.forEach { r ->
+                ActionButton(r.label, primary = relayPick == r) {
+                    if (relayPick != r) {
+                        StableLink.relay = r
+                        relayPick = r
+                        fixedUrl = StableLink.url
+                        fixedMsg = "Fixed link: $fixedUrl - install the Stremio add-on again with it. Applies the next time the tunnel starts."
+                    }
+                }
+            }
+        }
+        Text(
+            when (relayPick) {
+                StableLink.Relay.ROCKON -> "Rockon: your own relay on Vercel (rockon-xi.vercel.app)."
+                StableLink.Relay.PENCARIMOVIE -> "pencarimovie-server: personal use only (the relay's owner does not allow monetising it)."
+            },
+            color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,
+        )
         Spacer(Modifier.height(6.dp))
         ActionButton("New fixed link (change this device's id)") {
             StableLink.reset()

@@ -54,7 +54,7 @@ A **tunnel** is a private doorway from the internet to your device, so Stremio c
 |---|---|---|
 | 🆓 **Free temporary tunnel** | none, just turn on *Stremio Mode* | no, it changes every start |
 | 📌 **Free tunnel + fixed link** | one switch | yes, with the relay |
-| 🏷️ **Free tunnel + *your own* name** | one switch and type a name | yes, e.g. `https://merimarzi-tunnel.pencarimovie.com` |
+| 🏷️ **Free tunnel + *your own* name** | one switch and type a name | yes, e.g. `https://rockon-xi.vercel.app/merimarzi` (Rockon) or `https://merimarzi-tunnel.pencarimovie.com` |
 | 🔐 **Your own Cloudflare Tunnel** | a few steps (below) | yes, on your own domain |
 
 > ℹ️ The fixed-link relay belongs to the pencarimovie-server author and is for **personal use only**. It is shared by everyone, so choose a name nobody can guess.
