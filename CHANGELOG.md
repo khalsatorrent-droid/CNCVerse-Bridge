@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed link: far fewer calls to the relay.** The 2-minute tunnel check asked the fixed link (so the relay) for the manifest every time - about 21,600 relay calls a month for a bridge left on. It now checks the tunnel itself.
+- **Rockon: registered when the link changes, not every 15 minutes.** Rockon keeps registrations, so a new tunnel link is registered at once and the same link again only every 6 hours (a safety round). pencarimovie keeps the 15-minute round; a registration that was refused is still retried every 15 minutes. A bridge left on 24/7 now makes a few hundred Rockon calls a month instead of about 27,000.
+
 ## 1.10.3
 
 - **Fixed link: Rockon relay.** The fixed link for the free temporary tunnel can now use Rockon (`https://rockon-xi.vercel.app/<id>`) instead of the pencarimovie-server relay. Pick the relay in Settings › Fixed link; turning the fixed link on for the first time uses Rockon. Installs that already had it on keep pencarimovie (and their link) until they switch. Changing the relay changes the link, so the Stremio add-on has to be installed again with the new one.
