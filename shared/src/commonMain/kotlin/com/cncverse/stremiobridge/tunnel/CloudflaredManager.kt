@@ -322,12 +322,16 @@ object CloudflaredManager {
                                         ServerState.activeTunnelUrl.value = fixed
                                         ServerState.info("🔗 Fixed link: $fixed  (Stremio add-on: $fixed/manifest.json) - redirects to $url")
                                     }
-                                    // While this tunnel runs, the relay is told again every 15 minutes (and a link that
-                                    // was refused at start-up gets its next chance here)
+                                    // A new tunnel link is registered above. While this one runs, the relay is told again:
+                                    // every 15 minutes until it has taken the link, then every 15 minutes for pencarimovie
+                                    // (it may forget registrations) but only every 6 hours for Rockon, which keeps them
+                                    // (one safety round in case the entry was lost or overwritten)
+                                    var ok = fixed != null
                                     while (isActive && process.isAlive && currentQuickUrl == url) {
-                                        delay(15 * 60_000L)
+                                        delay(if (ok) StableLink.relay.refreshEveryMs else 15 * 60_000L)
                                         if (!isActive || !process.isAlive || currentQuickUrl != url) break
                                         val again = StableLink.refresh(url)
+                                        ok = again != null
                                         val shown = ServerState.activeTunnelUrl.value
                                         if (again != null && shown == url) {
                                             ServerState.activeTunnelUrl.value = again

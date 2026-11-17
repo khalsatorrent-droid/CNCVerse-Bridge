@@ -20,12 +20,14 @@ import java.util.concurrent.TimeUnit
  * OFF until the user turns it on in Settings.
  */
 object StableLink {
-    enum class Relay(val label: String, val endpoints: List<String>) {
-        ROCKON("Rockon", listOf("https://rockon-xi.vercel.app/api/tunnel/register")),
+    /** [refreshEveryMs]: how often a link the relay already took is registered again while the same tunnel runs. */
+    enum class Relay(val label: String, val endpoints: List<String>, val refreshEveryMs: Long) {
+        // keeps registrations (Firebase): a new tunnel link is registered at once, the same one again only every 6 hours
+        ROCKON("Rockon", listOf("https://rockon-xi.vercel.app/api/tunnel/register"), 6 * 3_600_000L),
         PENCARIMOVIE("pencarimovie", listOf(
             "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register",
             "https://tunnel.pencarimovie.com/api/tunnel/register",
-        ));
+        ), 15 * 60_000L);
 
         fun urlFor(id: String): String = when (this) {
             ROCKON -> "https://rockon-xi.vercel.app/$id"
@@ -141,7 +143,7 @@ object StableLink {
     }
 
     /**
-     * Keeps the relay pointed at [quickUrl] while the tunnel runs: registers again (quietly) every 15 minutes, and when
+     * Keeps the relay pointed at [quickUrl] while the tunnel runs: registers again (quietly) every [Relay.refreshEveryMs] (15 minutes until it is taken), and when
      * the fixed link does not lead here any more. Returns the fixed address when it works, null otherwise.
      */
     fun refresh(quickUrl: String): String? {
