@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.3
 
 - **Fixed link: Rockon relay.** The fixed link for the free temporary tunnel can now use Rockon (`https://rockon-xi.vercel.app/<id>`) instead of the pencarimovie-server relay. Pick the relay in Settings › Fixed link; turning the fixed link on for the first time uses Rockon. Installs that already had it on keep pencarimovie (and their link) until they switch. Changing the relay changes the link, so the Stremio add-on has to be installed again with the new one.
 
