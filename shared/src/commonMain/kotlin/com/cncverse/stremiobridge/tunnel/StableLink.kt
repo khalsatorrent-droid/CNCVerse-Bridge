@@ -22,12 +22,13 @@ import java.util.concurrent.TimeUnit
 object StableLink {
     /** [refreshEveryMs]: how often a link the relay already took is registered again while the same tunnel runs. */
     enum class Relay(val label: String, val endpoints: List<String>, val refreshEveryMs: Long) {
-        // keeps registrations (Firebase): a new tunnel link is registered at once, the same one again only every 6 hours
+        // both: a new tunnel link is registered at once, the same one again only every 6 hours (a safety round in case
+        // the relay lost or forgot the entry); a refused registration is retried every 15 minutes
         ROCKON("Rockon", listOf("https://rockon-xi.vercel.app/api/tunnel/register"), 6 * 3_600_000L),
         PENCARIMOVIE("pencarimovie", listOf(
             "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register",
             "https://tunnel.pencarimovie.com/api/tunnel/register",
-        ), 15 * 60_000L);
+        ), 6 * 3_600_000L);
 
         fun urlFor(id: String): String = when (this) {
             ROCKON -> "https://rockon-xi.vercel.app/$id"

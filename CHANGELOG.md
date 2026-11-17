@@ -3,7 +3,7 @@
 ## Unreleased
 
 - **Fixed link: far fewer calls to the relay.** The 2-minute tunnel check asked the fixed link (so the relay) for the manifest every time - about 21,600 relay calls a month for a bridge left on. It now checks the tunnel itself.
-- **Rockon: registered when the link changes, not every 15 minutes.** Rockon keeps registrations, so a new tunnel link is registered at once and the same link again only every 6 hours (a safety round). pencarimovie keeps the 15-minute round; a registration that was refused is still retried every 15 minutes. A bridge left on 24/7 now makes a few hundred Rockon calls a month instead of about 27,000.
+- **Fixed link: registered when the tunnel link changes, not every 15 minutes.** With Rockon and pencarimovie alike, a new tunnel link is registered at once and the same link again only every 6 hours (a safety round in case the relay lost the entry); a registration that was refused is still retried every 15 minutes. A bridge left on 24/7 now makes a few hundred relay calls a month instead of about 27,000-30,000.
 
 ## 1.10.3
 
