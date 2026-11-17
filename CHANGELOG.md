@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.5
 
 - **Fixed link: the check after a registration skips the relay's cache.** Rockon now lets its CDN answer repeat redirects for a few seconds; the bridge's own "does the fixed link work" check adds a unique query so it never gets a cached answer still leading to the previous tunnel (which made it keep the temporary link).
 
