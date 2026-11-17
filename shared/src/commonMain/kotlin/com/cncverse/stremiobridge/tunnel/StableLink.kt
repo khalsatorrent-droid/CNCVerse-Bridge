@@ -33,6 +33,8 @@ object StableLink {
         }
     }
 
+    private const val KEY_ENABLED = "KEY_STABLE_LINK_ENABLED"
+    private const val KEY_ID = "KEY_STABLE_LINK_ID"
     private const val KEY_RELAY = "KEY_STABLE_LINK_RELAY"
 
     /** The relay in use. Installs that had the fixed link on before Rockon was added keep pencarimovie until changed (their link stays the same). */
