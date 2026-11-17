@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.2
 
 - **Music add-on: one link again, and it no longer slows the bridge or the tunnel.** The per-extension links (`/music/e/<name>/manifest.json`) are removed; `/music/manifest.json` serves all music extensions. Music work now runs on its own small thread pool (a search typed letter by letter or a slow extension can no longer use up the threads the main add-on and the tunnel check need), a search is kept for 90 s and asked only once when the same one arrives twice, the limits are shorter, and a plain audio link is handed to the app as it is instead of being downloaded whole by the media server first (only links that need headers or live in an extension's own server are prepared).
 
