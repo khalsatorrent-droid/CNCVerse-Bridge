@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.1
 
 - **"List every quality separately": the 1080p / 720p / ... entries had no sound.** Each entry pointed straight at one rendition of the master playlist, so when the sound lives in a separate audio playlist (most anime and many embed hosts) the player got a picture with no audio, and lost the subtitle tracks too. Each entry now plays the master playlist with only that resolution kept (served by the relay), so its audio and subtitle groups stay.
 - **"Always play the highest resolution": some links played without sound.** A separate audio playlist was only noticed when its attributes were written in one order (TYPE before URI); written the other way round, the link was switched to the bare top rendition, which has no sound. The check now reads the attributes in any order, and a rendition whose codecs name no sound codec is never played on its own.
