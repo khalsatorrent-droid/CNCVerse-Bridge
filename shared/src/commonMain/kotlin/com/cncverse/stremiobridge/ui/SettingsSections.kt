@@ -121,6 +121,16 @@ fun TunnelSettingsCard() {
             color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,
         )
         if (relayPick == StableLink.Relay.WORKER) {
+            val workerClipboard = LocalClipboardManager.current
+            var codeCopied by remember { mutableStateOf(false) }
+            Text("Set up your Worker (once):", color = TextPrimary, fontSize = 12.sp)
+            com.cncverse.stremiobridge.tunnel.RockonWorker.STEPS.forEachIndexed { i, step ->
+                Text("${i + 1}. $step", color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+            }
+            ActionButton(if (codeCopied) "Worker code copied" else "Copy Worker code", primary = !codeCopied) {
+                workerClipboard.setText(AnnotatedString(com.cncverse.stremiobridge.tunnel.RockonWorker.CODE))
+                codeCopied = true
+            }
             var workerText by remember { mutableStateOf(StableLink.workerBase.orEmpty()) }
             OutlinedTextField(
                 value = workerText,
