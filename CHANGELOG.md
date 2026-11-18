@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.8
 
 - **Music: the right song before the best quality.** Links are now ordered by how sure they are to be the exact recording, then by quality: the catalogue extensions (Monochrome, Octave...) that play the exact track they list come first; MusicBox, which finds its links by searching the song's name on download services, comes after them; YouTube converters and Spotify downloaders come last.
 - **Music: stricter title and artist match.** An instrumental, karaoke, remix, live, acoustic, cover, sped-up/slowed/lofi, extended or reprise version no longer counts as the song (before, "(Instrumental)" in brackets was simply dropped, so an instrumental could play instead of the song). An artist must match by full name ("Matthew Ifield"), not by one shared word. Titles with " - " in them ("Ghalat Fehmi - From \"Superstar\" - Asim Azhar") are split at the last dash, so their artist is read correctly. Search lists such versions below the original unless they were searched for.
