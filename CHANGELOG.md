@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.11
 
 - **Music search sometimes gave no results.** The answer waited for the slowest music extension (up to 8 s plus the tunnel), and the app sometimes gave up first - the log showed "Incoming request ended abruptly" and nothing appeared. A search is now answered after 6 s at most, or 1.2 s after an exact match (every searched word, the title itself) arrived; a slower extension keeps searching in the background and its results are kept for when the track is played.
 - **Music: artists with "-" or "/" in their name were not found.** Several music services read "CHEN-K Berang" as "CHEN but not K", so only unrelated songs came back. Such searches now also run with spaces ("CHEN K Berang"), and the results of both are used.
