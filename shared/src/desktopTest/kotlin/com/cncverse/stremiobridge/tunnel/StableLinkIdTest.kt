@@ -19,4 +19,11 @@ class StableLinkIdTest {
         assertEquals("https://rockon-xi.vercel.app/abcd", StableLink.Relay.ROCKON.urlFor("abcd"))
         assertEquals("https://abcd-tunnel.pencarimovie.com", StableLink.Relay.PENCARIMOVIE.urlFor("abcd"))
     }
+
+    @Test
+    fun `a worker address is cleaned to its origin`() {
+        assertEquals("https://rockon.me.workers.dev", StableLink.cleanWorkerBase("rockon.me.workers.dev"))
+        assertEquals("https://rockon.me.workers.dev", StableLink.cleanWorkerBase("https://rockon.me.workers.dev/abc/manifest.json"))
+        assertNull(StableLink.cleanWorkerBase("not an address"))
+    }
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed link: your own Cloudflare Worker as the relay.** Settings › Fixed link has a third relay, "Your Worker": the Rockon relay running on your own Cloudflare Worker (worker/rockon-worker.js in the Rockon repo), with the Worker's address typed in once. A Worker answers from a Cloudflare server near you and does not go to sleep like the Vercel function, so every add-on request starts sooner. The fixed link becomes https://<your worker>/<id>.
+
 ## 1.10.12
 
 - **Music: a track starts sooner.** Playing a track waited for every music extension (up to 8 s) before answering. It now answers at once when a hi-res link from an extension that plays the exact track is in (nothing can beat it), 1.5 s after the first link from such an extension, and at 8 s at the latest; slower extensions are left out.

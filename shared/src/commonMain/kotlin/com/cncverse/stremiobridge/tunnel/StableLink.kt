@@ -12,8 +12,9 @@ import java.util.concurrent.TimeUnit
  * relay's address for that id redirects to whatever `….trycloudflare.com` link the tunnel got this time. Every time
  * the tunnel starts, the new link is registered with the relay (`{shortId, tunnelUrl}`).
  *
- * Two relays speak the same protocol ([Relay]):
+ * Three relays speak the same protocol ([Relay]):
  * - Rockon (https://github.com/khalsatorrent-droid/Rockon, on Vercel): `https://rockon-xi.vercel.app/<id>` - the default.
+ * - the same Rockon relay on the user's own Cloudflare Worker: `https://<worker>.workers.dev/<id>`.
  * - pencarimovie-server (https://github.com/aiskendi/pencarimovie-server): `https://<id>-tunnel.pencarimovie.com`.
  *   It belongs to its author, who allows it for personal use only (no monetising).
  *
@@ -21,19 +22,49 @@ import java.util.concurrent.TimeUnit
  */
 object StableLink {
     /** [refreshEveryMs]: how often a link the relay already took is registered again while the same tunnel runs. */
-    enum class Relay(val label: String, val endpoints: List<String>, val refreshEveryMs: Long) {
-        // both: a new tunnel link is registered at once, the same one again only every 6 hours (a safety round in case
+    enum class Relay(val label: String, val refreshEveryMs: Long) {
+        // all: a new tunnel link is registered at once, the same one again only every 6 hours (a safety round in case
         // the relay lost or forgot the entry); a refused registration is retried every 15 minutes
-        ROCKON("Rockon", listOf("https://rockon-xi.vercel.app/api/tunnel/register"), 6 * 3_600_000L),
-        PENCARIMOVIE("pencarimovie", listOf(
-            "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register",
-            "https://tunnel.pencarimovie.com/api/tunnel/register",
-        ), 6 * 3_600_000L);
+        ROCKON("Rockon", 6 * 3_600_000L),
+        /** The Rockon relay on the user's own Cloudflare Worker (Rockon repo, worker/rockon-worker.js): no wake-up delay. */
+        WORKER("Your Worker", 6 * 3_600_000L),
+        PENCARIMOVIE("pencarimovie", 6 * 3_600_000L);
+
+        val endpoints: List<String>
+            get() = when (this) {
+                ROCKON -> listOf("https://rockon-xi.vercel.app/api/tunnel/register")
+                WORKER -> StableLink.workerBase?.let { listOf("$it/api/tunnel/register") }.orEmpty()
+                PENCARIMOVIE -> listOf(
+                    "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register",
+                    "https://tunnel.pencarimovie.com/api/tunnel/register",
+                )
+            }
 
         fun urlFor(id: String): String = when (this) {
             ROCKON -> "https://rockon-xi.vercel.app/$id"
+            WORKER -> "${StableLink.workerBase ?: "https://<your-worker>.workers.dev"}/$id"
             PENCARIMOVIE -> "https://$id-tunnel.pencarimovie.com"
         }
+    }
+
+    private const val KEY_WORKER = "KEY_STABLE_LINK_WORKER"
+
+    /** The address of the user's Rockon Worker (https://name.account.workers.dev), null until set. */
+    val workerBase: String? get() = getExtensionSetting(KEY_WORKER)?.takeIf { it.isNotBlank() }
+
+    /** "rockon.me.workers.dev", "https://rockon.me.workers.dev/" or a link under it -> https://rockon.me.workers.dev; null when not an address. */
+    fun cleanWorkerBase(text: String): String? {
+        val t = text.trim().let { if (it.startsWith("http://", true) || it.startsWith("https://", true)) it else "https://$it" }
+        val u = runCatching { java.net.URI(t) }.getOrNull() ?: return null
+        val host = u.host?.lowercase()?.takeIf { it.contains('.') && !it.endsWith('.') } ?: return null
+        return "https://$host" + (if (u.port > 0 && u.port != 443) ":${u.port}" else "")
+    }
+
+    /** Saves the Worker address; false when it is not one. */
+    fun setWorkerBase(text: String): Boolean {
+        val clean = cleanWorkerBase(text) ?: return false
+        setExtensionSetting(KEY_WORKER, clean)
+        return true
     }
 
     private const val KEY_ENABLED = "KEY_STABLE_LINK_ENABLED"

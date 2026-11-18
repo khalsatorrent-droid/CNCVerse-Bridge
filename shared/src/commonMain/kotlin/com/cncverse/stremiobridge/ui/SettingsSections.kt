@@ -115,10 +115,30 @@ fun TunnelSettingsCard() {
         Text(
             when (relayPick) {
                 StableLink.Relay.ROCKON -> "Rockon: your own relay on Vercel (rockon-xi.vercel.app)."
+                StableLink.Relay.WORKER -> "Your own Cloudflare Worker running the Rockon relay (worker/rockon-worker.js in the Rockon repo): answers from near you, with no wake-up delay."
                 StableLink.Relay.PENCARIMOVIE -> "pencarimovie-server: personal use only (the relay's owner does not allow monetising it)."
             },
             color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,
         )
+        if (relayPick == StableLink.Relay.WORKER) {
+            var workerText by remember { mutableStateOf(StableLink.workerBase.orEmpty()) }
+            OutlinedTextField(
+                value = workerText,
+                onValueChange = { workerText = it.trim() },
+                label = { Text("Your Worker's address") },
+                placeholder = { Text("https://rockon.yourname.workers.dev", color = TextMuted) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = amoledFieldColors(),
+            )
+            ActionButton("Save Worker address", enabled = StableLink.cleanWorkerBase(workerText) != null) {
+                if (StableLink.setWorkerBase(workerText)) {
+                    workerText = StableLink.workerBase.orEmpty()
+                    fixedUrl = StableLink.url
+                    fixedMsg = "Fixed link: $fixedUrl - install the add-on again with it. Applies the next time the tunnel starts."
+                }
+            }
+        }
         Spacer(Modifier.height(6.dp))
         ActionButton("New fixed link (change this device's id)") {
             StableLink.reset()
