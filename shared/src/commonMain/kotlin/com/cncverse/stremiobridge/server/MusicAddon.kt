@@ -272,7 +272,10 @@ object MusicAddon {
                 tr.r.posterUrl?.takeIf { it.isNotBlank() }?.let { put("artworkURL", it) }
             }
         }
-        if (found.count { it.second.isNotEmpty() } > 1) ServerState.info("[Music] \"$q\": ${trackList.size} tracks from ${found.count { it.second.isNotEmpty() }} extensions, ${tracks.size} after merging the same tracks")
+        // what each extension answered and the first tracks sent back: the app picks a track from these by title and artist,
+        // and plays nothing when none of them is the song (no "music stream" line follows then)
+        ServerState.info("[Music] \"$q\": ${trackList.size} tracks (" + found.joinToString(", ") { (a, r) -> "${a.name} ${r.count { kindOf(it) == Kind.TRACK }}" } +
+            "), ${tracks.size} after merging; first: " + kept.take(5).joinToString(" | ") { "${it.title} - ${it.artist} [${it.api.name}]" }.ifEmpty { "none" })
         call.reply(buildJsonObject {
             put("tracks", JsonArray(tracks)); put("albums", JsonArray(albums)); put("artists", JsonArray(artists))
         })

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music log: what a search sent back.** Each search now logs how many tracks every music extension found and the first five tracks sent to the app (title - artist [extension]). When the app plays nothing after a search, this shows whether the song was among them.
+
 ## 1.10.9
 
 - **Music log: what played and why.** Every played track now logs its links and the one picked (also when only one extension had it), says when the link was found by searching the song's name (MusicBox, YouTube converters), and an extension that did not have the track lists the closest titles it did have, so a wrong rejection can be seen.
