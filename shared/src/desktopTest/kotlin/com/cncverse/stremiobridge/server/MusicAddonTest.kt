@@ -72,9 +72,18 @@ class MusicAddonTest {
         assertFalse(MusicAddon.sameTrack("Tum Hi Ho", "Arijit Singh", "Tum Hi Ho - 2013 Remaster", ""))
         assertTrue(MusicAddon.sameTrack("Get Ready", "D'tour", "Get Ready", "D’TOUR"))
         assertFalse(MusicAddon.sameTrack("Get Ready", "D'tour", "Get Ready", "D Smoke"))
+        // another recording of the same song is not the same track
+        assertFalse(MusicAddon.sameTrack("Kesariya", "Arijit Singh", "Kesariya (Instrumental)", "Arijit Singh"))
+        assertFalse(MusicAddon.sameTrack("Kesariya", "Arijit Singh", "Kesariya - Lofi Flip", "Arijit Singh"))
+        assertFalse(MusicAddon.sameTrack("Kesariya", "Arijit Singh", "Kesariya - Sped Up", "Arijit Singh"))
+        assertTrue(MusicAddon.sameTrack("Kesariya (From \"Brahmastra\")", "Arijit Singh", "Kesariya", "Pritam, Arijit Singh"))
+        // a full artist name must match, not one word of it
+        assertFalse(MusicAddon.sameTrack("Get Ready", "Tour Band", "Get Ready", "Tour Collective"))
+        assertTrue(MusicAddon.sameTrack("Above the Clouds", "Matthew Ifield", "Above the Clouds", "Matthew Ifield, Ted Fresco"))
         assertFalse(MusicAddon.sameTrack("Blinding Lights", "The Weeknd", "Blinding Lights", "Some Cover Band"))
         assertFalse(MusicAddon.sameTrack("Hello", "Adele", "Hello Again", "Adele"))
         assertTrue(MusicAddon.accuracy("tum hi ho arijit", "Tum Hi Ho", "Arijit Singh") > MusicAddon.accuracy("tum hi ho arijit", "Tum Hi Ho Unplugged", "Cover"))
+        assertTrue(MusicAddon.accuracy("kesariya arijit", "Kesariya", "Arijit Singh") > MusicAddon.accuracy("kesariya arijit", "Kesariya (Instrumental)", "Arijit Singh"))
     }
 
     @Test
@@ -82,5 +91,16 @@ class MusicAddonTest {
         val d = MusicAddon.trackData("https://site/t/1", "Song", "Singer", "song singer")
         assertEquals(listOf("https://site/t/1", "Song", "Singer", "song singer"), MusicAddon.splitTrack(d))
         assertEquals(listOf("https://site/t/1", "", "", ""), MusicAddon.splitTrack("https://site/t/1"))
+    }
+
+    @Test
+    fun `the right recording comes before quality`() {
+        val box = StremioStream(name = "MusicBox - 1411p", url = "https://cdn.example/x", info = com.cncverse.stremiobridge.model.StreamInfo(quality = 1411))
+        val yt = StremioStream(name = "Y2Mate 320kbps", url = "https://cdn.example/y")
+        val mono = StremioStream(name = "Monochrome", url = "https://cdn.example/z.m4a")
+        assertTrue(MusicAddon.trust("Monochrome", mono) > MusicAddon.trust("MusicBox", box))
+        assertTrue(MusicAddon.trust("MusicBox", box) > MusicAddon.trust("MusicBox", yt))
+        assertEquals(setOf("instrumental"), MusicAddon.variantsOf("Song (Instrumental Version)"))
+        assertEquals(setOf("matthew ifield", "ted fresco"), MusicAddon.artistNames("Matthew Ifield & Ted Fresco"))
     }
 }

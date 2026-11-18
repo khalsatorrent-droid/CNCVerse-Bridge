@@ -77,15 +77,37 @@ object MusicAddon {
 
     private val BRACKETS = Regex("""[(\[][^)\]]*[)\]]""")
     private val FEAT = Regex("""\s(feat\.?|ft\.?|featuring)\s.*$""", RegexOption.IGNORE_CASE)
-    private val VERSION = Regex("""\s[-–—]\s.*(remaster|version|edit|live|mix|mono|stereo).*$""", RegexOption.IGNORE_CASE)
+    private val DASH_TAIL = Regex("""\s[-–—]\s(.*)$""")
 
-    /** A title or artist reduced to lower-case words: no brackets, "feat. ...", " - Remastered 2011", accents or punctuation. */
-    internal fun norm(s: String): String {
+    /**
+     * Words that make a different recording of the same song: "Song (Instrumental)" is not "Song". Two titles only match when they
+     * carry the same set of these. Remastered, "From <film>", "feat." and the like do not change the recording and are ignored.
+     */
+    private val VARIANTS = linkedMapOf(
+        "instrumental" to Regex("""instrumental|karaoke|backing.?track|minus.?one|no.?vocals?|without.?vocals?|beat\s*only""", RegexOption.IGNORE_CASE),
+        "acapella" to Regex("""a.?cap+el+a|vocals?\s*only""", RegexOption.IGNORE_CASE),
+        "remix" to Regex("""remix|\brmx\b|\bvip\b|bootleg|mashup|\bflip\b""", RegexOption.IGNORE_CASE),
+        "live" to Regex("""\blive\b|concert|in session""", RegexOption.IGNORE_CASE),
+        "acoustic" to Regex("""acoustic|unplugged|piano version|stripped""", RegexOption.IGNORE_CASE),
+        "cover" to Regex("""\bcover\b|tribute|made famous|in the style of""", RegexOption.IGNORE_CASE),
+        "speed" to Regex("""sped.?up|slowed|reverb|nightcore|\b8d\b|lo.?fi|daycore|super.?slowed""", RegexOption.IGNORE_CASE),
+        "extended" to Regex("""extended|club mix|radio edit|\bedit\b|short version|tv size""", RegexOption.IGNORE_CASE),
+        "demo" to Regex("""\bdemo\b""", RegexOption.IGNORE_CASE),
+        "reprise" to Regex("""reprise|\bsad version|female version|male version|duet version""", RegexOption.IGNORE_CASE),
+    )
+
+    /** Which [VARIANTS] a title is (from its brackets, its " - ..." tail or anywhere in it). */
+    internal fun variantsOf(title: String): Set<String> = VARIANTS.filterValues { it.containsMatchIn(title) }.keys
+
+    private fun plain(s: String): String {
         // apostrophes join (D'tour -> dtour): split, the "d" alone would match any other artist with a lone letter
-        var x = s.replace(BRACKETS, " ").replace(FEAT, "").replace(VERSION, "").replace(Regex("['’`´]"), "")
+        var x = s.replace(Regex("['’`´]"), "")
         x = java.text.Normalizer.normalize(x, java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
         return x.lowercase().replace("&", " and ").replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
     }
+
+    /** A title or artist reduced to lower-case words: no brackets, "feat. ...", " - Remastered 2011", accents or punctuation. */
+    internal fun norm(s: String): String = plain(s.replace(BRACKETS, " ").replace(FEAT, "").replace(DASH_TAIL, ""))
 
     private fun words(s: String): Set<String> = norm(s).split(' ').filter { it.isNotEmpty() }.toSet()
 
@@ -96,21 +118,42 @@ object MusicAddon {
         val have = words("$title $artist")
         val share = q.count { it in have }.toDouble() / q.size
         val exactTitle = norm(title).isNotEmpty() && (norm(query) == norm(title) || norm(query).startsWith(norm(title) + " ") || norm(query).endsWith(" " + norm(title)))
-        return share + (if (exactTitle) 0.5 else 0.0)
+        // a variant nobody searched for (Instrumental, Sped up, Cover...) goes below the original
+        val unasked = (variantsOf(title) - variantsOf(query)).size
+        return share + (if (exactTitle) 0.5 else 0.0) - 0.6 * unasked
     }
 
+    private val ARTIST_SPLIT = Regex("""\s*(,|&|/|;|\+|\bx\b|\band\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bvs\.?)\s*""", RegexOption.IGNORE_CASE)
+
+    /** The full names of the artists ("Matthew Ifield, Ted Fresco" -> [matthew ifield, ted fresco]); a leading "the" is dropped. */
+    internal fun artistNames(s: String): Set<String> =
+        s.split(ARTIST_SPLIT).map { plain(it).removePrefix("the ").trim() }.filter { it.length >= 2 }.toSet()
+
     /**
-     * The same recording: the same title once cleaned, and the artists share a real word (2+ letters, not "the" / "and").
-     * Both artists must be known: a common title ("Get Ready") with no artist matched songs by other people.
+     * The same recording, strictly: the same title once cleaned, the same version (an Instrumental, Remix, Live, Sped up... only
+     * matches the same kind), and at least one artist with exactly the same full name. Both artists must be known.
      */
     internal fun sameTrack(title1: String, artist1: String, title2: String, artist2: String): Boolean {
         if (norm(title1).isEmpty() || norm(title1) != norm(title2)) return false
-        val a1 = artistWords(artist1); val a2 = artistWords(artist2)
+        if (variantsOf(title1) != variantsOf(title2)) return false
+        val a1 = artistNames(artist1); val a2 = artistNames(artist2)
         return a1.isNotEmpty() && a2.isNotEmpty() && a1.any { it in a2 }
     }
 
-    private val ARTIST_STOP = setOf("the", "and", "feat", "ft", "with", "x", "vs")
-    private fun artistWords(s: String) = words(s).filter { it.length >= 2 && it !in ARTIST_STOP }.toSet()
+    /**
+     * How sure a link is to be the right recording - this comes before its quality. Links from download services that find a song
+     * by searching its name (YouTube converters, Spotify downloaders) can be another song or an instrumental; MusicBox gathers its
+     * links that way, so its links come after the catalogue extensions (Monochrome, Octave...) that play the exact track they list.
+     */
+    internal fun trust(api: String, st: StremioStream): Int {
+        val label = "${st.name.orEmpty()} ${st.title.orEmpty()} ${st.description.orEmpty()}"
+        return when {
+            BY_NAME.containsMatchIn(label) -> 0
+            api.equals("MusicBox", true) -> 1
+            else -> 2
+        }
+    }
+    private val BY_NAME = Regex("""y2mate|ytmp3|youtube|\byt\b|cnvmp3|spotsaver|spotidown|spotifydownloads|spotify ?down|musicfab|rapidapi|savefrom|ssyoutube""", RegexOption.IGNORE_CASE)
 
     /** (extension, kind, address) of an id made by [id]; null when it is not one of ours. */
     private fun decode(id: String): Triple<MainApiWrapper, Char, String>? {
@@ -168,8 +211,9 @@ object MusicAddon {
 
     /** "Title - Artist" names are split; without that shape the extension's own name stands in for the artist (the field is required). */
     private fun titleAndArtist(name: String, fallbackArtist: String): Pair<String, String> {
+        // the last separator: titles carry " - " themselves ("Ghalat Fehmi - From \"Superstar\" - Asim Azhar"), artists rarely do
         for (sep in listOf(" - ", " – ", " — ", " • ", " | ")) {
-            val i = name.indexOf(sep)
+            val i = name.lastIndexOf(sep)
             if (i > 0 && i < name.length - sep.length) return name.substring(0, i).trim() to name.substring(i + sep.length).trim()
         }
         return name.trim() to fallbackArtist
@@ -394,10 +438,12 @@ object MusicAddon {
             own.await() + more.awaitAll().filterNotNull()
         }
         val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
-            .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
+            // the right recording first, the best quality among those
+            .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
+                .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
         val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
         if (all.size > 1) ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
-            "${a.name} ${qualityRank(s)}" + (s.info?.quality?.let { " (q$it)" } ?: "")
+            "${a.name} [trust ${trust(a.name, s)}, ${qualityRank(s)}" + (s.info?.quality?.let { ", q$it" } ?: "") + "] " + s.title.orEmpty().take(40)
         })
         if (all.size > 1) ServerState.info("[Music] \"$title\": ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.name.orEmpty().ifBlank { best.title.orEmpty() }.take(60)}\"")
         val label = "${best.name} ${best.title}"

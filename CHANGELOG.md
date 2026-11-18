@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Music: the right song before the best quality.** Links are now ordered by how sure they are to be the exact recording, then by quality: the catalogue extensions (Monochrome, Octave...) that play the exact track they list come first; MusicBox, which finds its links by searching the song's name on download services, comes after them; YouTube converters and Spotify downloaders come last.
+- **Music: stricter title and artist match.** An instrumental, karaoke, remix, live, acoustic, cover, sped-up/slowed/lofi, extended or reprise version no longer counts as the song (before, "(Instrumental)" in brackets was simply dropped, so an instrumental could play instead of the song). An artist must match by full name ("Matthew Ifield"), not by one shared word. Titles with " - " in them ("Ghalat Fehmi - From \"Superstar\" - Asim Azhar") are split at the last dash, so their artist is read correctly. Search lists such versions below the original unless they were searched for.
+
 ## 1.10.7
 
 - **Music: the best link was ranked on the name only.** The quality an extension sets on a link (MusicBox "1411p" = CD FLAC) was ignored, so an unlabelled .mp3 (Arcod) beat lossless links from MusicBox and Monochrome. The link's quality now counts (1000-1999 kbps = lossless, 2000+ = hi-res), and the log lists every link with its rank.
