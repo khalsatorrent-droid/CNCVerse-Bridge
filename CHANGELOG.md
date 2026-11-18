@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.6
 
 - **Music: the best link from every music extension.** With several music extensions installed, playing a track now asks all of them for that track at the same time (8 s at most for the others) and plays the best link: hi-res FLAC > FLAC / lossless > 999 kbps > 320 kbps > ... ; 30-second previews always come last. The log names the extension and link that was picked.
 - **Music search: most accurate first, no duplicates.** The same track found by several extensions is listed once, and tracks that match the search best (title and artist) come first.
