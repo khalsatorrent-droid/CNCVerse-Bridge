@@ -226,6 +226,7 @@ object MusicAddon {
         if (q.isEmpty() || list.isEmpty()) return call.reply(buildJsonObject {
             put("tracks", JsonArray(emptyList())); put("albums", JsonArray(emptyList())); put("artists", JsonArray(emptyList()))
         })
+        val searchStart = System.currentTimeMillis()
         val found = gather(list, q)
         class Track(val api: MainApiWrapper, val r: SearchResult, val title: String, val artist: String, val score: Double, val order: Int)
         val trackList = ArrayList<Track>()
@@ -268,7 +269,7 @@ object MusicAddon {
         // what each extension answered and the first tracks sent back: the app picks a track from these by title and artist,
         // and plays nothing when none of them is the song (no "music stream" line follows then)
         ServerState.info("[Music] \"$q\": ${trackList.size} tracks (" + found.joinToString(", ") { (a, r) -> "${a.name} ${r.count { kindOf(it) == Kind.TRACK }}" } +
-            "), ${tracks.size} after merging; first: " + kept.take(5).joinToString(" | ") { "${it.title} - ${it.artist} [${it.api.name}]" }.ifEmpty { "none" })
+            "), ${tracks.size} after merging, ${System.currentTimeMillis() - searchStart} ms; first: " + kept.take(5).joinToString(" | ") { "${it.title} - ${it.artist} [${it.api.name}]" }.ifEmpty { "none" })
         call.reply(buildJsonObject {
             put("tracks", JsonArray(tracks)); put("albums", JsonArray(albums)); put("artists", JsonArray(artists))
         })
@@ -475,24 +476,50 @@ object MusicAddon {
         return r
     }
 
+    /** Once a link from an exact-track extension is in, the others get this much longer to beat it. */
+    private const val AFTER_TRUSTED_MS = 1_500L
+
+    /**
+     * The links of the track from its own extension and from the others, answered as soon as waiting cannot help: at once when a
+     * hi-res link from an exact-track extension is in (nothing ranks above it), [AFTER_TRUSTED_MS] after the first link from an
+     * exact-track extension, at [BEST_LINK_LIMIT_MS] when any link is in. Before, it always waited for every extension (up to 8 s).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun collectLinks(
+        api: MainApiWrapper, kind: Char, url: String, others: List<MainApiWrapper>, title: String, artist: String, query: String,
+    ): List<Pair<MainApiWrapper, List<StremioStream>>> = coroutineScope {
+        val jobs = listOf(api to async { linksOf(api, kind, url) }) + others.map { o ->
+            o to async {
+                withTimeoutOrNull(BEST_LINK_LIMIT_MS) { findIn(o, title, artist, query)?.let { r -> linksOf(o, 't', r.url) } }.orEmpty()
+            }
+        }
+        fun done() = jobs.filter { it.second.isCompleted }.map { (a, d) -> a to runCatching { d.getCompleted() }.getOrDefault(emptyList()) }
+        val start = System.currentTimeMillis()
+        var trustedAt = 0L
+        while (true) {
+            if (jobs.all { it.second.isCompleted }) break
+            val now = System.currentTimeMillis()
+            val links = done().flatMap { (a, ls) -> ls.filter(::playable).map { a to it } }
+            val trusted = links.filter { (a, s) -> trust(a.name, s) == 2 }
+            if (trusted.any { qualityRank(it.second) >= 3000 }) break
+            if (trusted.isNotEmpty() && trustedAt == 0L) trustedAt = now
+            if (trustedAt != 0L && now - trustedAt >= AFTER_TRUSTED_MS) break
+            if (links.isNotEmpty() && now - start >= BEST_LINK_LIMIT_MS) break
+            kotlinx.coroutines.delay(100)
+        }
+        val result = done()
+        jobs.forEach { if (!it.second.isCompleted) it.second.cancel() }
+        result
+    }
+
     suspend fun stream(call: ApplicationCall) {
         val rawId = call.parameters["id"].orEmpty()
         val (api, kind, data) = decode(rawId) ?: return call.reply(error("Unknown track"), HttpStatusCode.NotFound)
         val (url, title, artist, query) = if (kind == 't') splitTrack(data) else listOf(data, "", "", "")
         val others = if (kind == 't' && title.isNotBlank()) apis().filter { it.internalName != api.internalName } else emptyList()
         ServerState.info("[Request] music stream ${api.name}" + if (others.isEmpty()) "" else " (+ ${others.size} more extension(s) for the best link)")
-        val all = coroutineScope {
-            // the extension the track came from may take its usual time; the others get 8 s together (searching and loading links)
-            val own = async { listOf(api to linksOf(api, kind, url)) }
-            val more = others.map { o ->
-                async {
-                    withTimeoutOrNull(BEST_LINK_LIMIT_MS) {
-                        findIn(o, title, artist, query)?.let { r -> o to linksOf(o, 't', r.url) }
-                    }
-                }
-            }
-            own.await() + more.awaitAll().filterNotNull()
-        }
+        val started = System.currentTimeMillis()
+        val all = collectLinks(api, kind, url, others, title, artist, query)
         val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
             // the right recording first, the best quality among those
             .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
@@ -501,7 +528,7 @@ object MusicAddon {
         ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
             "${a.name} [trust ${trust(a.name, s)}, ${qualityRank(s)}" + (s.info?.quality?.let { ", q$it" } ?: "") + "] " + s.title.orEmpty().take(40)
         })
-        ServerState.info("[Music] \"${title.ifBlank { url.take(60) }}\" by ${artist.ifBlank { "?" }}: ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.title.orEmpty().ifBlank { best.name.orEmpty() }.take(60)}\"" +
+        ServerState.info("[Music] \"${title.ifBlank { url.take(60) }}\" by ${artist.ifBlank { "?" }}: ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.title.orEmpty().ifBlank { best.name.orEmpty() }.take(60)}\" (${System.currentTimeMillis() - started} ms)" +
             if (trust(bestApi.name, best) < 2) " - found by searching the song's name: it can be another song or version" else "")
         val label = "${best.name} ${best.title}"
         val rawUrl = best.url.orEmpty()

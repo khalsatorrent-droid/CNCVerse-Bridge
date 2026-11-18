@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Music: a track starts sooner.** Playing a track waited for every music extension (up to 8 s) before answering. It now answers at once when a hi-res link from an extension that plays the exact track is in (nothing can beat it), 1.5 s after the first link from such an extension, and at 8 s at the latest; slower extensions are left out.
+- **Music log: how long the bridge took.** The search and "playing" lines now end with the time the bridge itself took (ms), so a delay before the request reaches the bridge (the fixed-link redirect, the tunnel, the network) can be told apart from the bridge's own time.
+
 ## 1.10.11
 
 - **Music search sometimes gave no results.** The answer waited for the slowest music extension (up to 8 s plus the tunnel), and the app sometimes gave up first - the log showed "Incoming request ended abruptly" and nothing appeared. A search is now answered after 6 s at most, or 1.2 s after an exact match (every searched word, the title itself) arrived; a slower extension keeps searching in the background and its results are kept for when the track is played.
