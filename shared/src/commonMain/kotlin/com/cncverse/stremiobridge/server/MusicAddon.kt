@@ -81,7 +81,8 @@ object MusicAddon {
 
     /** A title or artist reduced to lower-case words: no brackets, "feat. ...", " - Remastered 2011", accents or punctuation. */
     internal fun norm(s: String): String {
-        var x = s.replace(BRACKETS, " ").replace(FEAT, "").replace(VERSION, "")
+        // apostrophes join (D'tour -> dtour): split, the "d" alone would match any other artist with a lone letter
+        var x = s.replace(BRACKETS, " ").replace(FEAT, "").replace(VERSION, "").replace(Regex("['’`´]"), "")
         x = java.text.Normalizer.normalize(x, java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
         return x.lowercase().replace("&", " and ").replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
     }
@@ -98,12 +99,18 @@ object MusicAddon {
         return share + (if (exactTitle) 0.5 else 0.0)
     }
 
-    /** The same recording: the same title once cleaned, and the artists share a word (an unknown artist on one side is accepted). */
+    /**
+     * The same recording: the same title once cleaned, and the artists share a real word (2+ letters, not "the" / "and").
+     * Both artists must be known: a common title ("Get Ready") with no artist matched songs by other people.
+     */
     internal fun sameTrack(title1: String, artist1: String, title2: String, artist2: String): Boolean {
         if (norm(title1).isEmpty() || norm(title1) != norm(title2)) return false
-        val a1 = words(artist1); val a2 = words(artist2)
-        return a1.isEmpty() || a2.isEmpty() || a1.any { it in a2 }
+        val a1 = artistWords(artist1); val a2 = artistWords(artist2)
+        return a1.isNotEmpty() && a2.isNotEmpty() && a1.any { it in a2 }
     }
+
+    private val ARTIST_STOP = setOf("the", "and", "feat", "ft", "with", "x", "vs")
+    private fun artistWords(s: String) = words(s).filter { it.length >= 2 && it !in ARTIST_STOP }.toSet()
 
     /** (extension, kind, address) of an id made by [id]; null when it is not one of ours. */
     private fun decode(id: String): Triple<MainApiWrapper, Char, String>? {
@@ -317,14 +324,17 @@ object MusicAddon {
     /**
      * How good a link sounds: hi-res FLAC 3000, FLAC / lossless 2000, otherwise the kbps the extension names (999, 320, 256...),
      * an .mp3 / .m4a without one 128, unknown 100; a preview (30-second sample) always comes last.
+     * The quality the extension set on the link counts as kbps (MusicBox "1411p" = CD FLAC: 1000-1999 is lossless, 2000+ hi-res).
      */
     internal fun qualityRank(st: StremioStream): Int {
         val label = "${st.name.orEmpty()} ${st.title.orEmpty()} ${st.description.orEmpty()}"
         val ext = st.url.orEmpty().substringBefore('?').substringAfterLast('.', "").lowercase()
+        val q = st.info?.quality ?: 0
         val rank = when {
             (LOSSLESS.containsMatchIn(label) || ext == "flac") && HI_RES.containsMatchIn(label) -> 3000
-            LOSSLESS.containsMatchIn(label) || ext == "flac" || ext == "alac" -> 2000
-            else -> KBPS.findAll(label).mapNotNull { it.groupValues[1].toIntOrNull() }.filter { it in 32..1999 }.maxOrNull()
+            q >= 2000 -> 3000
+            LOSSLESS.containsMatchIn(label) || ext == "flac" || ext == "alac" || q >= 1000 -> 2000
+            else -> (KBPS.findAll(label).mapNotNull { it.groupValues[1].toIntOrNull() } + q).filter { it in 32..1999 }.maxOrNull()
                 ?: if (ext in setOf("mp3", "m4a", "aac", "mp4", "ogg", "opus")) 128 else 100
         }
         return if (PREVIEW.containsMatchIn(label)) rank - 10_000 else rank
@@ -360,8 +370,9 @@ object MusicAddon {
         fun match(results: List<SearchResult>) = results.firstOrNull { r ->
             kindOf(r) == Kind.TRACK && titleAndArtist(r.name, "").let { (t, a) -> sameTrack(title, artist, t, a) }
         }
-        if (query.isNotBlank()) match(searchOne(api, query))?.let { return it }
-        return match(searchOne(api, "$title $artist".trim()))
+        val r = (if (query.isNotBlank()) match(searchOne(api, query)) else null) ?: match(searchOne(api, "$title $artist".trim()))
+        ServerState.info("[Music] ${api.name}: " + (r?.let { "same track \"${it.name.take(80)}\"" } ?: "no \"$title\" by $artist"))
+        return r
     }
 
     suspend fun stream(call: ApplicationCall) {
@@ -385,6 +396,9 @@ object MusicAddon {
         val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
             .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
         val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+        if (all.size > 1) ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
+            "${a.name} ${qualityRank(s)}" + (s.info?.quality?.let { " (q$it)" } ?: "")
+        })
         if (all.size > 1) ServerState.info("[Music] \"$title\": ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.name.orEmpty().ifBlank { best.title.orEmpty() }.take(60)}\"")
         val label = "${best.name} ${best.title}"
         val rawUrl = best.url.orEmpty()

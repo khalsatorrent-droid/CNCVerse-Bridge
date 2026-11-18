@@ -61,12 +61,17 @@ class MusicAddonTest {
         val ranked = listOf(preview, mp3, k320, flac, k999, hiRes).sortedByDescending { MusicAddon.qualityRank(it) }
         assertEquals(listOf(hiRes, flac, k999, k320, mp3, preview), ranked)
         assertEquals(hiRes, MusicAddon.pickBest(listOf(k320, hiRes, flac)))
+        // the quality an extension sets on the link: MusicBox "1411p" is CD FLAC, an unlabelled .mp3 is below it
+        val box = StremioStream(name = "MusicBox - 1411p", url = "https://cdn.example/x", info = com.cncverse.stremiobridge.model.StreamInfo(quality = 1411))
+        assertEquals(box, MusicAddon.pickBest(listOf(s("Arcod", "https://cdn.example/a.mp3"), box)))
     }
 
     @Test
     fun `the same track is recognised across extensions`() {
         assertTrue(MusicAddon.sameTrack("Blinding Lights", "The Weeknd", "Blinding Lights (Remastered)", "Weeknd"))
-        assertTrue(MusicAddon.sameTrack("Tum Hi Ho", "Arijit Singh", "Tum Hi Ho - 2013 Remaster", ""))
+        assertFalse(MusicAddon.sameTrack("Tum Hi Ho", "Arijit Singh", "Tum Hi Ho - 2013 Remaster", ""))
+        assertTrue(MusicAddon.sameTrack("Get Ready", "D'tour", "Get Ready", "D’TOUR"))
+        assertFalse(MusicAddon.sameTrack("Get Ready", "D'tour", "Get Ready", "D Smoke"))
         assertFalse(MusicAddon.sameTrack("Blinding Lights", "The Weeknd", "Blinding Lights", "Some Cover Band"))
         assertFalse(MusicAddon.sameTrack("Hello", "Adele", "Hello Again", "Adele"))
         assertTrue(MusicAddon.accuracy("tum hi ho arijit", "Tum Hi Ho", "Arijit Singh") > MusicAddon.accuracy("tum hi ho arijit", "Tum Hi Ho Unplugged", "Cover"))

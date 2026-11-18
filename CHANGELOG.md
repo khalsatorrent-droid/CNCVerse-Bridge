@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Music: the best link was ranked on the name only.** The quality an extension sets on a link (MusicBox "1411p" = CD FLAC) was ignored, so an unlabelled .mp3 (Arcod) beat lossless links from MusicBox and Monochrome. The link's quality now counts (1000-1999 kbps = lossless, 2000+ = hi-res), and the log lists every link with its rank.
+- **Music: a different song with the same title was mixed in.** An extension's result with no artist was accepted on the title alone, and "D'tour" split into "d" + "tour", so the lone "d" matched other artists. Both artists must now be known and share a real word (apostrophes no longer split names); the log names the track each extension matched.
+
 ## 1.10.6
 
 - **Music: the best link from every music extension.** With several music extensions installed, playing a track now asks all of them for that track at the same time (8 s at most for the others) and plays the best link: hi-res FLAC > FLAC / lossless > 999 kbps > 320 kbps > ... ; 30-second previews always come last. The log names the extension and link that was picked.
