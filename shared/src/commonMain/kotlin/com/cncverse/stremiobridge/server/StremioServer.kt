@@ -2390,9 +2390,10 @@ object StremioServer {
     /** A music link prepared like the other streams (headers, the media server, the extension's local server), no slow checks. */
     fun prepareMusicStream(st: StremioStream, base: String): StremioStream =
         try {
-            // A plain audio link goes out as it is: the media server would download the whole file (a FLAC is tens of MB) over the
-            // tunnel before the first note. Only links that need headers or live in an extension's local server are prepared.
-            val needsHelp = !st.behaviorHints?.proxyHeaders?.request.isNullOrEmpty() || com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(st.url)
+            // A music link goes out as it is, even when the extension attached headers: audio hosts play without them, and the media
+            // server would download the whole file (a FLAC is tens of MB) over the tunnel before the first note. Only a link that lives
+            // in an extension's local server (127.0.0.1) has to be prepared, since the player cannot reach it.
+            val needsHelp = com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(st.url)
             if (!needsHelp) st else LocalRelay.rewriteStream(MediaServer.rewrite(withStreamBase(st), base, false, 4), base)
         }
         catch (e: Throwable) { ServerState.warn("[Music] could not prepare a link: ${e.javaClass.simpleName}: ${e.message}"); st }

@@ -48,4 +48,34 @@ class MusicAddonTest {
         assertEquals('t', data[0])
         assertEquals("https://monochrome.st/track/123456", data.substring(2))
     }
+
+    @Test
+    fun `links are ranked hi-res flac, flac, then kbps, previews last`() {
+        fun s(name: String, url: String = "https://cdn.example/x") = StremioStream(name = name, url = url)
+        val hiRes = s("FLAC 24-bit / 96 kHz")
+        val flac = s("Monochrome FLAC (Lossless)")
+        val k999 = s("999kbps")
+        val k320 = s("SpotSaver 320kbps")
+        val mp3 = s("Direct", "https://cdn.example/a.mp3")
+        val preview = s("FLAC preview")
+        val ranked = listOf(preview, mp3, k320, flac, k999, hiRes).sortedByDescending { MusicAddon.qualityRank(it) }
+        assertEquals(listOf(hiRes, flac, k999, k320, mp3, preview), ranked)
+        assertEquals(hiRes, MusicAddon.pickBest(listOf(k320, hiRes, flac)))
+    }
+
+    @Test
+    fun `the same track is recognised across extensions`() {
+        assertTrue(MusicAddon.sameTrack("Blinding Lights", "The Weeknd", "Blinding Lights (Remastered)", "Weeknd"))
+        assertTrue(MusicAddon.sameTrack("Tum Hi Ho", "Arijit Singh", "Tum Hi Ho - 2013 Remaster", ""))
+        assertFalse(MusicAddon.sameTrack("Blinding Lights", "The Weeknd", "Blinding Lights", "Some Cover Band"))
+        assertFalse(MusicAddon.sameTrack("Hello", "Adele", "Hello Again", "Adele"))
+        assertTrue(MusicAddon.accuracy("tum hi ho arijit", "Tum Hi Ho", "Arijit Singh") > MusicAddon.accuracy("tum hi ho arijit", "Tum Hi Ho Unplugged", "Cover"))
+    }
+
+    @Test
+    fun `a track id carries its title, artist and search`() {
+        val d = MusicAddon.trackData("https://site/t/1", "Song", "Singer", "song singer")
+        assertEquals(listOf("https://site/t/1", "Song", "Singer", "song singer"), MusicAddon.splitTrack(d))
+        assertEquals(listOf("https://site/t/1", "", "", ""), MusicAddon.splitTrack("https://site/t/1"))
+    }
 }

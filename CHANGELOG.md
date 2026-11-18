@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Music: the best link from every music extension.** With several music extensions installed, playing a track now asks all of them for that track at the same time (8 s at most for the others) and plays the best link: hi-res FLAC > FLAC / lossless > 999 kbps > 320 kbps > ... ; 30-second previews always come last. The log names the extension and link that was picked.
+- **Music search: most accurate first, no duplicates.** The same track found by several extensions is listed once, and tracks that match the search best (title and artist) come first.
+- **Music links go out without headers.** Audio hosts play without them, so music links are no longer sent through the bridge's media server or relay even when the extension attached headers (only an extension's local 127.0.0.1 link still is).
+
 ## 1.10.5
 
 - **Fixed link: the check after a registration skips the relay's cache.** Rockon now lets its CDN answer repeat redirects for a few seconds; the bridge's own "does the fixed link work" check adds a unique query so it never gets a cached answer still leading to the previous tunnel (which made it keep the temporary link).

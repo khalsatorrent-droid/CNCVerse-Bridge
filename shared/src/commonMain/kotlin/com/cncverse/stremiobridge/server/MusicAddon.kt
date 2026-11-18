@@ -26,15 +26,24 @@ import kotlinx.serialization.json.put
  * add-on or the profiles (see [MainApiWrapper.isMusic]); this link is the only place they are listed.
  *
  * Ids are the bridge's usual "cnc:" ids; the address behind them starts with what the id is for:
- *  - "t:" a track found by a search (its page is loaded first to get the link address),
+ *  - "t:" a track found by a search (its page is loaded first to get the link address); after the address come the track's title,
+ *    artist and the search it came from, separated by [SEP], so playing it can look for the same track in the other extensions,
  *  - "d:" a track that is already the extension's link address (the tracks of an album),
  *  - "a:" an album, "r:" an artist (their pages are loaded for the track list).
+ *
+ * With several music extensions, a search asks all of them at once (8 s at most), the same track found by several of them is listed
+ * once (the most accurate matches first), and playing a track asks every extension that has it for links - again 8 s at most -
+ * and answers with the best one: hi-res FLAC > FLAC / lossless > 999 kbps > 320 kbps > ... > previews.
  */
 object MusicAddon {
     private const val ADDON_ID = "com.cncverse.stremiobridge.music"
     private const val SEARCH_LIMIT_MS = 8_000L
     private const val LOAD_LIMIT_MS = 15_000L
     private const val LINKS_LIMIT_MS = 20_000L
+    /** Looking in the other music extensions for a better link of the same track: all at once, this long at most. */
+    private const val BEST_LINK_LIMIT_MS = 8_000L
+    /** Separates the parts of a "t:" id ([trackData]). */
+    private const val SEP = '\u001F'
 
     /** The enabled music extensions. */
     fun apis(): List<MainApiWrapper> =
@@ -56,6 +65,45 @@ object MusicAddon {
         apis().firstOrNull { it.internalName == internalName || it.pluginInternalName == internalName }
 
     private fun id(api: MainApiWrapper, kind: Char, url: String): String = StremioIds.encode(api.internalName, "$kind:$url")
+
+    /** The address of a "t:" id with what playing it needs to find the same track elsewhere. */
+    internal fun trackData(url: String, title: String, artist: String, query: String): String =
+        listOf(url, title, artist, query).joinToString(SEP.toString()) { it.replace(SEP, ' ') }
+
+    /** (address, title, artist, query) of [trackData]; ids made before it carry the address only. */
+    internal fun splitTrack(data: String): List<String> = data.split(SEP).let { p -> List(4) { p.getOrElse(it) { "" } } }
+
+    // ── Matching ────────────────────────────────────────────────────────────
+
+    private val BRACKETS = Regex("""[(\[][^)\]]*[)\]]""")
+    private val FEAT = Regex("""\s(feat\.?|ft\.?|featuring)\s.*$""", RegexOption.IGNORE_CASE)
+    private val VERSION = Regex("""\s[-–—]\s.*(remaster|version|edit|live|mix|mono|stereo).*$""", RegexOption.IGNORE_CASE)
+
+    /** A title or artist reduced to lower-case words: no brackets, "feat. ...", " - Remastered 2011", accents or punctuation. */
+    internal fun norm(s: String): String {
+        var x = s.replace(BRACKETS, " ").replace(FEAT, "").replace(VERSION, "")
+        x = java.text.Normalizer.normalize(x, java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+        return x.lowercase().replace("&", " and ").replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+    }
+
+    private fun words(s: String): Set<String> = norm(s).split(' ').filter { it.isNotEmpty() }.toSet()
+
+    /** How well "title artist" answers the search: the share of the searched words found, plus a bonus for an exact title. */
+    internal fun accuracy(query: String, title: String, artist: String): Double {
+        val q = words(query)
+        if (q.isEmpty()) return 0.0
+        val have = words("$title $artist")
+        val share = q.count { it in have }.toDouble() / q.size
+        val exactTitle = norm(title).isNotEmpty() && (norm(query) == norm(title) || norm(query).startsWith(norm(title) + " ") || norm(query).endsWith(" " + norm(title)))
+        return share + (if (exactTitle) 0.5 else 0.0)
+    }
+
+    /** The same recording: the same title once cleaned, and the artists share a word (an unknown artist on one side is accepted). */
+    internal fun sameTrack(title1: String, artist1: String, title2: String, artist2: String): Boolean {
+        if (norm(title1).isEmpty() || norm(title1) != norm(title2)) return false
+        val a1 = words(artist1); val a2 = words(artist2)
+        return a1.isEmpty() || a2.isEmpty() || a1.any { it in a2 }
+    }
 
     /** (extension, kind, address) of an id made by [id]; null when it is not one of ours. */
     private fun decode(id: String): Triple<MainApiWrapper, Char, String>? {
@@ -135,19 +183,17 @@ object MusicAddon {
                 }
             }.awaitAll()
         }
-        val tracks = ArrayList<JsonObject>()
+        class Track(val api: MainApiWrapper, val r: SearchResult, val title: String, val artist: String, val score: Double, val order: Int)
+        val trackList = ArrayList<Track>()
         val albums = ArrayList<JsonObject>()
         val artists = ArrayList<JsonObject>()
         val seen = HashSet<String>()
-        for ((api, results) in found) for (r in results) {
+        for ((api, results) in found) for ((i, r) in results.withIndex()) {
             if (!seen.add(api.internalName + "|" + r.url)) continue
             when (kindOf(r)) {
                 Kind.TRACK -> {
                     val (title, artist) = titleAndArtist(r.name, api.name)
-                    tracks += buildJsonObject {
-                        put("id", id(api, 't', r.url)); put("title", title); put("artist", artist)
-                        r.posterUrl?.takeIf { it.isNotBlank() }?.let { put("artworkURL", it) }
-                    }
+                    trackList += Track(api, r, title, artist, accuracy(q, title, artist), i)
                 }
                 Kind.ALBUM -> {
                     val (title, artist) = titleAndArtist(r.name, api.name)
@@ -163,6 +209,19 @@ object MusicAddon {
                 }
             }
         }
+        // the most accurate answers first (an extension's own order breaks ties); a track several extensions found is listed once -
+        // playing it looks in all of them for the best link anyway
+        val kept = ArrayList<Track>()
+        for (tr in trackList.sortedWith(compareByDescending<Track> { it.score }.thenBy { it.order })) {
+            if (kept.none { sameTrack(it.title, it.artist, tr.title, tr.artist) }) kept += tr
+        }
+        val tracks = kept.map { tr ->
+            buildJsonObject {
+                put("id", id(tr.api, 't', trackData(tr.r.url, tr.title, tr.artist, q))); put("title", tr.title); put("artist", tr.artist)
+                tr.r.posterUrl?.takeIf { it.isNotBlank() }?.let { put("artworkURL", it) }
+            }
+        }
+        if (found.count { it.second.isNotEmpty() } > 1) ServerState.info("[Music] \"$q\": ${trackList.size} tracks from ${found.count { it.second.isNotEmpty() }} extensions, ${tracks.size} after merging the same tracks")
         call.reply(buildJsonObject {
             put("tracks", JsonArray(tracks)); put("albums", JsonArray(albums)); put("artists", JsonArray(artists))
         })
@@ -248,15 +307,32 @@ object MusicAddon {
     private fun error(message: String): JsonObject = buildJsonObject { put("error", message) }
 
     private val LOSSLESS = Regex("flac|lossless|hi-?res|alac|24.?bit", RegexOption.IGNORE_CASE)
+    private val HI_RES = Regex("""hi-?res|24.?bit|(88|96|176|192)(\.\d)?\s*khz""", RegexOption.IGNORE_CASE)
+    private val KBPS = Regex("""(\d{2,4})\s*k(?:bps|b/s|bit/s|bits)?\b""", RegexOption.IGNORE_CASE)
+    private val PREVIEW = Regex("""preview|30.?s(ec)?\b|snippet""", RegexOption.IGNORE_CASE)
 
-    /** The link to play: lossless first, then the highest quality the extension reports; links that are not audio files are skipped. */
-    internal fun pickBest(streams: List<StremioStream>): StremioStream? {
-        val ok = streams.filter { it.url?.startsWith("http", true) == true && it.externalUrl == null && it.infoHash == null && it.ytId == null }
-        return ok.maxWithOrNull(compareBy<StremioStream>(
-            { if (LOSSLESS.containsMatchIn("${it.name} ${it.title} ${it.url}")) 1 else 0 },
-            { it.info?.quality ?: 0 },
-        ))
+    private fun playable(it: StremioStream) =
+        it.url?.startsWith("http", true) == true && it.externalUrl == null && it.infoHash == null && it.ytId == null
+
+    /**
+     * How good a link sounds: hi-res FLAC 3000, FLAC / lossless 2000, otherwise the kbps the extension names (999, 320, 256...),
+     * an .mp3 / .m4a without one 128, unknown 100; a preview (30-second sample) always comes last.
+     */
+    internal fun qualityRank(st: StremioStream): Int {
+        val label = "${st.name.orEmpty()} ${st.title.orEmpty()} ${st.description.orEmpty()}"
+        val ext = st.url.orEmpty().substringBefore('?').substringAfterLast('.', "").lowercase()
+        val rank = when {
+            (LOSSLESS.containsMatchIn(label) || ext == "flac") && HI_RES.containsMatchIn(label) -> 3000
+            LOSSLESS.containsMatchIn(label) || ext == "flac" || ext == "alac" -> 2000
+            else -> KBPS.findAll(label).mapNotNull { it.groupValues[1].toIntOrNull() }.filter { it in 32..1999 }.maxOrNull()
+                ?: if (ext in setOf("mp3", "m4a", "aac", "mp4", "ogg", "opus")) 128 else 100
+        }
+        return if (PREVIEW.containsMatchIn(label)) rank - 10_000 else rank
     }
+
+    /** The link to play: the best [qualityRank]; links that are not audio files are skipped. */
+    internal fun pickBest(streams: List<StremioStream>): StremioStream? =
+        streams.filter(::playable).maxWithOrNull(compareBy<StremioStream>({ qualityRank(it) }, { it.info?.quality ?: 0 }))
 
     internal fun formatOf(url: String, label: String): String? {
         val ext = url.substringBefore('?').substringAfterLast('.', "").lowercase()
@@ -268,19 +344,48 @@ object MusicAddon {
         }
     }
 
-    suspend fun stream(call: ApplicationCall) {
-        val rawId = call.parameters["id"].orEmpty()
-        val (api, kind, url) = decode(rawId) ?: return call.reply(error("Unknown track"), HttpStatusCode.NotFound)
-        ServerState.info("[Request] music stream ${api.name}")
-        // a track from a search: its page gives the address the links are asked for; an album's track already is that address
+    /** Every link an extension gives for one track (its page is loaded first for a "t:" id). */
+    private suspend fun linksOf(api: MainApiWrapper, kind: Char, url: String): List<StremioStream> {
         val data = if (kind == 't') {
             val info = loadInfo(api, url)
             info?.episodes?.firstOrNull()?.dataUrl ?: info?.dataUrl?.takeIf { it.isNotBlank() } ?: url
         } else url
-        val built = withTimeoutOrNull(LINKS_LIMIT_MS) {
+        return withTimeoutOrNull(LINKS_LIMIT_MS) {
             withContext(musicDispatcher) { runCatching { api.loadLinks(data) }.getOrDefault(emptyList()) }
         }.orEmpty()
-        val best = pickBest(built) ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+    }
+
+    /** The same track in another music extension: its results for the original search (usually still cached), else for "title artist". */
+    private suspend fun findIn(api: MainApiWrapper, title: String, artist: String, query: String): SearchResult? {
+        fun match(results: List<SearchResult>) = results.firstOrNull { r ->
+            kindOf(r) == Kind.TRACK && titleAndArtist(r.name, "").let { (t, a) -> sameTrack(title, artist, t, a) }
+        }
+        if (query.isNotBlank()) match(searchOne(api, query))?.let { return it }
+        return match(searchOne(api, "$title $artist".trim()))
+    }
+
+    suspend fun stream(call: ApplicationCall) {
+        val rawId = call.parameters["id"].orEmpty()
+        val (api, kind, data) = decode(rawId) ?: return call.reply(error("Unknown track"), HttpStatusCode.NotFound)
+        val (url, title, artist, query) = if (kind == 't') splitTrack(data) else listOf(data, "", "", "")
+        val others = if (kind == 't' && title.isNotBlank()) apis().filter { it.internalName != api.internalName } else emptyList()
+        ServerState.info("[Request] music stream ${api.name}" + if (others.isEmpty()) "" else " (+ ${others.size} more extension(s) for the best link)")
+        val all = coroutineScope {
+            // the extension the track came from may take its usual time; the others get 8 s together (searching and loading links)
+            val own = async { listOf(api to linksOf(api, kind, url)) }
+            val more = others.map { o ->
+                async {
+                    withTimeoutOrNull(BEST_LINK_LIMIT_MS) {
+                        findIn(o, title, artist, query)?.let { r -> o to linksOf(o, 't', r.url) }
+                    }
+                }
+            }
+            own.await() + more.awaitAll().filterNotNull()
+        }
+        val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
+            .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
+        val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+        if (all.size > 1) ServerState.info("[Music] \"$title\": ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.name.orEmpty().ifBlank { best.title.orEmpty() }.take(60)}\"")
         val label = "${best.name} ${best.title}"
         val rawUrl = best.url.orEmpty()
         val out = StremioServer.prepareMusicStream(best, StremioServer.musicBase(call))
