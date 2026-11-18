@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music log: what played and why.** Every played track now logs its links and the one picked (also when only one extension had it), says when the link was found by searching the song's name (MusicBox, YouTube converters), and an extension that did not have the track lists the closest titles it did have, so a wrong rejection can be seen.
+
 ## 1.10.8
 
 - **Music: the right song before the best quality.** Links are now ordered by how sure they are to be the exact recording, then by quality: the catalogue extensions (Monochrome, Octave...) that play the exact track they list come first; MusicBox, which finds its links by searching the song's name on download services, comes after them; YouTube converters and Spotify downloaders come last.

@@ -414,8 +414,18 @@ object MusicAddon {
         fun match(results: List<SearchResult>) = results.firstOrNull { r ->
             kindOf(r) == Kind.TRACK && titleAndArtist(r.name, "").let { (t, a) -> sameTrack(title, artist, t, a) }
         }
-        val r = (if (query.isNotBlank()) match(searchOne(api, query)) else null) ?: match(searchOne(api, "$title $artist".trim()))
-        ServerState.info("[Music] ${api.name}: " + (r?.let { "same track \"${it.name.take(80)}\"" } ?: "no \"$title\" by $artist"))
+        val first = if (query.isNotBlank()) searchOne(api, query) else emptyList()
+        var r = match(first)
+        val second = if (r == null) searchOne(api, "$title $artist".trim()) else emptyList()
+        if (r == null) r = match(second)
+        if (r != null) ServerState.info("[Music] ${api.name}: same track \"${r.name.take(80)}\"")
+        else {
+            // what it did have, so a wrong rejection can be seen: the same title first, then its first results
+            val tracks = (first + second).filter { kindOf(it) == Kind.TRACK }.distinctBy { it.url }
+            val near = tracks.sortedByDescending { norm(titleAndArtist(it.name, "").first) == norm(title) }.take(3)
+            ServerState.info("[Music] ${api.name}: no \"$title\" by $artist" +
+                if (near.isEmpty()) " (no tracks found)" else " - closest: " + near.joinToString(" | ") { "\"${it.name.take(70)}\"" })
+        }
         return r
     }
 
@@ -442,10 +452,11 @@ object MusicAddon {
             .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
                 .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
         val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
-        if (all.size > 1) ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
+        ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
             "${a.name} [trust ${trust(a.name, s)}, ${qualityRank(s)}" + (s.info?.quality?.let { ", q$it" } ?: "") + "] " + s.title.orEmpty().take(40)
         })
-        if (all.size > 1) ServerState.info("[Music] \"$title\": ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.name.orEmpty().ifBlank { best.title.orEmpty() }.take(60)}\"")
+        ServerState.info("[Music] \"${title.ifBlank { url.take(60) }}\" by ${artist.ifBlank { "?" }}: ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.title.orEmpty().ifBlank { best.name.orEmpty() }.take(60)}\"" +
+            if (trust(bestApi.name, best) < 2) " - found by searching the song's name: it can be another song or version" else "")
         val label = "${best.name} ${best.title}"
         val rawUrl = best.url.orEmpty()
         val out = StremioServer.prepareMusicStream(best, StremioServer.musicBase(call))
