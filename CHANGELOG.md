@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.14
 
 - **Fixed link: the Worker code is in the app.** Settings › Fixed link › Relay "Your Worker" now shows the setup steps for the Cloudflare dashboard and a "Copy Worker code" button, so the Worker can be set up from the phone without opening GitHub.
 - **Worker code: plainer JavaScript and a clear message.** The relay code avoids newer JavaScript syntax, and when the KV storage is not connected it now says so ("add a KV namespace binding named RELAY") instead of failing.
