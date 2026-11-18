@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.10
 
 - **Music log: what a search sent back.** Each search now logs how many tracks every music extension found and the first five tracks sent to the app (title - artist [extension]). When the app plays nothing after a search, this shows whether the song was among them.
 
