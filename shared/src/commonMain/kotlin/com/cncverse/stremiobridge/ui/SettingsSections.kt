@@ -114,8 +114,7 @@ fun TunnelSettingsCard() {
         }
         Text(
             when (relayPick) {
-                StableLink.Relay.ROCKON -> "Rockon: your own relay on Vercel (rockon-xi.vercel.app)."
-                StableLink.Relay.WORKER -> "Your own Cloudflare Worker running the Rockon relay (worker/rockon-worker.js in the Rockon repo): answers from near you, with no wake-up delay."
+                StableLink.Relay.WORKER -> "Your own Cloudflare Worker (free): answers from near you, with no wake-up delay. Set it up once with the steps below."
                 StableLink.Relay.PENCARIMOVIE -> "pencarimovie-server: personal use only (the relay's owner does not allow monetising it)."
             },
             color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp,

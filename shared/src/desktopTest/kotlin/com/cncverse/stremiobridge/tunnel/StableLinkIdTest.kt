@@ -15,8 +15,7 @@ class StableLinkIdTest {
         assertNull(StableLink.cleanId("meri-marzi"))     // hyphen would break the host name
         assertNull(StableLink.cleanId("meri marzi"))
         assertNull(StableLink.cleanId(""))
-        assertNull(StableLink.cleanId("tunnel"))         // a path of the Rockon site itself
-        assertEquals("https://rockon-xi.vercel.app/abcd", StableLink.Relay.ROCKON.urlFor("abcd"))
+        assertNull(StableLink.cleanId("tunnel"))         // a path of the relay itself
         assertEquals("https://abcd-tunnel.pencarimovie.com", StableLink.Relay.PENCARIMOVIE.urlFor("abcd"))
     }
 

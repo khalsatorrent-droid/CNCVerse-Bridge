@@ -12,9 +12,8 @@ import java.util.concurrent.TimeUnit
  * relay's address for that id redirects to whatever `….trycloudflare.com` link the tunnel got this time. Every time
  * the tunnel starts, the new link is registered with the relay (`{shortId, tunnelUrl}`).
  *
- * Three relays speak the same protocol ([Relay]):
- * - Rockon (https://github.com/khalsatorrent-droid/Rockon, on Vercel): `https://rockon-xi.vercel.app/<id>` - the default.
- * - the same Rockon relay on the user's own Cloudflare Worker: `https://<worker>.workers.dev/<id>`.
+ * Two relays speak the same protocol ([Relay]):
+ * - the Rockon relay on the user's own Cloudflare Worker (code in [RockonWorker]): `https://<worker>.workers.dev/<id>` - the default.
  * - pencarimovie-server (https://github.com/aiskendi/pencarimovie-server): `https://<id>-tunnel.pencarimovie.com`.
  *   It belongs to its author, who allows it for personal use only (no monetising).
  *
@@ -25,14 +24,12 @@ object StableLink {
     enum class Relay(val label: String, val refreshEveryMs: Long) {
         // all: a new tunnel link is registered at once, the same one again only every 6 hours (a safety round in case
         // the relay lost or forgot the entry); a refused registration is retried every 15 minutes
-        ROCKON("Rockon", 6 * 3_600_000L),
         /** The Rockon relay on the user's own Cloudflare Worker (Rockon repo, worker/rockon-worker.js): no wake-up delay. */
         WORKER("Your Worker", 6 * 3_600_000L),
         PENCARIMOVIE("pencarimovie", 6 * 3_600_000L);
 
         val endpoints: List<String>
             get() = when (this) {
-                ROCKON -> listOf("https://rockon-xi.vercel.app/api/tunnel/register")
                 WORKER -> StableLink.workerBase?.let { listOf("$it/api/tunnel/register") }.orEmpty()
                 PENCARIMOVIE -> listOf(
                     "https://pencarimovie.com/wp-json/pencarimovie-server/v1/tunnel/register",
@@ -41,7 +38,6 @@ object StableLink {
             }
 
         fun urlFor(id: String): String = when (this) {
-            ROCKON -> "https://rockon-xi.vercel.app/$id"
             WORKER -> "${StableLink.workerBase ?: "https://<your-worker>.workers.dev"}/$id"
             PENCARIMOVIE -> "https://$id-tunnel.pencarimovie.com"
         }
@@ -71,19 +67,22 @@ object StableLink {
     private const val KEY_ID = "KEY_STABLE_LINK_ID"
     private const val KEY_RELAY = "KEY_STABLE_LINK_RELAY"
 
-    /** The relay in use. Installs that had the fixed link on before Rockon was added keep pencarimovie until changed (their link stays the same). */
+    /**
+     * The relay in use: your Worker or pencarimovie. Installs that had the fixed link on before the relay choice existed keep
+     * pencarimovie (their link stays the same); the Vercel Rockon relay was dropped and moves to your Worker.
+     */
     var relay: Relay
-        get() = getExtensionSetting(KEY_RELAY)?.let { s -> Relay.entries.firstOrNull { it.name == s } }
-            ?: if (enabled) Relay.PENCARIMOVIE else Relay.ROCKON
+        get() = getExtensionSetting(KEY_RELAY)?.let { s -> Relay.entries.firstOrNull { it.name == s } ?: Relay.WORKER }
+            ?: if (enabled) Relay.PENCARIMOVIE else Relay.WORKER
         set(v) = setExtensionSetting(KEY_RELAY, v.name)
 
-    /** Paths of the Rockon site itself: never an id there. */
+    /** Paths of the relay itself: never an id there. */
     private val RESERVED = setOf("api", "links", "register", "tunnel", "favicon", "robots")
 
     var enabled: Boolean
         get() = getExtensionSetting(KEY_ENABLED) == "true"
         set(v) {
-            // the relay is fixed before the switch changes, so turning it on for the first time picks Rockon
+            // the relay is fixed before the switch changes, so turning it on for the first time picks your Worker
             if (getExtensionSetting(KEY_RELAY) == null) setExtensionSetting(KEY_RELAY, relay.name)
             setExtensionSetting(KEY_ENABLED, if (v) "true" else "false")
         }
@@ -117,7 +116,7 @@ object StableLink {
     /** An id the user typed: 4-12 lower-case letters or digits (what the relay accepts), or null. Spaces and capitals are tidied first. */
     fun cleanId(text: String): String? = text.trim().lowercase().takeIf { Regex("^[a-z0-9]{4,12}$").matches(it) && it !in RESERVED }
 
-    /** Uses an id of the user's own choice (e.g. "merimarzi" gives https://rockon-xi.vercel.app/merimarzi). Returns false when it is not a valid id. */
+    /** Uses an id of the user's own choice (e.g. "merimarzi" gives https://rockon.yourname.workers.dev/merimarzi). Returns false when it is not a valid id. */
     fun setCustomId(text: String): Boolean {
         val v = cleanId(text) ?: return false
         setExtensionSetting(KEY_ID, v)
@@ -149,7 +148,7 @@ object StableLink {
 
     /** True when [url]/manifest.json answers. */
     private fun fixedLinkAnswers(): Boolean = runCatching {
-        // a query of its own each time: Rockon's CDN caches a redirect per address for a few seconds, and right after a
+        // a query of its own each time: a relay may cache a redirect per address for a few seconds, and right after a
         // registration that cached answer can still lead to the previous tunnel (the query reaches the bridge, which ignores it)
         client.newCall(okhttp3.Request.Builder().url("$url/manifest.json?check=${System.currentTimeMillis()}").build()).execute().use { it.isSuccessful }
     }.getOrDefault(false)
@@ -160,6 +159,10 @@ object StableLink {
      * A refused or slow registration is tried again (after 5, 15 and 30 s) before giving up. Blocking: background thread.
      */
     fun register(quickUrl: String): String? {
+        if (relay == Relay.WORKER && workerBase == null) {
+            ServerState.warn("🔗 Fixed link: your Worker's address is not set (Settings › Fixed link › Your Worker) - keeping the temporary link")
+            return null
+        }
         var accepted = false
         for ((i, wait) in listOf(0L, 5_000L, 15_000L, 30_000L).withIndex()) {
             if (wait > 0) Thread.sleep(wait)
@@ -181,6 +184,9 @@ object StableLink {
      * the fixed link does not lead here any more. Returns the fixed address when it works, null otherwise.
      */
     fun refresh(quickUrl: String): String? {
+        if (relay == Relay.WORKER && workerBase == null) {
+            return null
+        }
         if (!registerOnce(quickUrl)) return null
         repeat(4) { attempt ->
             if (fixedLinkAnswers()) return url
