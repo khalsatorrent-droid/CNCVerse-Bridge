@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music: links are found while the search results are shown.** The app searches for a song and plays the matching result a moment later; the bridge now starts finding that result's links (in every music extension) as soon as the search is answered, so pressing play usually finds them ready. A played track's links are kept for 5 minutes, so playing it again starts at once. The log says when the links were already found ("links ready since the search") and how long the bridge still had to wait.
+
 ## 1.10.12
 
 - **Music: a track starts sooner.** Playing a track waited for every music extension (up to 8 s) before answering. It now answers at once when a hi-res link from an extension that plays the exact track is in (nothing can beat it), 1.5 s after the first link from such an extension, and at 8 s at the latest; slower extensions are left out.

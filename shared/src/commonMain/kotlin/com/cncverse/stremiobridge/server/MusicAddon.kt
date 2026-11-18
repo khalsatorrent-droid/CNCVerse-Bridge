@@ -266,6 +266,10 @@ object MusicAddon {
                 tr.r.posterUrl?.takeIf { it.isNotBlank() }?.let { put("artworkURL", it) }
             }
         }
+        // the app plays the result that matches the song a moment later: its links start being found now
+        kept.firstOrNull()?.takeIf { it.score >= 1.5 }?.let { tr ->
+            startResolving(id(tr.api, 't', trackData(tr.r.url, tr.title, tr.artist, q)))
+        }
         // what each extension answered and the first tracks sent back: the app picks a track from these by title and artist,
         // and plays nothing when none of them is the song (no "music stream" line follows then)
         ServerState.info("[Music] \"$q\": ${trackList.size} tracks (" + found.joinToString(", ") { (a, r) -> "${a.name} ${r.count { kindOf(it) == Kind.TRACK }}" } +
@@ -512,23 +516,56 @@ object MusicAddon {
         result
     }
 
+    /** The links of one track, best first (the right recording, then quality), with how many extensions answered. */
+    private class Resolved(val ranked: List<Pair<MainApiWrapper, StremioStream>>, val answered: Int, val ms: Long)
+
+    private suspend fun resolve(api: MainApiWrapper, kind: Char, url: String, title: String, artist: String, query: String): Resolved {
+        val started = System.currentTimeMillis()
+        val others = if (kind == 't' && title.isNotBlank()) apis().filter { it.internalName != api.internalName } else emptyList()
+        val all = collectLinks(api, kind, url, others, title, artist, query)
+        val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
+            .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
+                .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
+        return Resolved(ranked, all.count { it.second.isNotEmpty() }, System.currentTimeMillis() - started)
+    }
+
+    /**
+     * Links being found, or found, per track id: the top result of a search starts at once (the app plays it a moment later),
+     * and a played track is kept so playing it again is instant. Links are signed and expire, so an entry lives [READY_MS].
+     */
+    private val ready = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, kotlinx.coroutines.Deferred<Resolved>>>()
+    private const val READY_MS = 5 * 60_000L
+    private val prefetchScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun startResolving(rawId: String): kotlinx.coroutines.Deferred<Resolved>? {
+        val now = System.currentTimeMillis()
+        ready[rawId]?.let { (at, d) -> if (now - at < READY_MS && !(d.isCompleted && runCatching { d.getCompleted().ranked.isEmpty() }.getOrDefault(true))) return d }
+        val (api, kind, data) = decode(rawId) ?: return null
+        val (url, title, artist, query) = if (kind == 't') splitTrack(data) else listOf(data, "", "", "")
+        val d = prefetchScope.async { resolve(api, kind, url, title, artist, query) }
+        ready[rawId] = now to d
+        if (ready.size > 200) ready.entries.filter { now - it.value.first > READY_MS }.forEach { ready.remove(it.key) }
+        return d
+    }
+
     suspend fun stream(call: ApplicationCall) {
         val rawId = call.parameters["id"].orEmpty()
         val (api, kind, data) = decode(rawId) ?: return call.reply(error("Unknown track"), HttpStatusCode.NotFound)
-        val (url, title, artist, query) = if (kind == 't') splitTrack(data) else listOf(data, "", "", "")
-        val others = if (kind == 't' && title.isNotBlank()) apis().filter { it.internalName != api.internalName } else emptyList()
-        ServerState.info("[Request] music stream ${api.name}" + if (others.isEmpty()) "" else " (+ ${others.size} more extension(s) for the best link)")
+        val (url, title, artist, _) = if (kind == 't') splitTrack(data) else listOf(data, "", "", "")
         val started = System.currentTimeMillis()
-        val all = collectLinks(api, kind, url, others, title, artist, query)
-        val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
-            // the right recording first, the best quality among those
-            .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
-                .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
-        val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+        val early = ready[rawId]?.second?.let { if (it.isCompleted) "ready" else "already being found" }
+        ServerState.info("[Request] music stream ${api.name}" + (early?.let { " (links $it since the search)" } ?: ""))
+        val res = startResolving(rawId)!!.await()
+        val ranked = res.ranked
+        val (bestApi, best) = ranked.firstOrNull() ?: run {
+            ready.remove(rawId)
+            return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+        }
         ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
             "${a.name} [trust ${trust(a.name, s)}, ${qualityRank(s)}" + (s.info?.quality?.let { ", q$it" } ?: "") + "] " + s.title.orEmpty().take(40)
         })
-        ServerState.info("[Music] \"${title.ifBlank { url.take(60) }}\" by ${artist.ifBlank { "?" }}: ${ranked.size} links from ${all.count { it.second.isNotEmpty() }} extension(s); playing ${bestApi.name} \"${best.title.orEmpty().ifBlank { best.name.orEmpty() }.take(60)}\" (${System.currentTimeMillis() - started} ms)" +
+        ServerState.info("[Music] \"${title.ifBlank { url.take(60) }}\" by ${artist.ifBlank { "?" }}: ${ranked.size} links from ${res.answered} extension(s); playing ${bestApi.name} \"${best.title.orEmpty().ifBlank { best.name.orEmpty() }.take(60)}\" (finding links ${res.ms} ms, waited ${System.currentTimeMillis() - started} ms)" +
             if (trust(bestApi.name, best) < 2) " - found by searching the song's name: it can be another song or version" else "")
         val label = "${best.name} ${best.title}"
         val rawUrl = best.url.orEmpty()
