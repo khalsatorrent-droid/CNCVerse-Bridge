@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.13
 
 - **Fixed link: your own Cloudflare Worker as the relay.** Settings › Fixed link has a third relay, "Your Worker": the Rockon relay running on your own Cloudflare Worker (worker/rockon-worker.js in the Rockon repo), with the Worker's address typed in once. A Worker answers from a Cloudflare server near you and does not go to sleep like the Vercel function, so every add-on request starts sooner. The fixed link becomes https://<your worker>/<id>.
 
