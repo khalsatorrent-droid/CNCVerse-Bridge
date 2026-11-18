@@ -226,14 +226,7 @@ object MusicAddon {
         if (q.isEmpty() || list.isEmpty()) return call.reply(buildJsonObject {
             put("tracks", JsonArray(emptyList())); put("albums", JsonArray(emptyList())); put("artists", JsonArray(emptyList()))
         })
-        // every music extension at the same time; one that is slow or fails only costs its own results
-        val found = coroutineScope {
-            list.map { api ->
-                async {
-                    api to searchOne(api, q)
-                }
-            }.awaitAll()
-        }
+        val found = gather(list, q)
         class Track(val api: MainApiWrapper, val r: SearchResult, val title: String, val artist: String, val score: Double, val order: Int)
         val trackList = ArrayList<Track>()
         val albums = ArrayList<JsonObject>()
@@ -279,6 +272,55 @@ object MusicAddon {
         call.reply(buildJsonObject {
             put("tracks", JsonArray(tracks)); put("albums", JsonArray(albums)); put("artists", JsonArray(artists))
         })
+    }
+
+    /**
+     * The search again with "-", "/", "_", "." and "+" as spaces: several music services read "CHEN-K Berang" as "CHEN but not K",
+     * so the artist's own songs never came back. Null when it would be the same text.
+     */
+    internal fun altQuery(q: String): String? =
+        q.replace(Regex("""(?<=\p{L})[-/_.+](?=\p{L})"""), " ").replace(Regex("\\s+"), " ").trim().takeIf { it != q.trim() }
+
+    /** How long a search may take before it is answered with what has arrived (the app gives up after about 10 s). */
+    private const val ANSWER_LIMIT_MS = 6_000L
+    /** Once an exact answer (every searched word, the title itself) is in, the others get this much longer. */
+    private const val AFTER_EXACT_MS = 1_200L
+
+    /**
+     * Every music extension at the same time (also with [altQuery] when it differs), answered after [ANSWER_LIMIT_MS] at most, or
+     * [AFTER_EXACT_MS] after an exact match arrived. A slow extension keeps searching in the background and its results are kept
+     * in the search cache, so playing a track can still find it there. Before, the answer waited for the slowest extension and
+     * the app sometimes gave up first ("Incoming request ended abruptly" in the log, no results shown).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun gather(list: List<MainApiWrapper>, q: String): List<Pair<MainApiWrapper, List<SearchResult>>> = coroutineScope {
+        val alt = altQuery(q)
+        val jobs = list.map { api ->
+            api to async {
+                val a = async { searchOne(api, q) }
+                val b = alt?.let { async { searchOne(api, it) } }
+                (a.await() + b?.await().orEmpty()).distinctBy { it.url }
+            }
+        }
+        fun exact(rs: List<SearchResult>) = rs.any { r ->
+            kindOf(r) == Kind.TRACK && titleAndArtist(r.name, "").let { (ti, ar) -> ar.isNotEmpty() && accuracy(q, ti, ar) >= 1.5 }
+        }
+        val start = System.currentTimeMillis()
+        var exactAt = 0L
+        while (true) {
+            val now = System.currentTimeMillis()
+            if (jobs.all { it.second.isCompleted }) break
+            if (now - start >= ANSWER_LIMIT_MS) break
+            if (exactAt == 0L && jobs.any { (_, d) -> d.isCompleted && runCatching { exact(d.getCompleted()) }.getOrDefault(false) }) exactAt = now
+            if (exactAt != 0L && now - exactAt >= AFTER_EXACT_MS) break
+            kotlinx.coroutines.delay(100)
+        }
+        val late = jobs.filter { !it.second.isCompleted }.map { it.first.name }
+        if (late.isNotEmpty()) ServerState.info("[Music] \"$q\": answered without ${late.joinToString()} (still searching, kept for playing)")
+        jobs.map { (api, d) ->
+            val rs = if (d.isCompleted) runCatching { d.getCompleted() }.getOrDefault(emptyList()) else { d.cancel(); emptyList() }
+            api to rs
+        }
     }
 
     /** One extension's results for a query: kept for a minute and a half, and a second ask for the same query waits for the first. */
@@ -419,7 +461,8 @@ object MusicAddon {
         }
         val first = if (query.isNotBlank()) searchOne(api, query) else emptyList()
         var r = match(first)
-        val second = if (r == null) searchOne(api, "$title $artist".trim()) else emptyList()
+        val second = if (r == null) searchOne(api, "$title $artist".trim()) +
+            (altQuery(query)?.let { searchOne(api, it) }.orEmpty()) else emptyList()
         if (r == null) r = match(second)
         if (r != null) ServerState.info("[Music] ${api.name}: same track \"${r.name.take(80)}\"")
         else {

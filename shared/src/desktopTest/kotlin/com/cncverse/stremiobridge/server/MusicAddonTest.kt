@@ -103,4 +103,12 @@ class MusicAddonTest {
         assertEquals(setOf("instrumental"), MusicAddon.variantsOf("Song (Instrumental Version)"))
         assertEquals(setOf("matthew ifield", "ted fresco"), MusicAddon.artistNames("Matthew Ifield & Ted Fresco"))
     }
+
+    @Test
+    fun `a hyphenated artist is also searched with spaces`() {
+        assertEquals("CHEN K Berang", MusicAddon.altQuery("CHEN-K Berang"))
+        assertEquals("AC DC Thunderstruck", MusicAddon.altQuery("AC/DC Thunderstruck"))
+        assertNull(MusicAddon.altQuery("Ed Sheeran Bad Habits"))
+        assertNull(MusicAddon.altQuery("Song - Artist"))
+    }
 }
