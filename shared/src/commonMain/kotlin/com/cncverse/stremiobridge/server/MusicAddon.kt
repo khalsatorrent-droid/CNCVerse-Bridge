@@ -153,6 +153,19 @@ object MusicAddon {
             else -> 2
         }
     }
+    /**
+     * Which extension's link is played when several have the track: Octave, then Arcod, then Monochrome, then MusicBox (any other
+     * music extension after Monochrome). It comes after [trust] (a link found by searching a song's name stays last) and before the
+     * quality: the first extension in this list that has the track wins, whatever the others' quality.
+     */
+    internal fun priority(api: String): Int = when {
+        api.contains("octave", true) -> 4
+        api.contains("arcod", true) -> 3
+        api.contains("monochrome", true) -> 2
+        api.contains("musicbox", true) -> 0
+        else -> 1
+    }
+
     private val BY_NAME = Regex("""y2mate|ytmp3|youtube|\byt\b|cnvmp3|spotsaver|spotidown|spotifydownloads|spotify ?down|musicfab|rapidapi|savefrom|ssyoutube""", RegexOption.IGNORE_CASE)
 
     /** (extension, kind, address) of an id made by [id]; null when it is not one of ours. */
@@ -481,8 +494,8 @@ object MusicAddon {
 
     /**
      * The links of the track from its own extension and from the others, answered as soon as waiting cannot help: at once when a
-     * hi-res link from an exact-track extension is in (nothing ranks above it), [AFTER_TRUSTED_MS] after the first link from an
-     * exact-track extension, at [BEST_LINK_LIMIT_MS] when any link is in. Before, it always waited for every extension (up to 8 s).
+     * link from an exact-track extension is in and no extension that [priority] puts before it is still looking, [AFTER_TRUSTED_MS]
+     * after the first link from an exact-track extension, at [BEST_LINK_LIMIT_MS] when any link is in.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private suspend fun collectLinks(
@@ -501,7 +514,9 @@ object MusicAddon {
             val now = System.currentTimeMillis()
             val links = done().flatMap { (a, ls) -> ls.filter(::playable).map { a to it } }
             val trusted = links.filter { (a, s) -> trust(a.name, s) == 2 }
-            if (trusted.any { qualityRank(it.second) >= 3000 }) break
+            // nothing can rank above this link: no extension that comes before it in [priority] is still looking
+            val top = trusted.maxOfOrNull { priority(it.first.name) }
+            if (top != null && jobs.none { !it.second.isCompleted && priority(it.first.name) > top }) break
             if (trusted.isNotEmpty() && trustedAt == 0L) trustedAt = now
             if (trustedAt != 0L && now - trustedAt >= AFTER_TRUSTED_MS) break
             if (links.isNotEmpty() && now - start >= BEST_LINK_LIMIT_MS) break
@@ -523,6 +538,7 @@ object MusicAddon {
         val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
             // the right recording first, the best quality among those
             .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
+                .thenByDescending { priority(it.first.name) }
                 .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
         val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
         ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
