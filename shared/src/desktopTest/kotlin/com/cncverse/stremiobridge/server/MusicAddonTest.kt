@@ -111,4 +111,11 @@ class MusicAddonTest {
         assertNull(MusicAddon.altQuery("Ed Sheeran Bad Habits"))
         assertNull(MusicAddon.altQuery("Song - Artist"))
     }
+
+    @Test
+    fun `extension order is Octave, Arcod, Monochrome, MusicBox`() {
+        val order = listOf("Octave", "Arcod", "Monochrome", "SomeOther", "MusicBox").map { MusicAddon.priority(it) }
+        assertEquals(order.sortedDescending(), order)
+        assertEquals(5, order.toSet().size)
+    }
 }

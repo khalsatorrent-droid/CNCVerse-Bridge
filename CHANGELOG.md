@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music: the extension order for playing is now Octave, Arcod, Monochrome, MusicBox.** When several extensions have the track, the first one in that list wins, whatever the others' quality (a link found by searching the song's name still comes last). The answer is sent as soon as no extension earlier in the list is still looking, or 1.5 s after the first exact-track link at the latest.
+
 ## 1.10.15
 
 - **Fixed link: two relays - your Cloudflare Worker or pencarimovie-server.** The Vercel Rockon relay is no longer offered (it slept when idle, which delayed requests). "Your Worker" is now the first choice; a bridge that used the Vercel relay moves to it, so set up the Worker (Settings › Fixed link: steps and a Copy Worker code button) and install the add-on again with the new link.
