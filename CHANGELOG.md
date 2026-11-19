@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.16
 
 - **Music: the extension order for playing is now Octave, Arcod, Monochrome, MusicBox.** When several extensions have the track, the first one in that list wins, whatever the others' quality (a link found by searching the song's name still comes last). The answer is sent as soon as no extension earlier in the list is still looking, or 1.5 s after the first exact-track link at the latest.
 
