@@ -58,8 +58,25 @@ fun ExtensionsScreen(
     val nsfw by com.cncverse.stremiobridge.server.Profiles.nsfwPrefs.collectAsState()
     val showNsfw = nsfw.first
     // Filter available plugins
-    val filteredPlugins = remember(availablePlugins, searchQuery, selectedRepoFilter, showOnlyInstalled, installedPlugins, showNsfw) {
-        availablePlugins
+    // An extension its developer took out of the repository is still installed (and loaded) but is in no repository list any
+    // more, so it had no card - and no way to remove it. Those are listed too, from what was saved when it was installed.
+    val removedFromRepo = remember(availablePlugins, installedPlugins) {
+        val known = availablePlugins.map { it.plugin.internalName }.toSet()
+        installedPlugins.filter { it.internalName !in known }.map { ip ->
+            AvailablePlugin(
+                plugin = com.cncverse.stremiobridge.model.SitePlugin(
+                    url = "", version = ip.version, name = ip.displayName, internalName = ip.internalName,
+                    authors = ip.authors, tvTypes = ip.tvTypes, language = ip.language, iconUrl = ip.iconUrl,
+                    description = "No longer in its repository - you can still remove it." +
+                        (ip.description?.takeIf { it.isNotBlank() }?.let { "\n$it" } ?: ""),
+                ),
+                repoEntry = RepoEntry(url = ip.repoUrl, name = ip.repoUrl),
+            )
+        }
+    }
+    val removedNames = removedFromRepo.map { it.plugin.internalName }.toSet()
+    val filteredPlugins = remember(availablePlugins, removedFromRepo, searchQuery, selectedRepoFilter, showOnlyInstalled, installedPlugins, showNsfw) {
+        (availablePlugins + removedFromRepo)
             .filter { ap ->
                 (showNsfw || !com.cncverse.stremiobridge.server.Profiles.isNsfwTypes(ap.plugin.tvTypes)) &&
                 (selectedRepoFilter == null || ap.repoEntry.url == selectedRepoFilter) &&
@@ -273,7 +290,7 @@ fun ExtensionsScreen(
         }
 
         // ── Plugin List ────────────────────────────────────────────────────
-        if (availablePlugins.isEmpty() && !isRefreshing) {
+        if (availablePlugins.isEmpty() && installedPlugins.isEmpty() && !isRefreshing) {
             EmptyExtensionsState(onAddRepo = { showAddRepoDialog = true })
         } else {
             LazyColumn(
@@ -285,7 +302,9 @@ fun ExtensionsScreen(
                     items = filteredPlugins,
                     key = { "${it.repoEntry.url}|${it.plugin.internalName}" },
                 ) { ap ->
-                    val globalState = installStates[ap.plugin.internalName] ?: PluginInstallState.NotInstalled
+                    val stored = installStates[ap.plugin.internalName] ?: PluginInstallState.NotInstalled
+                    // one that is gone from its repository is installed by definition (it has no card otherwise)
+                    val globalState = if (ap.plugin.internalName in removedNames && stored !is PluginInstallState.Installing) PluginInstallState.Installed else stored
                     val inst = installedPlugins.find { it.internalName == ap.plugin.internalName }
                     val installState = if (inst != null && inst.repoUrl != ap.repoEntry.url) {
                         if (globalState is PluginInstallState.Installing) globalState else PluginInstallState.NotInstalled
