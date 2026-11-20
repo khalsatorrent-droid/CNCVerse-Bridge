@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.10.17
+## Unreleased
 
 - **Fixed link: video links no longer go through the relay.** With the fixed link on, links the bridge builds for the player's many requests (DASH / ClearKey streams turned into HLS: the manifest and every segment) used the fixed address, so each request was first redirected by the relay. A Cloudflare Worker allows 100,000 requests a day on the free plan and one stream needs thousands. Those links now use the tunnel's own address.
 - **Fixed link: a tunnel address seen twice started a second registration loop** (the tunnel's link is read from two places) and put the temporary address back on screen for a while. Each address is announced once now.
@@ -8,7 +8,7 @@
 - **Fixed link: the check after a new tunnel link waits longer** (40 s instead of 20 s): a relay may lead to the previous tunnel for up to about a minute after the change, and the fixed link was dropped as "not answering" before that.
 - **Music add-on: the Access-Control-Allow-Origin header was sent twice** ("*, *"), which browsers refuse.
 
-## Unreleased
+## 1.10.17
 
 - **Music: the add-on no longer sees "0 extensions" while extensions reload.** After an install or an update the extensions are unloaded and loaded again; in those seconds a music search came back empty and a track was "unknown" (the song did not play). Music requests now wait (15 s at most) for the reload to end.
 - **Music: a dead link no longer stops the song.** The best link is asked for its first bytes before it is handed out; when the host refuses or does not answer, the next best link of the track is used. A link that only works with the extension's headers is fetched by the bridge with them.
