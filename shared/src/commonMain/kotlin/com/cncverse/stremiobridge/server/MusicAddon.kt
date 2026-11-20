@@ -202,7 +202,7 @@ object MusicAddon {
     }
 
     private fun ApplicationCall.cors() {
-        response.header("Access-Control-Allow-Origin", "*")
+        // (Allow-Origin is already set for every answer by the server: a second one made the header "*, *", which browsers refuse)
         response.header("Access-Control-Expose-Headers", "Retry-After")
     }
 

@@ -856,7 +856,7 @@ private fun Any.reflectToStreams(pluginName: String, api: Any? = null): List<Str
             val hostIp = lanAddress()
             
             var proxyBase = "http://$hostIp:" + com.cncverse.stremiobridge.state.ServerState.serverPort
-            val activeTunnel = com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
+            val activeTunnel = com.cncverse.stremiobridge.state.ServerState.directTunnelUrl ?: com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
             if (com.cncverse.stremiobridge.state.ServerState.isStremioMode.value && !activeTunnel.isNullOrBlank()) {
                 proxyBase = activeTunnel
             }
@@ -950,7 +950,7 @@ private fun Any.reflectToSubtitle(pluginName: String, api: Any? = null): Stremio
         val hostIp = lanAddress()
         
         var proxyBase = "http://$hostIp:" + com.cncverse.stremiobridge.state.ServerState.serverPort
-        val activeTunnel = com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
+        val activeTunnel = com.cncverse.stremiobridge.state.ServerState.directTunnelUrl ?: com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
         if (com.cncverse.stremiobridge.state.ServerState.isStremioMode.value && !activeTunnel.isNullOrBlank()) {
             proxyBase = activeTunnel
         }

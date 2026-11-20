@@ -60,6 +60,14 @@ object ServerState {
     private val _status = MutableStateFlow<ServerStatus>(ServerStatus.Stopped)
     val isStremioMode = MutableStateFlow(false)
     val activeTunnelUrl = MutableStateFlow<String?>(null)
+
+    /**
+     * The address of the tunnel itself (https://....trycloudflare.com), even while [activeTunnelUrl] shows the fixed relay link.
+     * Links the bridge builds for the player's many requests (proxied manifests and segments) use this one: through the fixed
+     * link every request is redirected by the relay first - a Cloudflare Worker allows 100,000 requests a day, and a stream
+     * needs thousands.
+     */
+    @Volatile var directTunnelUrl: String? = null
     val status: StateFlow<ServerStatus> = _status.asStateFlow()
 
     private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())

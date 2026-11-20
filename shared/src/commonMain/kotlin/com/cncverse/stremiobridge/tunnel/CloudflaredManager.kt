@@ -297,9 +297,16 @@ object CloudflaredManager {
                     val last = idx == attempts.lastIndex
                     ServerState.info("Cloudflare tunnel attempt: ${at.label}")
 
+                    var announced: String? = null
                     fun announce(url: String) {
                         registered.set(true)
+                        // The same link is seen again (the metrics poller, then the log line): once it is announced and replaced by
+                        // the fixed link, "!= url" held again and a second registration loop was started for it (and the shown
+                        // address went back to the temporary one for a while).
+                        if (announced == url) return
+                        announced = url
                         if (ServerState.activeTunnelUrl.value != url) {
+                            ServerState.directTunnelUrl = url
                             ServerState.activeTunnelUrl.value = url
                             ServerState.info("🚀 Cloudflare tunnel ready: $url  (Stremio add-on: $url/manifest.json)")
                             // A free temporary link gets a new address every time the tunnel starts again (after a restart by the
@@ -384,14 +391,14 @@ object CloudflaredManager {
                     val exitCode = runCatching { process.waitFor() }.getOrDefault(-1)
                     ServerState.info("Cloudflared process exited with code $exitCode")
                     if (!isActive || registered.get()) break // stopped on purpose, or it ran and later ended
-                    ServerState.activeTunnelUrl.value = null
+                    ServerState.activeTunnelUrl.value = null; ServerState.directTunnelUrl = null
                 }
             } catch (e: CancellationException) {
                 // Expected when tunnel is stopped
             } catch (e: Exception) {
                 ServerState.error("Cloudflared tunnel error: ${e.message}")
             } finally {
-                ServerState.activeTunnelUrl.value = null
+                ServerState.activeTunnelUrl.value = null; ServerState.directTunnelUrl = null
             }
         }
         return true
@@ -507,7 +514,7 @@ object CloudflaredManager {
             ServerState.warn("Error stopping cloudflared process: ${e.message}")
         } finally {
             tunnelProcess = null
-            ServerState.activeTunnelUrl.value = null
+            ServerState.activeTunnelUrl.value = null; ServerState.directTunnelUrl = null
             ServerState.info("Cloudflare Tunnel stopped")
         }
     }
