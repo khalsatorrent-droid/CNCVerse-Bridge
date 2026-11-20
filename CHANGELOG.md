@@ -5,7 +5,7 @@
 - **Fixed link: video links no longer go through the relay.** With the fixed link on, links the bridge builds for the player's many requests (DASH / ClearKey streams turned into HLS: the manifest and every segment) used the fixed address, so each request was first redirected by the relay. A Cloudflare Worker allows 100,000 requests a day on the free plan and one stream needs thousands. Those links now use the tunnel's own address.
 - **Fixed link: a tunnel address seen twice started a second registration loop** (the tunnel's link is read from two places) and put the temporary address back on screen for a while. Each address is announced once now.
 - **Fixed link: the id "index" is no longer accepted** (the relay refuses it, so the link would never have worked).
-- **Fixed link: the check after a new tunnel link waits longer** (40 s instead of 20 s): a relay may lead to the previous tunnel for up to about a minute after the change, and the fixed link was dropped as "not answering" before that. The Worker code in the app trusts what it read for 5 s instead of 30 s - copy the code again (Settings › Fixed link) and deploy it to get the faster change.
+- **Fixed link: the check after a new tunnel link waits longer** (40 s instead of 20 s): a relay may lead to the previous tunnel for up to about a minute after the change, and the fixed link was dropped as "not answering" before that.
 - **Music add-on: the Access-Control-Allow-Origin header was sent twice** ("*, *"), which browsers refuse.
 
 ## Unreleased
