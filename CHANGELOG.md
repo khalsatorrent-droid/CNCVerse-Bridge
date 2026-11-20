@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.19
 
 - **Extensions › an extension its developer removed from the repository can be removed.** An installed extension that is no longer in any repository list had no card, so it could not be uninstalled (it stayed loaded for good). It is listed now ("No longer in its repository"), with the usual Remove button; the list is no longer replaced by the "add a repository" page when the repositories are empty or could not be read while extensions are installed.
 
