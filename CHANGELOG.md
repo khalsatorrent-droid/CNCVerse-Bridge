@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.18
 
 - **Fixed link: video links no longer go through the relay.** With the fixed link on, links the bridge builds for the player's many requests (DASH / ClearKey streams turned into HLS: the manifest and every segment) used the fixed address, so each request was first redirected by the relay. A Cloudflare Worker allows 100,000 requests a day on the free plan and one stream needs thousands. Those links now use the tunnel's own address.
 - **Fixed link: a tunnel address seen twice started a second registration loop** (the tunnel's link is read from two places) and put the temporary address back on screen for a while. Each address is announced once now.
