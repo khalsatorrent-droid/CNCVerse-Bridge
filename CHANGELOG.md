@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.17
 
 - **Music: the add-on no longer sees "0 extensions" while extensions reload.** After an install or an update the extensions are unloaded and loaded again; in those seconds a music search came back empty and a track was "unknown" (the song did not play). Music requests now wait (15 s at most) for the reload to end.
 - **Music: a dead link no longer stops the song.** The best link is asked for its first bytes before it is handed out; when the host refuses or does not answer, the next best link of the track is used. A link that only works with the extension's headers is fetched by the bridge with them.
