@@ -11,6 +11,7 @@ import io.ktor.server.response.respondText
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
@@ -60,6 +61,23 @@ object MusicAddon {
     private val searchCache = java.util.concurrent.ConcurrentHashMap<String, Cached>()
     private val inFlight = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<SearchResult>>>()
     private const val SEARCH_CACHE_MS = 90_000L
+
+    /** Like runCatching, but a cancellation (timeout, the answer already sent) is passed on instead of being taken for a failure. */
+    private inline fun <T> attempt(block: () -> T): T? =
+        try { block() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { null }
+
+    /**
+     * Extensions are unloaded and loaded again after an install or update (and by the watchdog): for those seconds there are
+     * no music extensions, a search came back empty and a track "was unknown". Music requests wait for the reload to end.
+     */
+    private suspend fun awaitPlugins() {
+        if (com.cncverse.stremiobridge.plugin.GlobalPluginManager.isPluginsLoaded.value) return
+        val ok = withTimeoutOrNull(RELOAD_WAIT_MS) {
+            com.cncverse.stremiobridge.plugin.GlobalPluginManager.isPluginsLoaded.first { it }
+        }
+        if (ok == null) ServerState.warn("[Music] extensions were still loading after ${RELOAD_WAIT_MS / 1000} s")
+    }
+    private const val RELOAD_WAIT_MS = 15_000L
 
     private fun api(internalName: String): MainApiWrapper? =
         apis().firstOrNull { it.internalName == internalName || it.pluginInternalName == internalName }
@@ -235,6 +253,7 @@ object MusicAddon {
     suspend fun search(call: ApplicationCall) {
         val q = call.request.queryParameters["q"].orEmpty().trim()
         ServerState.info("[Request] music search \"$q\"")
+        awaitPlugins()
         val list = apis()
         if (q.isEmpty() || list.isEmpty()) return call.reply(buildJsonObject {
             put("tracks", JsonArray(emptyList())); put("albums", JsonArray(emptyList())); put("artists", JsonArray(emptyList()))
@@ -347,7 +366,7 @@ object MusicAddon {
         val job = inFlight.computeIfAbsent(key) {
             kotlinx.coroutines.GlobalScope.async(musicDispatcher) {
                 try {
-                    val res = withTimeoutOrNull(SEARCH_LIMIT_MS) { runCatching { api.search(q) }.getOrNull() }.orEmpty()
+                    val res = withTimeoutOrNull(SEARCH_LIMIT_MS) { attempt { api.search(q) } }.orEmpty()
                     if (res.isNotEmpty()) searchCache[key] = Cached(System.currentTimeMillis(), res)
                     res
                 } finally { inFlight.remove(key) }
@@ -360,7 +379,7 @@ object MusicAddon {
 
     private suspend fun loadInfo(api: MainApiWrapper, url: String): MediaInfo? =
         withTimeoutOrNull(LOAD_LIMIT_MS) {
-            withContext(musicDispatcher) { runCatching { api.load(url) }.getOrNull() }
+            withContext(musicDispatcher) { attempt { api.load(url) } }
         }
 
     private fun trackObjects(api: MainApiWrapper, info: MediaInfo, artist: String): List<JsonObject> {
@@ -464,7 +483,7 @@ object MusicAddon {
             info?.episodes?.firstOrNull()?.dataUrl ?: info?.dataUrl?.takeIf { it.isNotBlank() } ?: url
         } else url
         return withTimeoutOrNull(LINKS_LIMIT_MS) {
-            withContext(musicDispatcher) { runCatching { api.loadLinks(data) }.getOrDefault(emptyList()) }
+            withContext(musicDispatcher) { attempt { api.loadLinks(data) } ?: emptyList() }
         }.orEmpty()
     }
 
@@ -527,8 +546,52 @@ object MusicAddon {
         result
     }
 
+    private val probeClient by lazy {
+        okhttp3.OkHttpClient.Builder().dns(com.cncverse.stremiobridge.network.AppDns)
+            .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS).readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+            .followRedirects(true).followSslRedirects(true).build()
+    }
+    private const val PROBE_LIMIT_MS = 3_500L
+
+    /** 0 = answers, 1 = answers only with the extension's headers, -1 = refused / dead; unknown (a failed check) counts as 0. */
+    private fun probe(st: StremioStream): Int {
+        val url = st.url.orEmpty()
+        if (!url.startsWith("http", true) || com.cncverse.stremiobridge.cache.StreamLinkClassifier.isLoopbackUrl(url)) return 0
+        fun ask(headers: Map<String, String>): Int? = try {
+            val b = okhttp3.Request.Builder().url(url).header("Range", "bytes=0-1")
+            headers.forEach { (k, v) -> if (!k.equals("range", true) && !k.equals("host", true)) runCatching { b.header(k, v) } }
+            probeClient.newCall(b.build()).execute().use { it.code }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { null }
+        val none = ask(emptyMap())
+        if (none == null || none in 200..299) return 0
+        val h = st.behaviorHints?.proxyHeaders?.request.orEmpty()
+        if (h.isNotEmpty()) { val withH = ask(h); if (withH != null && withH in 200..299) return 1 }
+        return if (none in 400..499 || none >= 500) -1 else 0
+    }
+
+    /**
+     * The first of [ranked] (best first) that really answers; the best one when none does (nothing to lose) or the check is
+     * too slow. Second: true when that link needs the bridge to fetch it with the extension's headers.
+     */
+    private suspend fun firstWorking(ranked: List<Pair<MainApiWrapper, StremioStream>>): Pair<Pair<MainApiWrapper, StremioStream>, Boolean> {
+        val cands = ranked.distinctBy { it.second.url }.take(4)
+        val result = coroutineScope {
+            val ds = cands.map { c -> async(musicDispatcher) { withTimeoutOrNull(PROBE_LIMIT_MS) { probe(c.second) } ?: 0 } }
+            var found: Pair<Pair<MainApiWrapper, StremioStream>, Boolean>? = null
+            for ((i, d) in ds.withIndex()) {
+                val r = d.await()
+                if (r >= 0) { found = cands[i] to (r == 1); break }
+                ServerState.info("[Music] ${cands[i].first.name} link refused (${cands[i].second.url.orEmpty().substringBefore('?').takeLast(60)}) - trying the next one")
+            }
+            ds.forEach { it.cancel() }
+            found
+        }
+        return result ?: (ranked.first() to false)
+    }
+
     suspend fun stream(call: ApplicationCall) {
         val rawId = call.parameters["id"].orEmpty()
+        awaitPlugins()
         val (api, kind, data) = decode(rawId) ?: return call.reply(error("Unknown track"), HttpStatusCode.NotFound)
         val (url, title, artist, query) = if (kind == 't') splitTrack(data) else listOf(data, "", "", "")
         val others = if (kind == 't' && title.isNotBlank()) apis().filter { it.internalName != api.internalName } else emptyList()
@@ -540,7 +603,12 @@ object MusicAddon {
             .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
                 .thenByDescending { priority(it.first.name) }
                 .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
-        val (bestApi, best) = ranked.firstOrNull() ?: return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+        if (ranked.isEmpty()) return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
+        // the best link is asked for its first bytes before it is handed out: a dead or refused one (expired, a host that wants the
+        // extension's headers) made the song not play at all although the next link was fine
+        val checked = firstWorking(ranked)
+        val (bestApi, best) = checked.first
+        val needsHelp = checked.second
         ServerState.info("[Music] links: " + ranked.take(8).joinToString(", ") { (a, s) ->
             "${a.name} [trust ${trust(a.name, s)}, ${qualityRank(s)}" + (s.info?.quality?.let { ", q$it" } ?: "") + "] " + s.title.orEmpty().take(40)
         })
@@ -548,7 +616,7 @@ object MusicAddon {
             if (trust(bestApi.name, best) < 2) " - found by searching the song's name: it can be another song or version" else "")
         val label = "${best.name} ${best.title}"
         val rawUrl = best.url.orEmpty()
-        val out = StremioServer.prepareMusicStream(best, StremioServer.musicBase(call))
+        val out = StremioServer.prepareMusicStream(best, StremioServer.musicBase(call), needsHelp)
         val outUrl = out.url ?: rawUrl
         val hls = best.info?.linkType.equals("M3U8", true) || rawUrl.substringBefore('?').endsWith(".m3u8", true)
         call.reply(buildJsonObject {

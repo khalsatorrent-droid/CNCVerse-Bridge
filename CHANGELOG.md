@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Music: the add-on no longer sees "0 extensions" while extensions reload.** After an install or an update the extensions are unloaded and loaded again; in those seconds a music search came back empty and a track was "unknown" (the song did not play). Music requests now wait (15 s at most) for the reload to end.
+- **Music: a dead link no longer stops the song.** The best link is asked for its first bytes before it is handed out; when the host refuses or does not answer, the next best link of the track is used. A link that only works with the extension's headers is fetched by the bridge with them.
+- **Music: a cancelled extension call was taken for a failed one.** A timeout or an answer sent early cancelled the extensions still looking; the cancellation was swallowed as an ordinary error (the "DeferredCoroutine was cancelled" lines in the log) and the call went on. It is passed on now.
+
 ## 1.10.16
 
 - **Music: the extension order for playing is now Octave, Arcod, Monochrome, MusicBox.** When several extensions have the track, the first one in that list wins, whatever the others' quality (a link found by searching the song's name still comes last). The answer is sent as soon as no extension earlier in the list is still looking, or 1.5 s after the first exact-track link at the latest.
