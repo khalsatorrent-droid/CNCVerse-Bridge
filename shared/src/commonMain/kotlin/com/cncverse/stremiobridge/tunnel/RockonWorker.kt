@@ -35,7 +35,7 @@ object RockonWorker {
 
 var ID_RE = /^[a-z0-9]{4,32}$/;
 var RESERVED = ['api', 'links', 'register', 'tunnel', 'favicon', 'robots', 'index'];
-var MEMO_MS = 30000; // how long this Worker trusts what it read
+var MEMO_MS = 5000; // how long this Worker trusts what it read (short: after a tunnel restart a stale answer leads to the dead tunnel)
 var MISS_MS = 15000; // an unknown id is not looked up again for this long
 var memo = new Map(); // id -> { url, at } (url null = not registered)
 

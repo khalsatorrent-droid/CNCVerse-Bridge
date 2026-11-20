@@ -77,7 +77,7 @@ object StableLink {
         set(v) = setExtensionSetting(KEY_RELAY, v.name)
 
     /** Paths of the relay itself: never an id there. */
-    private val RESERVED = setOf("api", "links", "register", "tunnel", "favicon", "robots")
+    private val RESERVED = setOf("api", "links", "register", "tunnel", "favicon", "robots", "index")
 
     var enabled: Boolean
         get() = getExtensionSetting(KEY_ENABLED) == "true"
@@ -171,9 +171,10 @@ object StableLink {
         }
         if (!accepted) { ServerState.warn("Fixed link: the relay did not accept the registration after 4 tries - keeping the temporary link (tried again in 15 minutes)"); return null }
         // The quick tunnel and the relay need a moment: check that the fixed address answers before it is shown
-        repeat(8) { attempt ->
+        // (a relay that reads from several places may keep leading to the previous tunnel for up to about a minute after the change)
+        repeat(16) { attempt ->
             if (fixedLinkAnswers()) return url
-            if (attempt < 7) Thread.sleep(2_500)
+            if (attempt < 15) Thread.sleep(2_500)
         }
         ServerState.warn("Fixed link: $url does not answer yet - keeping the temporary link (tried again in 15 minutes)")
         return null
