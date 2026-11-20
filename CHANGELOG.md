@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Extensions › an extension its developer removed from the repository can be removed.** An installed extension that is no longer in any repository list had no card, so it could not be uninstalled (it stayed loaded for good). It is listed now ("No longer in its repository"), with the usual Remove button; the list is no longer replaced by the "add a repository" page when the repositories are empty or could not be read while extensions are installed.
+
 ## 1.10.18
 
 - **Fixed link: video links no longer go through the relay.** With the fixed link on, links the bridge builds for the player's many requests (DASH / ClearKey streams turned into HLS: the manifest and every segment) used the fixed address, so each request was first redirected by the relay. A Cloudflare Worker allows 100,000 requests a day on the free plan and one stream needs thousands. Those links now use the tunnel's own address.
