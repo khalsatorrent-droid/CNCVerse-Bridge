@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **All TV channels (A-Z): the same channel from different sources is one entry more often.** "IN| SONY MAX 2 (UK)", "Sony MAX2" and "Sony MAX2 EPG" were three entries. A channel name is now compared without the country tag in front ("IN|", "UK |"), without "EPG" / "STB" / "HDR" / "H265" and similar words besides the quality ones, and with or without a space before its number ("Max 2" = "Max2"). A merged channel is shown under its clean name ("Sony MAX2") instead of the first source's tag-and-quality name. Different numbers (Ten 1 / Ten 10) and languages (Ten 3 / Ten 3 Hindi) stay separate entries.
+
 ## 1.10.19
 
 - **Extensions › an extension its developer removed from the repository can be removed.** An installed extension that is no longer in any repository list had no card, so it could not be uninstalled (it stayed loaded for good). It is listed now ("No longer in its repository"), with the usual Remove button; the list is no longer replaced by the "add a repository" page when the repositories are empty or could not be read while extensions are installed.
