@@ -2914,15 +2914,39 @@ object StremioServer {
     /** Group id -> the ids of the channels it merges (filled when the catalog is built; rebuilt on demand after a restart). */
     private val tvGroupMembers = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
     private val TV_BRACKETS = Regex("[\\[(].*?[\\])]")
-    private val TV_QUALITY_WORDS = Regex("\\b(hd|fhd|uhd|sd|hq|4k|hevc|1080p|720p|480p|360p)\\b")
+    private val TV_QUALITY_WORDS = Regex("\\b(hd|fhd|uhd|sd|hq|4k|hevc|hdr|h264|h265|x264|x265|1080p|720p|480p|360p|50fps|60fps|epg|stb)\\b")
     private val TV_NON_ALNUM = Regex("[^\\p{L}\\p{N}]+")
+    /** "IN| ", "UK | ", "|US| ": the country / group tag some playlists put in front of every channel name. */
+    private val TV_PREFIX = Regex("^[^\\p{L}\\p{N}]*[a-z]{2,4}\\s*\\|\\s*", RegexOption.IGNORE_CASE)
+    /** "Max 2" and "Max2" are the same channel. */
+    private val TV_LETTER_DIGIT = Regex("(?<=\\p{L})\\s+(?=\\d)")
 
-    /** "Star Plus HD", "STAR PLUS (1080p)" and "star-plus" are the same channel: lower case, no bracket text, no quality words, no symbols. */
+    /**
+     * "Star Plus HD", "STAR PLUS (1080p)" and "star-plus" are the same channel: lower case, no bracket text, no quality words
+     * (HD, FHD, EPG, STB...), no symbols, no "IN|" tag in front and no space between a name and its number ("Max 2" = "Max2").
+     */
     internal fun tvNameKey(name: String): String {
-        val low = name.lowercase()
+        var low = name.lowercase()
+        repeat(2) { low = low.replace(TV_PREFIX, "") }
         val k = low.replace(TV_BRACKETS, " ").replace(TV_QUALITY_WORDS, " ").replace(TV_NON_ALNUM, " ").trim()
-        return k.ifEmpty { low.replace(TV_NON_ALNUM, " ").trim() }
+            .replace(TV_LETTER_DIGIT, "")
+        return k.ifEmpty { name.lowercase().replace(TV_NON_ALNUM, " ").trim() }
     }
+
+    /** The name a merged channel is shown under: the tag, the bracket text and the quality words taken off, the most common spelling. */
+    internal fun tvDisplayName(names: List<String>): String {
+        fun clean(n: String): String {
+            var t = n
+            repeat(2) { t = t.replace(TV_PREFIX, "") }
+            t = t.replace(TV_BRACKETS, " ").replace(TV_QUALITY_WORDS_ANY_CASE, " ")
+            return t.replace(Regex("\\s+"), " ").trim().trim('-', '|', ':', '•', '·', ' ')
+        }
+        val cleaned = names.map { clean(it) }.filter { it.isNotEmpty() }
+        if (cleaned.isEmpty()) return names.firstOrNull().orEmpty()
+        val best = cleaned.groupBy { it.lowercase() }.values.maxByOrNull { it.size }!!
+        return best.firstOrNull { c -> c.any { it.isLowerCase() } } ?: best.first()
+    }
+    private val TV_QUALITY_WORDS_ANY_CASE = Regex(TV_QUALITY_WORDS.pattern, RegexOption.IGNORE_CASE)
 
     /** One entry per channel name; the entry of several channels opens all their links (see [tvGroupStreams]). */
     private fun mergeSameTvChannels(sorted: List<StremioMeta>): List<StremioMeta> {
@@ -2938,6 +2962,7 @@ object StremioServer {
                 val first = ms[0]
                 first.copy(
                     id = gid,
+                    name = tvDisplayName(ms.map { it.name }).ifEmpty { first.name },
                     poster = ms.firstNotNullOfOrNull { it.poster?.takeIf { p -> p.startsWith("http") } } ?: first.poster,
                     behaviorHints = MetaBehaviorHints(defaultVideoId = gid),
                     description = "${ms.size} sources of this channel",
