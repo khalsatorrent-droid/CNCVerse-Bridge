@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.20
 
 - **All TV channels (A-Z): the same channel from different sources is one entry more often.** "IN| SONY MAX 2 (UK)", "Sony MAX2" and "Sony MAX2 EPG" were three entries. A channel name is now compared without the country tag in front ("IN|", "UK |"), without "EPG" / "STB" / "HDR" / "H265" and similar words besides the quality ones, and with or without a space before its number ("Max 2" = "Max2"). A merged channel is shown under its clean name ("Sony MAX2") instead of the first source's tag-and-quality name. Different numbers (Ten 1 / Ten 10) and languages (Ten 3 / Ten 3 Hindi) stay separate entries.
 
