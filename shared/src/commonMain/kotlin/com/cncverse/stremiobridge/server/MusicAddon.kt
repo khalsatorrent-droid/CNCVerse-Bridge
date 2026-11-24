@@ -158,6 +158,17 @@ object MusicAddon {
         return a1.isNotEmpty() && a2.isNotEmpty() && a1.any { it in a2 }
     }
 
+    private fun rawWords(s: String): Set<String> = plain(s).split(' ').filter { it.isNotEmpty() }.toSet()
+
+    /**
+     * How far a candidate is from the wanted track: the words of its title and the artists it has extra or lacks (an artist counts
+     * double). 0 = the very same name and artists; the lowest is the most similar, with the least extras.
+     */
+    internal fun distance(title: String, artist: String, t: String, a: String): Int =
+        (rawWords(title) xor rawWords(t)).size + 2 * (artistNames(artist) xor artistNames(a)).size
+
+    private infix fun <T> Set<T>.xor(o: Set<T>): Set<T> = (this - o) + (o - this)
+
     /**
      * How sure a link is to be the right recording - this comes before its quality. Links from download services that find a song
      * by searching its name (YouTube converters, Spotify downloaders) can be another song or an instrumental; MusicBox gathers its
@@ -176,12 +187,37 @@ object MusicAddon {
      * music extension after Monochrome). It comes after [trust] (a link found by searching a song's name stays last) and before the
      * quality: the first extension in this list that has the track wins, whatever the others' quality.
      */
-    internal fun priority(api: String): Int = when {
-        api.contains("octave", true) -> 4
-        api.contains("arcod", true) -> 3
-        api.contains("monochrome", true) -> 2
-        api.contains("musicbox", true) -> 0
-        else -> 1
+    internal fun priority(api: String, equal: Boolean = MusicPrefs.equalTrust, order: List<String> = MusicPrefs.order): Int {
+        if (equal) return 0
+        val i = order.indexOfFirst { it.equals(api, true) }
+        if (i >= 0) return 1000 - i
+        return when {
+            api.contains("octave", true) -> 4
+            api.contains("arcod", true) -> 3
+            api.contains("monochrome", true) -> 2
+            api.contains("musicbox", true) -> 0
+            else -> 1
+        }
+    }
+
+    /**
+     * How well a sound fits the wanted range: 2 inside it, 1 below the minimum (worse than wanted, still within the cap), 0 above the
+     * maximum. 0 means "no limit" for either end. A link that fits nothing is still played when nothing fits better.
+     */
+    internal fun fit(rank: Int, min: Int = MusicPrefs.minRank, max: Int = MusicPrefs.maxRank): Int = when {
+        max > 0 && rank > max -> 0
+        min > 0 && rank < min -> 1
+        else -> 2
+    }
+
+    /** Within one fit: the higher sound is better, except above the maximum where the nearest to it is. */
+    internal fun soundKey(rank: Int, fit: Int): Int = if (fit == 0) -rank else rank
+
+    /** Sort key of a link: the right recording, then the wanted sound, then the extension order, then the sound. */
+    internal fun rankKey(api: String, st: StremioStream): List<Int> {
+        val r = qualityRank(st)
+        val f = fit(r)
+        return listOf(trust(api, st), f, priority(api), soundKey(r, f), st.info?.quality ?: 0)
     }
 
     private val BY_NAME = Regex("""y2mate|ytmp3|youtube|\byt\b|cnvmp3|spotsaver|spotidown|spotifydownloads|spotify ?down|musicfab|rapidapi|savefrom|ssyoutube""", RegexOption.IGNORE_CASE)
@@ -489,9 +525,10 @@ object MusicAddon {
 
     /** The same track in another music extension: its results for the original search (usually still cached), else for "title artist". */
     private suspend fun findIn(api: MainApiWrapper, title: String, artist: String, query: String): SearchResult? {
-        fun match(results: List<SearchResult>) = results.firstOrNull { r ->
+        // of the tracks that are the same recording, the most similar one: the fewest extra words and extra artists
+        fun match(results: List<SearchResult>) = results.filter { r ->
             kindOf(r) == Kind.TRACK && titleAndArtist(r.name, "").let { (t, a) -> sameTrack(title, artist, t, a) }
-        }
+        }.minByOrNull { r -> titleAndArtist(r.name, "").let { (t, a) -> distance(title, artist, t, a) } }
         val first = if (query.isNotBlank()) searchOne(api, query) else emptyList()
         var r = match(first)
         val second = if (r == null) searchOne(api, "$title $artist".trim()) +
@@ -532,10 +569,13 @@ object MusicAddon {
             if (jobs.all { it.second.isCompleted }) break
             val now = System.currentTimeMillis()
             val links = done().flatMap { (a, ls) -> ls.filter(::playable).map { a to it } }
-            val trusted = links.filter { (a, s) -> trust(a.name, s) == 2 }
+            val trusted = links.filter { (a, s) -> trust(a.name, s) == 2 && fit(qualityRank(s)) == 2 }
             // nothing can rank above this link: no extension that comes before it in [priority] is still looking
             val top = trusted.maxOfOrNull { priority(it.first.name) }
-            if (top != null && jobs.none { !it.second.isCompleted && priority(it.first.name) > top }) break
+            if (!MusicPrefs.equalTrust && top != null && jobs.none { !it.second.isCompleted && priority(it.first.name) > top }) break
+            // all equal: only the best sound beats waiting, and nothing is better than the wanted maximum
+            val best = MusicPrefs.maxRank.takeIf { it > 0 } ?: 3000
+            if (MusicPrefs.equalTrust && trusted.any { qualityRank(it.second) >= best }) break
             if (trusted.isNotEmpty() && trustedAt == 0L) trustedAt = now
             if (trustedAt != 0L && now - trustedAt >= AFTER_TRUSTED_MS) break
             if (links.isNotEmpty() && now - start >= BEST_LINK_LIMIT_MS) break
@@ -600,9 +640,10 @@ object MusicAddon {
         val all = collectLinks(api, kind, url, others, title, artist, query)
         val ranked = all.flatMap { (a, links) -> links.filter(::playable).map { a to it } }
             // the right recording first, the best quality among those
-            .sortedWith(compareByDescending<Pair<MainApiWrapper, StremioStream>> { trust(it.first.name, it.second) }
-                .thenByDescending { priority(it.first.name) }
-                .thenByDescending { qualityRank(it.second) }.thenByDescending { it.second.info?.quality ?: 0 })
+            .sortedWith { x, y ->
+                val kx = rankKey(x.first.name, x.second); val ky = rankKey(y.first.name, y.second)
+                kx.indices.firstNotNullOfOrNull { i -> (ky[i] - kx[i]).takeIf { it != 0 } } ?: 0
+            }
         if (ranked.isEmpty()) return call.reply(error("No playable link for this track"), HttpStatusCode.NotFound)
         // the best link is asked for its first bytes before it is handed out: a dead or refused one (expired, a host that wants the
         // extension's headers) made the song not play at all although the next link was fine

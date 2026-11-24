@@ -3,7 +3,11 @@ package com.cncverse.stremiobridge.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import com.cncverse.stremiobridge.server.MusicAddon
+import com.cncverse.stremiobridge.server.MusicPrefs
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -216,5 +220,60 @@ fun MusicCard() {
             }
         }
         if (links.isEmpty()) Text("Start the server to get the link", color = TextMuted, fontSize = 11.sp)
+        MusicTrustSettings()
     }
+}
+
+/** Which music extension is trusted most, and the sound wanted. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MusicTrustSettings() {
+    val names = remember { StremioServer.loadedApis.filter { it.isMusic }.map { it.name } }
+    var equal by remember { mutableStateOf(MusicPrefs.equalTrust) }
+    var order by remember {
+        mutableStateOf(MusicPrefs.order.filter { o -> names.any { it.equals(o, true) } }.let { saved ->
+            saved + names.filter { n -> saved.none { it.equals(n, true) } }.sortedByDescending { MusicAddon.priority(it, false, emptyList()) }
+        })
+    }
+    var min by remember { mutableStateOf(MusicPrefs.minRank) }
+    var max by remember { mutableStateOf(MusicPrefs.maxRank) }
+
+    Spacer(Modifier.height(10.dp))
+    Text("Which link is played", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Text("A link found by searching a song's name always comes after the exact-track ones. Then:", color = TextMuted, fontSize = 10.sp)
+    SwitchRow("All extensions equally trusted", "On: the best sound wins. Off: the extension highest in the list wins whenever it has the track", equal) {
+        equal = it; MusicPrefs.equalTrust = it
+    }
+    if (!equal && order.size > 1) {
+        order.forEachIndexed { i, n ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("${i + 1}. $n", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                TextButton(enabled = i > 0, onClick = {
+                    order = order.toMutableList().also { l -> l.add(i - 1, l.removeAt(i)) }; MusicPrefs.order = order
+                }) { Text("Up", color = Violet400, fontSize = 12.sp) }
+                TextButton(enabled = i < order.size - 1, onClick = {
+                    order = order.toMutableList().also { l -> l.add(i + 1, l.removeAt(i)) }; MusicPrefs.order = order
+                }) { Text("Down", color = Violet400, fontSize = 12.sp) }
+            }
+        }
+    }
+    @Composable
+    fun levelChips(label: String, selected: Int, none: String, pick: (Int) -> Unit) {
+        Text(label, color = TextSecondary, fontSize = 11.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (listOf(none to 0) + MusicPrefs.LEVELS).forEach { (name, rank) ->
+                FilterChip(
+                    selected = selected == rank, onClick = { pick(rank) },
+                    label = { Text(name, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+    }
+    levelChips("Wanted sound at least", min, "Best there is") { min = it; MusicPrefs.minRank = it }
+    levelChips("Wanted sound at most (saves data)", max, "No limit") { max = it; MusicPrefs.maxRank = it }
+    Text("A link inside this range is played before any other; if none is, the closest one plays.", color = TextMuted, fontSize = 10.sp)
 }

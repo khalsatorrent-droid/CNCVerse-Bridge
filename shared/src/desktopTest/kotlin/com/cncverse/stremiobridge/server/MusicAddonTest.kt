@@ -118,4 +118,28 @@ class MusicAddonTest {
         assertEquals(order.sortedDescending(), order)
         assertEquals(5, order.toSet().size)
     }
+
+    @Test
+    fun `equal trust makes every extension the same, a chosen order wins over the built-in one`() {
+        assertEquals(setOf(0), listOf("Octave", "Arcod", "MusicBox").map { MusicAddon.priority(it, true, emptyList()) }.toSet())
+        assertTrue(MusicAddon.priority("Monochrome", false, listOf("Monochrome", "Octave")) > MusicAddon.priority("Octave", false, listOf("Monochrome", "Octave")))
+    }
+
+    @Test
+    fun `the wanted sound range decides before the extension order`() {
+        assertEquals(2, MusicAddon.fit(320, 320, 2000))
+        assertEquals(1, MusicAddon.fit(128, 320, 0))
+        assertEquals(0, MusicAddon.fit(3000, 0, 320))
+        assertEquals(2, MusicAddon.fit(3000, 0, 0))
+        // above the maximum the nearest to it is the better one
+        assertTrue(MusicAddon.soundKey(2000, 0) > MusicAddon.soundKey(3000, 0))
+    }
+
+    @Test
+    fun `the most similar name with the fewest extra words and artists is closest`() {
+        val d = { t: String, a: String -> MusicAddon.distance("Rockabye", "Clean Bandit", t, a) }
+        assertEquals(0, d("Rockabye", "Clean Bandit"))
+        assertTrue(d("Rockabye", "Clean Bandit") < d("Rockabye (feat. Sean Paul & Anne-Marie)", "Clean Bandit"))
+        assertTrue(d("Rockabye", "Clean Bandit, Sean Paul, Anne-Marie") > d("Rockabye", "Clean Bandit"))
+    }
 }

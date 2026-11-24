@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Music: choose which extension is trusted and the sound you want (Settings › Music).** "All extensions equally trusted" lets only the sound decide; otherwise you set the order of the extensions (Up / Down) and the first one that has the track is played. "Wanted sound at least / at most" (Hi-res FLAC, FLAC, 320, 256, 192, 128 kbps) picks a link inside your range first (the maximum saves data); when none fits, the closest one plays. A link found by searching a song's name still always comes last.
+- **Music: of the matching tracks an extension has, the most similar one is used** - the fewest extra words in the title and the fewest extra artists - instead of the first one (a different edition of a song, such as Rockabye, could be played).
+
 ## 1.10.20
 
 - **All TV channels (A-Z): the same channel from different sources is one entry more often.** "IN| SONY MAX 2 (UK)", "Sony MAX2" and "Sony MAX2 EPG" were three entries. A channel name is now compared without the country tag in front ("IN|", "UK |"), without "EPG" / "STB" / "HDR" / "H265" and similar words besides the quality ones, and with or without a space before its number ("Max 2" = "Max2"). A merged channel is shown under its clean name ("Sony MAX2") instead of the first source's tag-and-quality name. Different numbers (Ten 1 / Ten 10) and languages (Ten 3 / Ten 3 Hindi) stay separate entries.
