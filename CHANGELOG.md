@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.21
 
 - **Music: choose which extension is trusted and the sound you want (Settings › Music).** "All extensions equally trusted" lets only the sound decide; otherwise you set the order of the extensions (Up / Down) and the first one that has the track is played. "Wanted sound at least / at most" (Hi-res FLAC, FLAC, 320, 256, 192, 128 kbps) picks a link inside your range first (the maximum saves data); when none fits, the closest one plays. A link found by searching a song's name still always comes last.
 - **Music: of the matching tracks an extension has, the most similar one is used** - the fewest extra words in the title and the fewest extra artists - instead of the first one (a different edition of a song, such as Rockabye, could be played).
