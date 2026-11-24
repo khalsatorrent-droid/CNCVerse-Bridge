@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Music: time limits you can set (Settings › Music › Time limits).** "Search for songs" (2-15 s, default 6) is how long a search waits for the music extensions - all asked at the same time - before answering with what has arrived; "Finding the best link to play" (default 8 s) is how long playing a track waits for the other extensions' links. A slow extension keeps searching in the background either way.
+
 ## 1.10.21
 
 - **Music: choose which extension is trusted and the sound you want (Settings › Music).** "All extensions equally trusted" lets only the sound decide; otherwise you set the order of the extensions (Up / Down) and the first one that has the track is played. "Wanted sound at least / at most" (Hi-res FLAC, FLAC, 320, 256, 192, 128 kbps) picks a link inside your range first (the maximum saves data); when none fits, the closest one plays. A link found by searching a song's name still always comes last.

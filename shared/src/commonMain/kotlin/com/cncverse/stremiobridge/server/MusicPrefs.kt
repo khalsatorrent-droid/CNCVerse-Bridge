@@ -14,6 +14,22 @@ object MusicPrefs {
     private const val KEY_MIN = "KEY_MUSIC_MIN_RANK"
     private const val KEY_MAX = "KEY_MUSIC_MAX_RANK"
 
+    private const val KEY_SEARCH_S = "KEY_MUSIC_SEARCH_SECONDS"
+    private const val KEY_LINK_S = "KEY_MUSIC_LINK_SECONDS"
+
+    /** Seconds offered for the two time limits. */
+    val SECONDS = listOf(2, 3, 4, 6, 8, 10, 15)
+
+    /** How long a search waits for the extensions (all searched at once) before it answers with what has arrived. */
+    var searchSeconds: Int
+        get() = (getExtensionSetting(KEY_SEARCH_S)?.toIntOrNull() ?: 6).coerceIn(1, 30)
+        set(v) = setExtensionSetting(KEY_SEARCH_S, v.coerceIn(1, 30).toString())
+
+    /** How long playing a track waits for the other extensions' links before it plays the best one in. */
+    var linkSeconds: Int
+        get() = (getExtensionSetting(KEY_LINK_S)?.toIntOrNull() ?: 8).coerceIn(1, 30)
+        set(v) = setExtensionSetting(KEY_LINK_S, v.coerceIn(1, 30).toString())
+
     /** The sound levels offered: label to rank. */
     val LEVELS: List<Pair<String, Int>> = listOf(
         "Hi-res FLAC" to 3000, "FLAC / lossless" to 2000, "320 kbps" to 320, "256 kbps" to 256, "192 kbps" to 192, "128 kbps" to 128,

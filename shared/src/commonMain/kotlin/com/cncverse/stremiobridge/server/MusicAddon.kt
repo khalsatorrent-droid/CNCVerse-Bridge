@@ -42,7 +42,7 @@ object MusicAddon {
     private const val LOAD_LIMIT_MS = 15_000L
     private const val LINKS_LIMIT_MS = 20_000L
     /** Looking in the other music extensions for a better link of the same track: all at once, this long at most. */
-    private const val BEST_LINK_LIMIT_MS = 8_000L
+    private val BEST_LINK_LIMIT_MS: Long get() = MusicPrefs.linkSeconds * 1_000L
     /** Separates the parts of a "t:" id ([trackData]). */
     private const val SEP = '\u001F'
 
@@ -351,7 +351,7 @@ object MusicAddon {
         q.replace(Regex("""(?<=\p{L})[-/_.+](?=\p{L})"""), " ").replace(Regex("\\s+"), " ").trim().takeIf { it != q.trim() }
 
     /** How long a search may take before it is answered with what has arrived (the app gives up after about 10 s). */
-    private const val ANSWER_LIMIT_MS = 6_000L
+    private val ANSWER_LIMIT_MS: Long get() = MusicPrefs.searchSeconds * 1_000L
     /** Once an exact answer (every searched word, the title itself) is in, the others get this much longer. */
     private const val AFTER_EXACT_MS = 1_200L
 

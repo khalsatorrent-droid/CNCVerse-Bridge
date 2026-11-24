@@ -276,4 +276,28 @@ private fun MusicTrustSettings() {
     levelChips("Wanted sound at least", min, "Best there is") { min = it; MusicPrefs.minRank = it }
     levelChips("Wanted sound at most (saves data)", max, "No limit") { max = it; MusicPrefs.maxRank = it }
     Text("A link inside this range is played before any other; if none is, the closest one plays.", color = TextMuted, fontSize = 10.sp)
+
+    var searchS by remember { mutableStateOf(MusicPrefs.searchSeconds) }
+    var linkS by remember { mutableStateOf(MusicPrefs.linkSeconds) }
+    Spacer(Modifier.height(10.dp))
+    Text("Time limits", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Text("All music extensions are asked at the same time. After the limit the answer is made from what has arrived; a slow extension keeps searching in the background.", color = TextMuted, fontSize = 10.sp)
+    @Composable
+    fun secondChips(label: String, selected: Int, pick: (Int) -> Unit) {
+        Text(label, color = TextSecondary, fontSize = 11.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MusicPrefs.SECONDS.forEach { sec ->
+                FilterChip(
+                    selected = selected == sec, onClick = { pick(sec) },
+                    label = { Text("$sec s", fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Violet600, selectedLabelColor = TextPrimary,
+                        containerColor = AmoledCard2, labelColor = TextSecondary,
+                    ),
+                )
+            }
+        }
+    }
+    secondChips("Search for songs (default 6 s)", searchS) { searchS = it; MusicPrefs.searchSeconds = it }
+    secondChips("Finding the best link to play (default 8 s)", linkS) { linkS = it; MusicPrefs.linkSeconds = it }
 }
