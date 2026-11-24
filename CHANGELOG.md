@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.22
 
 - **Music: time limits you can set (Settings › Music › Time limits).** "Search for songs" (2-15 s, default 6) is how long a search waits for the music extensions - all asked at the same time - before answering with what has arrived; "Finding the best link to play" (default 8 s) is how long playing a track waits for the other extensions' links. A slow extension keeps searching in the background either way.
 
